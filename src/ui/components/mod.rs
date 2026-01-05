@@ -60,6 +60,13 @@ pub use splash_screen::SplashScreen;
 pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;
 pub use theme::{
+    // New modern palette
+    BG_BASE, BG_ELEVATED, BG_HIGHLIGHT, BG_SURFACE,
+    TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+    ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SECONDARY, ACCENT_SUCCESS, ACCENT_WARNING,
+    AGENT_CLAUDE, AGENT_CODEX,
+    BORDER_DEFAULT, BORDER_DIMMED, BORDER_FOCUSED,
+    // Legacy aliases (backward compatibility)
     FOOTER_BG, INPUT_BG, KEY_HINT_BG, SELECTED_BG, SELECTED_BG_DIM, STATUS_BAR_BG, TAB_BAR_BG,
 };
 pub use thinking_indicator::{ProcessingState, ThinkingIndicator};
