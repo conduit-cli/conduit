@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +51,7 @@ use crate::ui::events::{
     AppEvent, InputMode, RemoveProjectResult, ViewMode, WorkspaceArchived, WorkspaceCreated,
 };
 use crate::ui::session::AgentSession;
+use uuid::Uuid;
 
 /// Main application state
 pub struct App {
@@ -3837,6 +3838,8 @@ impl App {
             };
             session.chat_view.push(display.to_chat_message());
             images.clear();
+        } else if agent_type == AgentType::Codex && !images.is_empty() {
+            images = Self::stage_images_for_agent(&working_dir, images, session);
         }
 
         if prompt.trim().is_empty() && images.is_empty() {
@@ -3865,6 +3868,51 @@ impl App {
         });
 
         Ok(effects)
+    }
+
+    fn stage_images_for_agent(
+        working_dir: &PathBuf,
+        images: Vec<PathBuf>,
+        session: &mut AgentSession,
+    ) -> Vec<PathBuf> {
+        let attachments_dir = working_dir.join(".conduit").join("attachments");
+        if let Err(err) = fs::create_dir_all(&attachments_dir) {
+            let display = MessageDisplay::Error {
+                content: format!("Failed to prepare attachments directory: {err}"),
+            };
+            session.chat_view.push(display.to_chat_message());
+            return Vec::new();
+        }
+
+        let mut staged = Vec::new();
+        for image in images {
+            if image.strip_prefix(working_dir).is_ok() {
+                staged.push(image);
+                continue;
+            }
+
+            let extension = image
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("png");
+            let filename = format!("attachment-{}.{}", Uuid::new_v4(), extension);
+            let dest = attachments_dir.join(filename);
+
+            if let Err(err) = fs::copy(&image, &dest) {
+                let display = MessageDisplay::Error {
+                    content: format!(
+                        "Failed to stage attachment {}: {err}",
+                        image.display()
+                    ),
+                };
+                session.chat_view.push(display.to_chat_message());
+                continue;
+            }
+
+            staged.push(dest);
+        }
+
+        staged
     }
 
     /// Handle Ctrl+P: Open existing PR or create new one
