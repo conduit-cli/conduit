@@ -5,6 +5,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
+    symbols::border,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
@@ -494,7 +495,8 @@ impl RawEventsView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
             .title(title);
 
         let inner = block.inner(area);
@@ -540,7 +542,8 @@ impl RawEventsView {
     fn event_list_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)));
 
         let inner = block.inner(area);
         if inner.width < 3 || inner.height < 1 {
@@ -577,7 +580,8 @@ impl RawEventsView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)))
             .title(title);
 
         let inner = block.inner(area);
@@ -589,7 +593,8 @@ impl RawEventsView {
     fn detail_panel_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)));
         let inner = block.inner(area);
         self.detail_content_scrollbar_metrics(inner)
     }
@@ -622,7 +627,8 @@ impl RawEventsView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)))
             .title(title);
 
         let inner = block.inner(overlay_area);
@@ -642,7 +648,8 @@ impl RawEventsView {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)));
         let inner = block.inner(overlay_area);
         self.detail_content_scrollbar_metrics(inner)
     }

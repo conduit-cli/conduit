@@ -4433,6 +4433,7 @@ impl App {
             use crate::ui::components::Spinner;
             use ratatui::layout::Alignment;
             use ratatui::style::{Color, Style};
+            use ratatui::symbols::border;
             use ratatui::text::Line;
             use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
@@ -4448,10 +4449,11 @@ impl App {
             // Clear the area first
             Clear.render(dialog_area, f.buffer_mut());
 
-            // Render dialog box
+            // Render dialog box with rounded corners
             let block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan));
+                .border_set(border::ROUNDED)
+                .border_style(Style::default().fg(Color::Rgb(130, 170, 255)));
 
             let inner = block.inner(dialog_area);
             block.render(dialog_area, f.buffer_mut());
@@ -4459,7 +4461,7 @@ impl App {
             // Render spinner and message
             let spinner = Spinner::dots();
             let line = Line::from(vec![
-                spinner.span(Color::Cyan),
+                spinner.span(Color::Rgb(130, 170, 255)),
                 ratatui::text::Span::raw(" Removing project..."),
             ]);
 

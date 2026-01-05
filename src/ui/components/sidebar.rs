@@ -4,11 +4,12 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
+    symbols::border,
     widgets::{Block, Borders, StatefulWidget},
 };
 
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
-use super::{SELECTED_BG, SELECTED_BG_DIM};
+use super::{ACCENT_PRIMARY, BORDER_DEFAULT, SELECTED_BG, SELECTED_BG_DIM};
 
 /// Sidebar widget for workspace navigation
 pub struct Sidebar<'a> {
@@ -115,14 +116,15 @@ impl StatefulWidget for Sidebar<'_> {
 
         // Determine border color based on focus
         let border_style = if state.focused {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(ACCENT_PRIMARY)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(BORDER_DEFAULT)
         };
 
         let block = Block::default()
             .title(self.title)
             .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(border_style);
 
         // Create and render tree view

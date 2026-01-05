@@ -4,11 +4,12 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
+    symbols::border,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use super::{render_key_hints, KeyHintBarStyle};
+use super::{render_key_hints, KeyHintBarStyle, ACCENT_PRIMARY};
 // Re-export Widget for use in render methods
 pub use ratatui::widgets::Widget as WidgetTrait;
 
@@ -26,7 +27,7 @@ impl<'a> DialogFrame<'a> {
             title,
             width,
             height,
-            border_color: Color::Cyan,
+            border_color: ACCENT_PRIMARY,
         }
     }
 
@@ -55,10 +56,11 @@ impl<'a> DialogFrame<'a> {
         // Clear the dialog area
         Clear.render(dialog_area, buf);
 
-        // Render dialog border
+        // Render dialog border with rounded corners
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(Style::default().fg(self.border_color));
 
         let inner = block.inner(dialog_area);

@@ -4,6 +4,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    symbols::border,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
@@ -193,10 +194,11 @@ impl ModelSelector {
         // Clear the dialog area
         Clear.render(dialog_area, buf);
 
-        // Render dialog border
+        // Render dialog border with rounded corners
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray));
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)));
 
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);
