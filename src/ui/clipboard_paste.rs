@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use tempfile::Builder;
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,7 @@ pub struct PastedImageInfo {
 }
 
 /// Capture image from system clipboard, encode to PNG, and return bytes + info.
+#[cfg(not(target_os = "macos"))]
 pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageError> {
     let mut cb = arboard::Clipboard::new()
         .map_err(|e| PasteImageError::ClipboardUnavailable(e.to_string()))?;
@@ -72,6 +75,51 @@ pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImag
         .keep()
         .map_err(|e| PasteImageError::IoError(e.error.to_string()))?;
     Ok((path, info))
+}
+
+#[cfg(target_os = "macos")]
+pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImageError> {
+    let tmp = Builder::new()
+        .prefix("conduit-clipboard-")
+        .suffix(".png")
+        .tempfile()
+        .map_err(|e| PasteImageError::IoError(e.to_string()))?;
+    let (_file, path) = tmp
+        .keep()
+        .map_err(|e| PasteImageError::IoError(e.error.to_string()))?;
+
+    let path_str = path.to_string_lossy().replace('"', "\\\"");
+    let script = format!(
+        r#"set theFile to POSIX file "{path_str}"
+try
+  set pngData to the clipboard as «class PNGf»
+  set fRef to open for access theFile with write permission
+  set eof fRef to 0
+  write pngData to fRef
+  close access fRef
+on error
+  try
+    close access theFile
+  end try
+  error "no image"
+end try"#
+    );
+
+    let status = Command::new("osascript")
+        .args(["-e", &script])
+        .status()
+        .map_err(|e| PasteImageError::ClipboardUnavailable(e.to_string()))?;
+
+    if !status.success() {
+        return Err(PasteImageError::NoImage(
+            "no image on clipboard".to_string(),
+        ));
+    }
+
+    let (width, height) =
+        image::image_dimensions(&path).map_err(|e| PasteImageError::EncodeFailed(e.to_string()))?;
+
+    Ok((path, PastedImageInfo { width, height }))
 }
 
 /// Normalize pasted text that may represent a filesystem path.
