@@ -1,11 +1,6 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::{Paragraph, Widget},
-};
+use ratatui::{buffer::Buffer, layout::Rect};
 
+use crate::ui::components::{render_key_hints, KeyHintBarStyle, FOOTER_BG, KEY_HINT_BG};
 use crate::ui::events::ViewMode;
 
 /// Global footer showing keyboard shortcuts in neovim style
@@ -63,37 +58,12 @@ impl GlobalFooter {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut spans = Vec::new();
-
-        // Leading space
-        spans.push(Span::raw(" "));
-
-        for (i, (key, action)) in self.hints.iter().enumerate() {
-            if i > 0 {
-                // Spacing between items
-                spans.push(Span::raw("   "));
-            }
-
-            // Key with subtle background highlight
-            spans.push(Span::styled(
-                format!(" {} ", key),
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Rgb(60, 60, 60)),
-            ));
-
-            // Action text
-            spans.push(Span::styled(
-                format!(" {}", action),
-                Style::default().fg(Color::Rgb(120, 120, 120)),
-            ));
-        }
-
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line)
-            .style(Style::default().bg(Color::Rgb(25, 25, 25)));
-
-        paragraph.render(area, buf);
+        render_key_hints(
+            area,
+            buf,
+            &self.hints,
+            KeyHintBarStyle::footer_bar(KEY_HINT_BG, FOOTER_BG),
+        );
     }
 }
 

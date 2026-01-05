@@ -7,13 +7,15 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 
 use crate::config::{KeybindingConfig, KeyContext};
 use crate::ui::action::Action;
 
-use super::{DialogFrame, InstructionBar, TextInputState};
+use super::{
+    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarSymbols, TextInputState,
+};
 
 /// A keybinding entry for display
 #[derive(Debug, Clone)]
@@ -482,21 +484,14 @@ impl HelpDialog {
     }
 
     fn render_scrollbar(&self, area: Rect, buf: &mut Buffer, state: &HelpDialogState) {
-        if state.total_lines <= state.visible_height {
-            return;
-        }
-
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("▲"))
-            .end_symbol(Some("▼"))
-            .track_symbol(Some("│"))
-            .thumb_symbol("█");
-
-        let mut scrollbar_state = ScrollbarState::new(
-            state.total_lines.saturating_sub(state.visible_height)
-        ).position(state.scroll_offset);
-
-        scrollbar.render(area, buf, &mut scrollbar_state);
+        render_vertical_scrollbar(
+            area,
+            buf,
+            state.total_lines,
+            state.visible_height,
+            state.scroll_offset,
+            ScrollbarSymbols::standard(),
+        );
     }
 }
 

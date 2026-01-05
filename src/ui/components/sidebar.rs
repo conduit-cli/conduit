@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
+use super::{SELECTED_BG, SELECTED_BG_DIM};
 
 /// Sidebar widget for workspace navigation
 pub struct Sidebar<'a> {
@@ -130,9 +131,9 @@ impl StatefulWidget for Sidebar<'_> {
             .selected_style(
                 Style::default()
                     .bg(if state.focused {
-                        Color::Rgb(40, 60, 80)
+                        SELECTED_BG
                     } else {
-                        Color::Rgb(30, 30, 30)
+                        SELECTED_BG_DIM
                     })
                     .fg(Color::White),
             );

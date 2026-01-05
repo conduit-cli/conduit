@@ -8,19 +8,13 @@ use ratatui::{
 };
 use std::path::PathBuf;
 
-use super::{DialogFrame, InstructionBar, StatusLine, TextInputState};
+use super::{DialogFrame, InstructionBar, PathInputState, StatusLine};
 
 /// State for the add repository dialog
 #[derive(Debug, Clone)]
 pub struct AddRepoDialogState {
-    /// Text input state
-    pub text: TextInputState,
-    /// Whether the dialog is visible
-    pub visible: bool,
-    /// Validation error message
-    pub error: Option<String>,
-    /// Whether the path is valid
-    pub is_valid: bool,
+    /// Shared path input state (includes visibility and validation)
+    pub path: PathInputState,
     /// Extracted repository name
     pub repo_name: Option<String>,
 }
@@ -34,92 +28,84 @@ impl Default for AddRepoDialogState {
 impl AddRepoDialogState {
     pub fn new() -> Self {
         Self {
-            text: TextInputState::new(),
-            visible: false,
-            error: None,
-            is_valid: false,
+            path: PathInputState::new(),
             repo_name: None,
         }
     }
 
     /// Show the dialog
     pub fn show(&mut self) {
-        self.visible = true;
-        self.text.clear();
-        self.error = None;
-        self.is_valid = false;
+        self.path.show();
+        self.path.text.clear();
         self.repo_name = None;
     }
 
     /// Hide the dialog
     pub fn hide(&mut self) {
-        self.visible = false;
+        self.path.hide();
     }
 
     /// Get the current input value
     pub fn input(&self) -> &str {
-        self.text.value()
+        self.path.input()
     }
 
     // Delegate text input methods with validation
     pub fn insert_char(&mut self, c: char) {
-        self.text.insert_char(c);
+        self.path.insert_char(c);
         self.validate();
     }
 
     pub fn delete_char(&mut self) {
-        self.text.delete_char();
+        self.path.delete_char();
         self.validate();
     }
 
     pub fn delete_forward(&mut self) {
-        self.text.delete_forward();
+        self.path.delete_forward();
         self.validate();
     }
 
     pub fn move_left(&mut self) {
-        self.text.move_left();
+        self.path.move_left();
     }
 
     pub fn move_right(&mut self) {
-        self.text.move_right();
+        self.path.move_right();
     }
 
     pub fn move_start(&mut self) {
-        self.text.move_start();
+        self.path.move_start();
     }
 
     pub fn move_end(&mut self) {
-        self.text.move_end();
+        self.path.move_end();
     }
 
     /// Validate the current input path
     pub fn validate(&mut self) {
-        let input = self.text.value();
+        let input = self.path.input();
 
         // Check if path is empty
         if input.is_empty() {
-            self.error = None;
-            self.is_valid = false;
+            self.path.set_invalid();
             self.repo_name = None;
             return;
         }
 
         // Expand ~ to home directory
-        let expanded_path = self.expanded_path();
+        let expanded_path = self.path.expanded_path();
 
         // Check if path exists
         if !expanded_path.exists() {
-            self.error = Some("Path does not exist".to_string());
-            self.is_valid = false;
+            self.path.set_error("Path does not exist");
             self.repo_name = None;
             return;
         }
 
         // Check if it's a directory
         if !expanded_path.is_dir() {
-            self.error = Some("Path is not a directory".to_string());
-            self.is_valid = false;
+            self.path.set_error("Path is not a directory");
             self.repo_name = None;
             return;
         }
@@ -127,8 +113,8 @@ impl AddRepoDialogState {
         // Check for .git directory
         let git_dir = expanded_path.join(".git");
         if !git_dir.exists() {
-            self.error = Some("Not a git repository (no .git directory)".to_string());
-            self.is_valid = false;
+            self.path
+                .set_error("Not a git repository (no .git directory)");
             self.repo_name = None;
             return;
         }
@@ -139,24 +125,27 @@ impl AddRepoDialogState {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
 
-        self.error = None;
-        self.is_valid = true;
+        self.path.set_valid();
     }
 
     /// Get the expanded path
     pub fn expanded_path(&self) -> PathBuf {
-        let input = self.text.value();
-        if input.starts_with('~') {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(input[1..].trim_start_matches('/'));
-            }
-        }
-        PathBuf::from(input)
+        self.path.expanded_path()
     }
 
     /// Check if dialog is visible
     pub fn is_visible(&self) -> bool {
-        self.visible
+        self.path.is_visible()
+    }
+
+    /// Validation error message
+    pub fn error(&self) -> Option<&str> {
+        self.path.error.as_deref()
+    }
+
+    /// Whether the path is valid
+    pub fn is_valid(&self) -> bool {
+        self.path.is_valid
     }
 }
 
@@ -170,7 +159,7 @@ impl AddRepoDialog {
 
     /// Render the dialog
     pub fn render(&self, area: Rect, buf: &mut Buffer, state: &AddRepoDialogState) {
-        if !state.visible {
+        if !state.is_visible() {
             return;
         }
 
@@ -195,9 +184,9 @@ impl AddRepoDialog {
         label.render(chunks[0], buf);
 
         // Render input field
-        let input_style = if state.is_valid {
+        let input_style = if state.is_valid() {
             Style::default().fg(Color::Green)
-        } else if state.error.is_some() {
+        } else if state.error().is_some() {
             Style::default().fg(Color::Red)
         } else {
             Style::default().fg(Color::White)
@@ -211,7 +200,7 @@ impl AddRepoDialog {
         input_block.render(chunks[2], buf);
 
         // Render input text with cursor and placeholder
-        state.text.render_with_placeholder(
+        state.path.text.render_with_placeholder(
             input_inner,
             buf,
             Style::default().fg(Color::White),
@@ -224,7 +213,7 @@ impl AddRepoDialog {
             "Valid repository: {}",
             state.repo_name.as_deref().unwrap_or("repository")
         );
-        let status = StatusLine::from_result(state.error.as_deref(), state.is_valid, &success_msg);
+        let status = StatusLine::from_result(state.error(), state.is_valid(), &success_msg);
         status.render(chunks[3], buf);
 
         // Render instructions

@@ -6,10 +6,13 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 
-use super::{DialogFrame, InstructionBar, TextInputState};
+use super::{
+    render_vertical_scrollbar, DialogFrame, InstructionBar, SearchableListState,
+    ScrollbarSymbols, SELECTED_BG,
+};
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
 
@@ -64,20 +67,12 @@ impl AgentFilter {
 pub struct SessionImportPickerState {
     /// Whether the dialog is visible
     pub visible: bool,
-    /// Search/filter input
-    pub search: TextInputState,
     /// All discovered sessions
     pub sessions: Vec<ExternalSession>,
-    /// Indices of sessions matching the filter
-    pub filtered: Vec<usize>,
-    /// Currently selected index in the filtered list
-    pub selected: usize,
     /// Agent type filter
     pub agent_filter: AgentFilter,
-    /// Maximum visible items in the list
-    pub max_visible: usize,
-    /// Scroll offset for the list
-    pub scroll_offset: usize,
+    /// Searchable list state
+    pub list: SearchableListState,
     /// Whether currently loading sessions
     pub loading: bool,
     /// Error message if discovery failed
@@ -96,13 +91,9 @@ impl SessionImportPickerState {
     pub fn new() -> Self {
         Self {
             visible: false,
-            search: TextInputState::new(),
             sessions: Vec::new(),
-            filtered: Vec::new(),
-            selected: 0,
             agent_filter: AgentFilter::All,
-            max_visible: 10,
-            scroll_offset: 0,
+            list: SearchableListState::new(10),
             loading: false,
             error: None,
             spinner_frame: 0,
@@ -119,9 +110,7 @@ impl SessionImportPickerState {
     /// Show the picker and discover sessions
     pub fn show(&mut self) {
         self.visible = true;
-        self.search.clear();
-        self.selected = 0;
-        self.scroll_offset = 0;
+        self.list.reset();
         self.agent_filter = AgentFilter::All;
         self.error = None;
         self.loading = true;
@@ -147,8 +136,8 @@ impl SessionImportPickerState {
 
     /// Filter sessions based on search string and agent type
     pub fn filter(&mut self) {
-        let query = self.search.value().to_lowercase();
-        self.filtered = self
+        let query = self.list.search.value().to_lowercase();
+        let filtered = self
             .sessions
             .iter()
             .enumerate()
@@ -174,12 +163,7 @@ impl SessionImportPickerState {
             })
             .map(|(i, _)| i)
             .collect();
-
-        // Reset selection if out of bounds
-        if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len().saturating_sub(1);
-        }
-        self.scroll_offset = 0;
+        self.list.set_filtered(filtered);
     }
 
     /// Cycle agent filter
@@ -190,59 +174,49 @@ impl SessionImportPickerState {
 
     // Delegate search input methods
     pub fn insert_char(&mut self, c: char) {
-        self.search.insert_char(c);
+        self.list.search.insert_char(c);
         self.filter();
     }
 
     pub fn delete_char(&mut self) {
-        self.search.delete_char();
+        self.list.search.delete_char();
         self.filter();
     }
 
     pub fn delete_forward(&mut self) {
-        self.search.delete_forward();
+        self.list.search.delete_forward();
         self.filter();
     }
 
     pub fn move_cursor_left(&mut self) {
-        self.search.move_left();
+        self.list.search.move_left();
     }
 
     pub fn move_cursor_right(&mut self) {
-        self.search.move_right();
+        self.list.search.move_right();
     }
 
     pub fn move_cursor_start(&mut self) {
-        self.search.move_start();
+        self.list.search.move_start();
     }
 
     pub fn move_cursor_end(&mut self) {
-        self.search.move_end();
+        self.list.search.move_end();
     }
 
     pub fn clear_search(&mut self) {
-        self.search.clear();
+        self.list.search.clear();
         self.filter();
     }
 
     /// Select previous item
     pub fn select_prev(&mut self) {
-        if !self.filtered.is_empty() && self.selected > 0 {
-            self.selected -= 1;
-            if self.selected < self.scroll_offset {
-                self.scroll_offset = self.selected;
-            }
-        }
+        self.list.select_prev();
     }
 
     /// Select next item
     pub fn select_next(&mut self) {
-        if !self.filtered.is_empty() && self.selected < self.filtered.len() - 1 {
-            self.selected += 1;
-            if self.selected >= self.scroll_offset + self.max_visible {
-                self.scroll_offset = self.selected - self.max_visible + 1;
-            }
-        }
+        self.list.select_next();
     }
 
     // ============ Incremental Update Methods ============
@@ -279,50 +253,24 @@ impl SessionImportPickerState {
 
     /// Page up
     pub fn page_up(&mut self) {
-        if !self.filtered.is_empty() {
-            let page_size = self.max_visible;
-            if self.selected >= page_size {
-                self.selected -= page_size;
-            } else {
-                self.selected = 0;
-            }
-            if self.selected < self.scroll_offset {
-                self.scroll_offset = self.selected;
-            }
-        }
+        self.list.page_up();
     }
 
     /// Page down
     pub fn page_down(&mut self) {
-        if !self.filtered.is_empty() {
-            let page_size = self.max_visible;
-            let max_idx = self.filtered.len().saturating_sub(1);
-            if self.selected + page_size <= max_idx {
-                self.selected += page_size;
-            } else {
-                self.selected = max_idx;
-            }
-            if self.selected >= self.scroll_offset + self.max_visible {
-                self.scroll_offset = self.selected.saturating_sub(self.max_visible - 1);
-            }
-        }
+        self.list.page_down();
     }
 
     /// Select item at a given visual row (for mouse clicks)
     pub fn select_at_row(&mut self, row: usize) -> bool {
-        let target_idx = self.scroll_offset + row;
-        if target_idx < self.filtered.len() {
-            self.selected = target_idx;
-            true
-        } else {
-            false
-        }
+        self.list.select_at_row(row)
     }
 
     /// Get the currently selected session
     pub fn selected_session(&self) -> Option<&ExternalSession> {
-        self.filtered
-            .get(self.selected)
+        self.list
+            .filtered
+            .get(self.list.selected)
             .and_then(|&idx| self.sessions.get(idx))
     }
 
@@ -378,12 +326,12 @@ impl SessionImportPicker {
         self.render_tab_bar(chunks[0], buf, state);
 
         // Render search with placeholder
-        let search_display = if state.search.is_empty() {
+        let search_display = if state.list.search.is_empty() {
             "Search: (type to filter)".to_string()
         } else {
-            format!("Search: {}", state.search.value())
+            format!("Search: {}", state.list.search.value())
         };
-        let search_style = if state.search.is_empty() {
+        let search_style = if state.list.search.is_empty() {
             Style::default().fg(Color::DarkGray)
         } else {
             Style::default().fg(Color::White)
@@ -392,8 +340,8 @@ impl SessionImportPicker {
         search_label.render(chunks[1], buf);
 
         // Render cursor in search field
-        if !state.search.is_empty() || state.search.cursor > 0 {
-            let cursor_x = chunks[1].x + 8 + state.search.cursor as u16;
+        if !state.list.search.is_empty() || state.list.search.cursor > 0 {
+            let cursor_x = chunks[1].x + 8 + state.list.search.cursor as u16;
             if cursor_x < chunks[1].x + chunks[1].width {
                 buf[(cursor_x, chunks[1].y)]
                     .set_style(Style::default().add_modifier(Modifier::REVERSED));
@@ -420,7 +368,7 @@ impl SessionImportPicker {
                 .style(Style::default().fg(Color::Red))
                 .alignment(Alignment::Center);
             error_msg.render(list_area, buf);
-        } else if state.filtered.is_empty() {
+        } else if state.list.filtered.is_empty() {
             let empty_msg = if state.sessions.is_empty() {
                 "No sessions found"
             } else {
@@ -474,7 +422,7 @@ impl SessionImportPicker {
         // Show count
         let count = format!(
             "({}/{})",
-            state.filtered.len(),
+            state.list.filtered.len(),
             state.sessions.len()
         );
         let count_len = count.len() as u16;
@@ -503,14 +451,15 @@ impl SessionImportPicker {
         let visible_count = area.height as usize;
 
         for (i, &session_idx) in state
+            .list
             .filtered
             .iter()
-            .skip(state.scroll_offset)
+            .skip(state.list.scroll_offset)
             .take(visible_count)
             .enumerate()
         {
             let session = &state.sessions[session_idx];
-            let is_selected = state.scroll_offset + i == state.selected;
+            let is_selected = state.list.scroll_offset + i == state.list.selected;
             let y = area.y + i as u16;
 
             if y >= area.y + area.height {
@@ -535,7 +484,7 @@ impl SessionImportPicker {
 
             // Background for selected row
             let bg_style = if is_selected {
-                Style::default().bg(Color::Rgb(40, 60, 80))
+                Style::default().bg(SELECTED_BG)
             } else {
                 Style::default()
             };
@@ -607,29 +556,20 @@ impl SessionImportPicker {
         }
 
         // Render scrollbar if needed
-        let total_filtered = state.filtered.len();
-        if total_filtered > visible_count {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("▲"))
-                .end_symbol(Some("▼"))
-                .track_symbol(Some("│"))
-                .thumb_symbol("█");
-
-            let max_scroll = total_filtered.saturating_sub(visible_count);
-            let mut scrollbar_state =
-                ScrollbarState::new(max_scroll).position(state.scroll_offset);
-
-            scrollbar.render(
-                Rect {
-                    x: area.x + area.width - 1,
-                    y: area.y,
-                    width: 1,
-                    height: area.height,
-                },
-                buf,
-                &mut scrollbar_state,
-            );
-        }
+        let total_filtered = state.list.filtered.len();
+        render_vertical_scrollbar(
+            Rect {
+                x: area.x + area.width - 1,
+                y: area.y,
+                width: 1,
+                height: area.height,
+            },
+            buf,
+            total_filtered,
+            visible_count,
+            state.list.scroll_offset,
+            ScrollbarSymbols::standard(),
+        );
     }
 }
 

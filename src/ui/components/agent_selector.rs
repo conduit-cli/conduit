@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::agent::AgentType;
 
-use super::{DialogFrame, InstructionBar};
+use super::{DialogFrame, InstructionBar, SELECTED_BG};
 
 /// State for the agent selector dialog
 #[derive(Debug, Clone)]
@@ -168,7 +168,7 @@ impl AgentSelector {
                     if row_y < chunks[chunk_idx].y + chunks[chunk_idx].height {
                         for dx in 0..chunks[chunk_idx].width {
                             buf[(chunks[chunk_idx].x + dx, row_y)]
-                                .set_bg(Color::Rgb(40, 60, 80));
+                                .set_bg(SELECTED_BG);
                         }
                     }
                 }

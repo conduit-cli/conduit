@@ -7,362 +7,13 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        StatefulWidget, Widget, Wrap,
+        Block, Borders, Clear, Paragraph, Widget, Wrap,
     },
 };
 use serde_json::Value;
 
-/// State for the event detail panel
-#[derive(Debug, Clone, Default)]
-pub struct EventDetailState {
-    /// Whether the detail panel is visible
-    pub visible: bool,
-    /// Index of the event being viewed
-    pub event_index: usize,
-    /// Scroll offset within the detail content
-    pub scroll_offset: usize,
-}
-
-impl EventDetailState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Open the detail panel for a specific event
-    pub fn open(&mut self, event_index: usize) {
-        self.visible = true;
-        self.event_index = event_index;
-        self.scroll_offset = 0;
-    }
-
-    /// Close the detail panel
-    pub fn close(&mut self) {
-        self.visible = false;
-    }
-
-    /// Toggle the detail panel visibility
-    pub fn toggle(&mut self) {
-        self.visible = !self.visible;
-        self.scroll_offset = 0;
-    }
-
-    /// Sync to a new event index (resets scroll)
-    pub fn sync_to_event(&mut self, event_index: usize) {
-        if self.event_index != event_index {
-            self.event_index = event_index;
-            self.scroll_offset = 0;
-        }
-    }
-
-    /// Scroll up by n lines
-    pub fn scroll_up(&mut self, n: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(n);
-    }
-
-    /// Scroll down by n lines (clamped to max)
-    pub fn scroll_down(&mut self, n: usize, content_height: usize, visible_height: usize) {
-        let max_scroll = content_height.saturating_sub(visible_height);
-        self.scroll_offset = (self.scroll_offset + n).min(max_scroll);
-    }
-
-    /// Scroll up by a page
-    pub fn page_up(&mut self, visible_height: usize) {
-        self.scroll_up(visible_height.saturating_sub(2));
-    }
-
-    /// Scroll down by a page
-    pub fn page_down(&mut self, visible_height: usize, content_height: usize) {
-        self.scroll_down(visible_height.saturating_sub(2), content_height, visible_height);
-    }
-
-    /// Jump to top
-    pub fn scroll_to_top(&mut self) {
-        self.scroll_offset = 0;
-    }
-
-    /// Jump to bottom
-    pub fn scroll_to_bottom(&mut self, content_height: usize, visible_height: usize) {
-        self.scroll_offset = content_height.saturating_sub(visible_height);
-    }
-}
-
-/// Minimum width for split layout (below this, use overlay)
-pub const DETAIL_PANEL_BREAKPOINT: u16 = 100;
-
-/// Direction of the event (sent to agent or received from agent)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventDirection {
-    Sent,
-    Received,
-}
-
-impl EventDirection {
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            EventDirection::Sent => "→",
-            EventDirection::Received => "←",
-        }
-    }
-
-    pub fn color(&self) -> Color {
-        match self {
-            EventDirection::Sent => Color::Green,
-            EventDirection::Received => Color::Cyan,
-        }
-    }
-}
-
-/// A single raw event entry
-#[derive(Debug, Clone)]
-pub struct RawEventEntry {
-    /// When the event occurred (relative to session start)
-    pub timestamp: Instant,
-    /// Direction of the event
-    pub direction: EventDirection,
-    /// Event type name
-    pub event_type: String,
-    /// Raw JSON value
-    pub raw_json: Value,
-    /// Session start time (for relative timestamp display)
-    pub session_start: Instant,
-}
-
-impl RawEventEntry {
-    pub fn new(
-        direction: EventDirection,
-        event_type: impl Into<String>,
-        raw_json: Value,
-        session_start: Instant,
-    ) -> Self {
-        Self {
-            timestamp: Instant::now(),
-            direction,
-            event_type: event_type.into(),
-            raw_json,
-            session_start,
-        }
-    }
-
-    /// Format timestamp as MM:SS.mmm relative to session start
-    fn format_timestamp(&self) -> String {
-        let elapsed = self.timestamp.duration_since(self.session_start);
-        let total_secs = elapsed.as_secs();
-        let mins = total_secs / 60;
-        let secs = total_secs % 60;
-        let millis = elapsed.subsec_millis();
-        format!("{:02}:{:02}.{:03}", mins, secs, millis)
-    }
-
-    /// Render as compact single line with optional prefix
-    fn render_compact(&self, prefix: &str, style: Style) -> Line<'static> {
-        let timestamp = self.format_timestamp();
-        let summary = self.compact_summary();
-
-        Line::from(vec![
-            Span::styled(prefix.to_string(), Style::default().fg(Color::Cyan)),
-            Span::styled(
-                format!("[{}] ", timestamp),
-                style.fg(Color::DarkGray),
-            ),
-            Span::styled(
-                format!("{} ", self.direction.symbol()),
-                style.fg(self.direction.color()),
-            ),
-            Span::styled(
-                format!("{}: ", self.event_type),
-                style
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(summary, style.fg(Color::White)),
-        ])
-    }
-
-    /// Generate a compact one-line summary of the event
-    fn compact_summary(&self) -> String {
-        match &self.raw_json {
-            Value::Object(map) => {
-                // Try to extract meaningful fields
-                let mut parts = Vec::new();
-
-                // Common fields to show
-                for key in &["prompt", "text", "message", "content", "error", "result", "command", "file_path", "tool_name", "session_id"] {
-                    if let Some(val) = map.get(*key) {
-                        let val_str = match val {
-                            Value::String(s) => {
-                                if s.len() > 50 {
-                                    format!("\"{}...\"", &s[..47])
-                                } else {
-                                    format!("\"{}\"", s)
-                                }
-                            }
-                            Value::Bool(b) => b.to_string(),
-                            Value::Number(n) => n.to_string(),
-                            _ => continue,
-                        };
-                        parts.push(format!("{}={}", key, val_str));
-                        if parts.len() >= 3 {
-                            break;
-                        }
-                    }
-                }
-
-                if parts.is_empty() {
-                    // Fallback: show first few keys
-                    let keys: Vec<_> = map.keys().take(3).map(|k| k.as_str()).collect();
-                    format!("{{{}}}", keys.join(", "))
-                } else {
-                    parts.join(", ")
-                }
-            }
-            Value::String(s) => {
-                if s.len() > 60 {
-                    format!("\"{}...\"", &s[..57])
-                } else {
-                    format!("\"{}\"", s)
-                }
-            }
-            Value::Null => "null".to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Number(n) => n.to_string(),
-            Value::Array(arr) => format!("[{} items]", arr.len()),
-        }
-    }
-
-    /// Render JSON lines with syntax highlighting (for expanded view)
-    fn render_json_lines(&self, max_lines: usize) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        if let Ok(pretty) = serde_json::to_string_pretty(&self.raw_json) {
-            let json_lines: Vec<&str> = pretty.lines().collect();
-            let truncated = json_lines.len() > max_lines;
-            let display_lines = if truncated {
-                &json_lines[..max_lines.saturating_sub(1)]
-            } else {
-                &json_lines[..]
-            };
-
-            for json_line in display_lines {
-                let mut highlighted = vec![Span::raw("  ")]; // Indent
-                highlighted.extend(Self::highlight_json_line(json_line));
-                lines.push(Line::from(highlighted));
-            }
-
-            if truncated {
-                lines.push(Line::from(Span::styled(
-                    format!("  ... ({} more lines)", json_lines.len() - max_lines + 1),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-
-        lines
-    }
-
-    /// Apply syntax highlighting to a JSON line
-    fn highlight_json_line(line: &str) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
-        let mut chars = line.chars().peekable();
-        let mut current = String::new();
-        let mut in_string = false;
-        let mut is_key = false;
-
-        // Count leading whitespace for indentation (using peek to not consume first non-whitespace)
-        let mut indent = String::new();
-        while let Some(&ch) = chars.peek() {
-            if ch.is_whitespace() {
-                indent.push(ch);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-        if !indent.is_empty() {
-            spans.push(Span::raw(indent));
-        }
-
-        for ch in chars {
-            match ch {
-                '"' => {
-                    // Check if this quote is escaped (preceded by odd number of backslashes)
-                    let is_escaped = Self::is_escaped(&current);
-
-                    if in_string && !is_escaped {
-                        // End of string (unescaped quote)
-                        current.push(ch);
-                        let color = if is_key { Color::Cyan } else { Color::Green };
-                        spans.push(Span::styled(current.clone(), Style::default().fg(color)));
-                        current.clear();
-                        in_string = false;
-                        is_key = false;
-                    } else if !in_string {
-                        // Start of string
-                        if !current.is_empty() {
-                            spans.push(Span::raw(current.clone()));
-                            current.clear();
-                        }
-                        in_string = true;
-                        is_key = true;
-                        current.push(ch);
-                    } else {
-                        // Escaped quote inside string - just add it
-                        current.push(ch);
-                    }
-                }
-                ':' if !in_string => {
-                    if !current.is_empty() {
-                        spans.push(Span::raw(current.clone()));
-                        current.clear();
-                    }
-                    spans.push(Span::styled(":", Style::default().fg(Color::White)));
-                }
-                '{' | '}' | '[' | ']' | ',' if !in_string => {
-                    if !current.is_empty() {
-                        let style = Self::get_value_style(&current);
-                        spans.push(Span::styled(current.clone(), style));
-                        current.clear();
-                    }
-                    spans.push(Span::styled(
-                        ch.to_string(),
-                        Style::default().fg(Color::White),
-                    ));
-                }
-                _ => {
-                    current.push(ch);
-                }
-            }
-        }
-
-        if !current.is_empty() {
-            let style = Self::get_value_style(&current);
-            spans.push(Span::styled(current, style));
-        }
-
-        spans
-    }
-
-    /// Check if the current position is escaped (odd number of trailing backslashes)
-    fn is_escaped(current: &str) -> bool {
-        let trailing_backslashes = current.chars().rev().take_while(|&c| c == '\\').count();
-        trailing_backslashes % 2 == 1
-    }
-
-    /// Get style for a JSON value based on its type
-    fn get_value_style(value: &str) -> Style {
-        let trimmed = value.trim();
-        if trimmed == "true" || trimmed == "false" {
-            Style::default().fg(Color::Magenta)
-        } else if trimmed == "null" {
-            Style::default().fg(Color::DarkGray)
-        } else if trimmed.parse::<f64>().is_ok() {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::White)
-        }
-    }
-}
-
+use super::raw_events_types::{EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT};
+use super::{render_vertical_scrollbar, ScrollbarSymbols};
 /// View for displaying raw agent events with interactive selection
 pub struct RawEventsView {
     /// All recorded events
@@ -735,27 +386,19 @@ impl RawEventsView {
         let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         paragraph.render(inner, buf);
 
-        // Render scrollbar if content overflows
-        if total_lines > visible_height {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
-
-            let max_scroll = total_lines.saturating_sub(visible_height);
-            let mut scrollbar_state = ScrollbarState::new(max_scroll)
-                .position(self.scroll_offset);
-
-            scrollbar.render(
-                Rect {
-                    x: inner.x + inner.width,
-                    y: inner.y,
-                    width: 1,
-                    height: inner.height,
-                },
-                buf,
-                &mut scrollbar_state,
-            );
-        }
+        render_vertical_scrollbar(
+            Rect {
+                x: inner.x + inner.width,
+                y: inner.y,
+                width: 1,
+                height: inner.height,
+            },
+            buf,
+            total_lines,
+            visible_height,
+            self.scroll_offset,
+            ScrollbarSymbols::arrows(),
+        );
     }
 
     /// Render the detail panel (split mode - right side)
@@ -845,26 +488,19 @@ impl RawEventsView {
         let paragraph = Paragraph::new(visible_lines);
         paragraph.render(area, buf);
 
-        // Render scrollbar if content overflows
-        if total_lines > visible_height {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
-
-            let mut scrollbar_state =
-                ScrollbarState::new(max_scroll).position(self.event_detail.scroll_offset);
-
-            scrollbar.render(
-                Rect {
-                    x: area.x + area.width,
-                    y: area.y,
-                    width: 1,
-                    height: area.height,
-                },
-                buf,
-                &mut scrollbar_state,
-            );
-        }
+        render_vertical_scrollbar(
+            Rect {
+                x: area.x + area.width,
+                y: area.y,
+                width: 1,
+                height: area.height,
+            },
+            buf,
+            total_lines,
+            visible_height,
+            self.event_detail.scroll_offset,
+            ScrollbarSymbols::arrows(),
+        );
     }
 
     /// Ensure the selected item is visible in the viewport

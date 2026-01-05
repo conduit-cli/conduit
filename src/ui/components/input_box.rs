@@ -3,12 +3,12 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     widgets::{
-        Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        StatefulWidget, Widget, Wrap,
+        Block, Borders, Paragraph, Widget, Wrap,
     },
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use super::{render_vertical_scrollbar, ScrollbarSymbols};
 /// Text input component with cursor and history
 pub struct InputBox {
     /// Current input text
@@ -545,25 +545,19 @@ impl InputBox {
         paragraph.render(inner, buf);
 
         // Render scrollbar if content exceeds visible area
-        if total_lines > visible_lines {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
-
-            let mut scrollbar_state = ScrollbarState::new(max_scroll)
-                .position(self.scroll_offset);
-
-            scrollbar.render(
-                Rect {
-                    x: inner.x + inner.width,
-                    y: inner.y,
-                    width: 1,
-                    height: inner.height,
-                },
-                buf,
-                &mut scrollbar_state,
-            );
-        }
+        render_vertical_scrollbar(
+            Rect {
+                x: inner.x + inner.width,
+                y: inner.y,
+                width: 1,
+                height: inner.height,
+            },
+            buf,
+            total_lines,
+            visible_lines,
+            self.scroll_offset,
+            ScrollbarSymbols::arrows(),
+        );
     }
 }
 

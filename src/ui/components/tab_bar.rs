@@ -6,6 +6,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
+use super::TAB_BAR_BG;
 /// Spinner animation frames
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -152,7 +153,7 @@ impl TabBar {
 
         let line = Line::from(spans);
         let paragraph = Paragraph::new(line)
-            .style(Style::default().bg(Color::Rgb(20, 20, 20)));
+            .style(Style::default().bg(TAB_BAR_BG));
 
         paragraph.render(area, buf);
     }

@@ -4,11 +4,14 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{Paragraph, Widget},
 };
 use std::path::PathBuf;
 
-use super::{DialogFrame, InstructionBar, TextInputState};
+use super::{
+    render_vertical_scrollbar, DialogFrame, InstructionBar, SearchableListState,
+    ScrollbarSymbols, SELECTED_BG,
+};
 
 /// A project entry (directory with .git)
 #[derive(Debug, Clone)]
@@ -24,20 +27,12 @@ pub struct ProjectEntry {
 pub struct ProjectPickerState {
     /// Whether the dialog is visible
     pub visible: bool,
-    /// Search/filter input
-    pub search: TextInputState,
     /// All projects found in base directory
     pub projects: Vec<ProjectEntry>,
-    /// Indices of projects matching the search filter
-    pub filtered: Vec<usize>,
-    /// Currently selected index in the filtered list
-    pub selected: usize,
     /// Base directory being scanned
     pub base_dir: PathBuf,
-    /// Maximum visible items in the list
-    pub max_visible: usize,
-    /// Scroll offset for the list
-    pub scroll_offset: usize,
+    /// Searchable list state
+    pub list: SearchableListState,
 }
 
 impl Default for ProjectPickerState {
@@ -50,13 +45,9 @@ impl ProjectPickerState {
     pub fn new() -> Self {
         Self {
             visible: false,
-            search: TextInputState::new(),
             projects: Vec::new(),
-            filtered: Vec::new(),
-            selected: 0,
             base_dir: PathBuf::new(),
-            max_visible: 10,
-            scroll_offset: 0,
+            list: SearchableListState::new(10),
         }
     }
 
@@ -64,9 +55,7 @@ impl ProjectPickerState {
     pub fn show(&mut self, base_dir: PathBuf) {
         self.visible = true;
         self.base_dir = base_dir;
-        self.search.clear();
-        self.selected = 0;
-        self.scroll_offset = 0;
+        self.list.reset();
         self.scan_directory();
         self.filter();
     }
@@ -110,8 +99,8 @@ impl ProjectPickerState {
 
     /// Filter projects based on search string
     pub fn filter(&mut self) {
-        let query = self.search.value().to_lowercase();
-        self.filtered = self
+        let query = self.list.search.value().to_lowercase();
+        let filtered = self
             .projects
             .iter()
             .enumerate()
@@ -124,122 +113,77 @@ impl ProjectPickerState {
             })
             .map(|(i, _)| i)
             .collect();
-
-        // Reset selection if out of bounds
-        if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len().saturating_sub(1);
-        }
-        self.scroll_offset = 0;
+        self.list.set_filtered(filtered);
     }
 
     // Delegate search input methods
     pub fn insert_char(&mut self, c: char) {
-        self.search.insert_char(c);
+        self.list.search.insert_char(c);
         self.filter();
     }
 
     pub fn delete_char(&mut self) {
-        self.search.delete_char();
+        self.list.search.delete_char();
         self.filter();
     }
 
     pub fn delete_forward(&mut self) {
-        self.search.delete_forward();
+        self.list.search.delete_forward();
         self.filter();
     }
 
     pub fn move_cursor_left(&mut self) {
-        self.search.move_left();
+        self.list.search.move_left();
     }
 
     pub fn move_cursor_right(&mut self) {
-        self.search.move_right();
+        self.list.search.move_right();
     }
 
     pub fn move_cursor_start(&mut self) {
-        self.search.move_start();
+        self.list.search.move_start();
     }
 
     pub fn move_cursor_end(&mut self) {
-        self.search.move_end();
+        self.list.search.move_end();
     }
 
     pub fn clear_search(&mut self) {
-        self.search.clear();
+        self.list.search.clear();
         self.filter();
     }
 
     /// Select previous item
     pub fn select_prev(&mut self) {
-        if !self.filtered.is_empty() && self.selected > 0 {
-            self.selected -= 1;
-            // Adjust scroll if needed
-            if self.selected < self.scroll_offset {
-                self.scroll_offset = self.selected;
-            }
-        }
+        self.list.select_prev();
     }
 
     /// Select next item
     pub fn select_next(&mut self) {
-        if !self.filtered.is_empty() && self.selected < self.filtered.len() - 1 {
-            self.selected += 1;
-            // Adjust scroll if needed
-            if self.selected >= self.scroll_offset + self.max_visible {
-                self.scroll_offset = self.selected - self.max_visible + 1;
-            }
-        }
+        self.list.select_next();
     }
 
     /// Page up (move up by visible count)
     pub fn page_up(&mut self) {
-        if !self.filtered.is_empty() {
-            let page_size = self.max_visible;
-            if self.selected >= page_size {
-                self.selected -= page_size;
-            } else {
-                self.selected = 0;
-            }
-            // Adjust scroll to keep selected visible
-            if self.selected < self.scroll_offset {
-                self.scroll_offset = self.selected;
-            }
-        }
+        self.list.page_up();
     }
 
     /// Page down (move down by visible count)
     pub fn page_down(&mut self) {
-        if !self.filtered.is_empty() {
-            let page_size = self.max_visible;
-            let max_idx = self.filtered.len().saturating_sub(1);
-            if self.selected + page_size <= max_idx {
-                self.selected += page_size;
-            } else {
-                self.selected = max_idx;
-            }
-            // Adjust scroll to keep selected visible
-            if self.selected >= self.scroll_offset + self.max_visible {
-                self.scroll_offset = self.selected.saturating_sub(self.max_visible - 1);
-            }
-        }
+        self.list.page_down();
     }
 
     /// Select item at a given visual row (for mouse clicks)
     /// Returns true if an item was selected
     pub fn select_at_row(&mut self, row: usize) -> bool {
-        let target_idx = self.scroll_offset + row;
-        if target_idx < self.filtered.len() {
-            self.selected = target_idx;
-            true
-        } else {
-            false
-        }
+        self.list.select_at_row(row)
     }
 
     /// Get the currently selected project
     pub fn selected_project(&self) -> Option<&ProjectEntry> {
-        self.filtered
-            .get(self.selected)
+        self.list
+            .filtered
+            .get(self.list.selected)
             .and_then(|&idx| self.projects.get(idx))
     }
 
@@ -269,7 +213,7 @@ impl ProjectPicker {
         }
 
         // Calculate dialog size
-        let list_height = state.max_visible.min(state.filtered.len().max(1)) as u16;
+        let list_height = state.list.visible_len() as u16;
         let dialog_height = 7 + list_height; // header + search + separator + list + footer
 
         // Render dialog frame
@@ -288,12 +232,12 @@ impl ProjectPicker {
         .split(inner);
 
         // Render search with placeholder
-        let search_display = if state.search.is_empty() {
+        let search_display = if state.list.search.is_empty() {
             "Search: (type to filter)".to_string()
         } else {
-            format!("Search: {}", state.search.value())
+            format!("Search: {}", state.list.search.value())
         };
-        let search_style = if state.search.is_empty() {
+        let search_style = if state.list.search.is_empty() {
             Style::default().fg(Color::DarkGray)
         } else {
             Style::default().fg(Color::White)
@@ -302,8 +246,8 @@ impl ProjectPicker {
         search_label.render(chunks[0], buf);
 
         // Render cursor in search field
-        if !state.search.is_empty() || state.search.cursor > 0 {
-            let cursor_x = chunks[0].x + 8 + state.search.cursor as u16; // "Search: " is 8 chars
+        if !state.list.search.is_empty() || state.list.search.cursor > 0 {
+            let cursor_x = chunks[0].x + 8 + state.list.search.cursor as u16; // "Search: " is 8 chars
             if cursor_x < chunks[0].x + chunks[0].width {
                 use ratatui::style::Modifier;
                 buf[(cursor_x, chunks[0].y)]
@@ -319,7 +263,7 @@ impl ProjectPicker {
 
         // Render project list
         let list_area = chunks[3];
-        if state.filtered.is_empty() {
+        if state.list.filtered.is_empty() {
             let empty_msg = if state.projects.is_empty() {
                 "No git projects found in this directory"
             } else {
@@ -333,14 +277,15 @@ impl ProjectPicker {
             // Render visible items
             let visible_count = list_area.height as usize;
             for (i, &project_idx) in state
+                .list
                 .filtered
                 .iter()
-                .skip(state.scroll_offset)
+                .skip(state.list.scroll_offset)
                 .take(visible_count)
                 .enumerate()
             {
                 let project = &state.projects[project_idx];
-                let is_selected = state.scroll_offset + i == state.selected;
+                let is_selected = state.list.scroll_offset + i == state.list.selected;
 
                 let y = list_area.y + i as u16;
                 if y >= list_area.y + list_area.height {
@@ -378,7 +323,7 @@ impl ProjectPicker {
                 let style = if is_selected {
                     Style::default()
                         .fg(Color::White)
-                        .bg(Color::Rgb(40, 60, 80))
+                        .bg(SELECTED_BG)
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -398,29 +343,20 @@ impl ProjectPicker {
             }
 
             // Render scrollbar if there are more items than visible
-            let total_filtered = state.filtered.len();
-            if total_filtered > visible_count {
-                let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("▲"))
-                    .end_symbol(Some("▼"))
-                    .track_symbol(Some("│"))
-                    .thumb_symbol("█");
-
-                let max_scroll = total_filtered.saturating_sub(visible_count);
-                let mut scrollbar_state = ScrollbarState::new(max_scroll)
-                    .position(state.scroll_offset);
-
-                scrollbar.render(
-                    Rect {
-                        x: list_area.x + list_area.width - 1,
-                        y: list_area.y,
-                        width: 1,
-                        height: list_area.height,
-                    },
-                    buf,
-                    &mut scrollbar_state,
-                );
-            }
+            let total_filtered = state.list.filtered.len();
+            render_vertical_scrollbar(
+                Rect {
+                    x: list_area.x + list_area.width - 1,
+                    y: list_area.y,
+                    width: 1,
+                    height: list_area.height,
+                },
+                buf,
+                total_filtered,
+                visible_count,
+                state.list.scroll_offset,
+                ScrollbarSymbols::standard(),
+            );
         }
 
         // Render instructions

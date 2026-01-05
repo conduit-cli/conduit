@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::agent::{AgentType, ModelRegistry, SessionId, TokenUsage};
-use crate::ui::components::Spinner;
+use crate::ui::components::{Spinner, STATUS_BAR_BG};
 
 /// Status bar component showing session info
 pub struct StatusBar {
@@ -291,7 +291,7 @@ impl StatusBar {
 
         let line = Line::from(spans);
         let paragraph = Paragraph::new(line)
-            .style(Style::default().bg(Color::Rgb(30, 30, 30)));
+            .style(Style::default().bg(STATUS_BAR_BG));
 
         paragraph.render(area, buf);
     }

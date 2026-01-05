@@ -2,12 +2,13 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Rect},
+    layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
+use super::{render_key_hints, KeyHintBarStyle};
 // Re-export Widget for use in render methods
 pub use ratatui::widgets::Widget as WidgetTrait;
 
@@ -84,20 +85,12 @@ impl<'a> InstructionBar<'a> {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let mut spans = Vec::new();
-        for (i, (key, desc)) in self.instructions.iter().enumerate() {
-            if i > 0 {
-                spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            }
-            spans.push(Span::styled(*key, Style::default().fg(Color::Cyan)));
-            spans.push(Span::styled(
-                format!(" {}", desc),
-                Style::default().fg(Color::Gray),
-            ));
-        }
-
-        let paragraph = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
-        paragraph.render(area, buf);
+        render_key_hints(
+            area,
+            buf,
+            &self.instructions,
+            KeyHintBarStyle::instruction_bar(),
+        );
     }
 }
 

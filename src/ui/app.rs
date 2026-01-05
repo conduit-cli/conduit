@@ -1141,7 +1141,7 @@ impl App {
                     }
                 }
                 InputMode::AddingRepository => {
-                    if self.state.add_repo_dialog_state.is_valid {
+                    if self.state.add_repo_dialog_state.is_valid() {
                         let repo_id = self.add_repository();
                         self.state.add_repo_dialog_state.hide();
                         if let Some(id) = repo_id {
@@ -1159,7 +1159,7 @@ impl App {
                     }
                 }
                 InputMode::SettingBaseDir => {
-                    if self.state.base_dir_dialog_state.is_valid {
+                    if self.state.base_dir_dialog_state.is_valid() {
                         if let Some(dao) = &self.app_state_dao {
                             if let Err(e) = dao.set(
                                 "projects_base_dir",
@@ -3083,8 +3083,8 @@ impl App {
         let list_height =
             self.state
                 .project_picker_state
-                .max_visible
-                .min(self.state.project_picker_state.filtered.len().max(1)) as u16;
+                .list
+                .visible_len() as u16;
         let dialog_height = 7 + list_height;
 
         // Calculate dialog position (centered)
