@@ -179,6 +179,18 @@ pub struct AppState {
     pub spinner_frame: usize,
     pub last_sidebar_click: Option<(Instant, usize)>,
     pub last_raw_events_click: Option<(Instant, usize)>,
+    pub scroll_drag: Option<ScrollDragTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollDragTarget {
+    Chat,
+    Input,
+    HelpDialog,
+    ProjectPicker,
+    SessionImport,
+    RawEventsList,
+    RawEventsDetail,
 }
 
 impl AppState {
@@ -215,6 +227,7 @@ impl AppState {
             spinner_frame: 0,
             last_sidebar_click: None,
             last_raw_events_click: None,
+            scroll_drag: None,
         }
     }
 }

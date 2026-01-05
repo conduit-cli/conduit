@@ -38,12 +38,12 @@ use crate::data::{
 };
 use crate::git::{PrManager, WorktreeManager};
 use crate::ui::action::Action;
-use crate::ui::app_state::AppState;
+use crate::ui::app_state::{AppState, ScrollDragTarget};
 use crate::ui::components::{
     AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage, ConfirmationContext,
     ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
-    ModelSelector, ProcessingState, ProjectPicker, SessionImportPicker, Sidebar, SidebarData,
-    TabBar,
+    ModelSelector, ProcessingState, ProjectPicker, RawEventsScrollbarMetrics, ScrollbarMetrics,
+    SessionImportPicker, Sidebar, SidebarData, TabBar, scrollbar_offset_from_point,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -2703,10 +2703,168 @@ impl App {
                 Ok(Vec::new())
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.handle_scrollbar_press(x, y) {
+                    return Ok(Vec::new());
+                }
                 // Handle left clicks based on position
                 self.handle_mouse_click(x, y).await
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.handle_scrollbar_drag(y) {
+                    return Ok(Vec::new());
+                }
+                Ok(Vec::new())
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.state.scroll_drag = None;
+                Ok(Vec::new())
+            }
             _ => Ok(Vec::new()),
+        }
+    }
+
+    fn handle_scrollbar_press(&mut self, x: u16, y: u16) -> bool {
+        if let Some(target) = self.scrollbar_target_at(x, y) {
+            self.state.scroll_drag = Some(target);
+            return self.apply_scrollbar_drag(target, y);
+        }
+        false
+    }
+
+    fn handle_scrollbar_drag(&mut self, y: u16) -> bool {
+        if let Some(target) = self.state.scroll_drag {
+            return self.apply_scrollbar_drag(target, y);
+        }
+        false
+    }
+
+    fn scrollbar_target_at(&mut self, x: u16, y: u16) -> Option<ScrollDragTarget> {
+        let mut targets = Vec::new();
+
+        if self.state.input_mode == InputMode::ShowingHelp {
+            targets.push(ScrollDragTarget::HelpDialog);
+        } else if self.state.input_mode == InputMode::PickingProject
+            && self.state.project_picker_state.is_visible()
+        {
+            targets.push(ScrollDragTarget::ProjectPicker);
+        } else if self.state.input_mode == InputMode::ImportingSession
+            && self.state.session_import_state.is_visible()
+        {
+            targets.push(ScrollDragTarget::SessionImport);
+        } else if self.state.view_mode == ViewMode::RawEvents {
+            targets.push(ScrollDragTarget::RawEventsDetail);
+            targets.push(ScrollDragTarget::RawEventsList);
+        } else {
+            if self.state.input_mode != InputMode::Command {
+                targets.push(ScrollDragTarget::Input);
+            }
+            targets.push(ScrollDragTarget::Chat);
+        }
+
+        for target in targets {
+            if let Some(metrics) = self.scrollbar_metrics_for_target(target) {
+                if Self::point_in_rect(x, y, metrics.area) {
+                    return Some(target);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn apply_scrollbar_drag(&mut self, target: ScrollDragTarget, y: u16) -> bool {
+        let Some(metrics) = self.scrollbar_metrics_for_target(target) else {
+            return false;
+        };
+
+        let new_offset = scrollbar_offset_from_point(y, metrics.area, metrics.total, metrics.visible);
+
+        match target {
+            ScrollDragTarget::Chat => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session
+                        .chat_view
+                        .set_scroll_from_top(new_offset, metrics.total, metrics.visible);
+                }
+            }
+            ScrollDragTarget::Input => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session
+                        .input_box
+                        .set_scroll_offset(new_offset, metrics.total, metrics.visible);
+                }
+            }
+            ScrollDragTarget::HelpDialog => {
+                let max_scroll = metrics.total.saturating_sub(metrics.visible);
+                self.state.help_dialog_state.scroll_offset = new_offset.min(max_scroll);
+            }
+            ScrollDragTarget::ProjectPicker => {
+                let max_scroll = metrics.total.saturating_sub(metrics.visible);
+                self.state.project_picker_state.list.scroll_offset =
+                    new_offset.min(max_scroll);
+            }
+            ScrollDragTarget::SessionImport => {
+                let max_scroll = metrics.total.saturating_sub(metrics.visible);
+                self.state.session_import_state.list.scroll_offset =
+                    new_offset.min(max_scroll);
+            }
+            ScrollDragTarget::RawEventsList => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session
+                        .raw_events_view
+                        .set_list_scroll_offset(new_offset, metrics.total, metrics.visible);
+                }
+            }
+            ScrollDragTarget::RawEventsDetail => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session
+                        .raw_events_view
+                        .set_detail_scroll_offset(new_offset, metrics.total, metrics.visible);
+                }
+            }
+        }
+
+        true
+    }
+
+    fn scrollbar_metrics_for_target(&mut self, target: ScrollDragTarget) -> Option<ScrollbarMetrics> {
+        let (width, height) = crossterm::terminal::size().unwrap_or((0, 0));
+        let screen = Rect::new(0, 0, width, height);
+
+        match target {
+            ScrollDragTarget::HelpDialog => {
+                self.state.help_dialog_state.scrollbar_metrics(screen)
+            }
+            ScrollDragTarget::ProjectPicker => self.state.project_picker_state.scrollbar_metrics(screen),
+            ScrollDragTarget::SessionImport => {
+                self.state.session_import_state.scrollbar_metrics(screen)
+            }
+            ScrollDragTarget::Chat => {
+                let area = self.state.chat_area?;
+                let session = self.state.tab_manager.active_session_mut()?;
+                session
+                    .chat_view
+                    .scrollbar_metrics(area, session.is_processing)
+            }
+            ScrollDragTarget::Input => {
+                let area = self.state.input_area?;
+                let session = self.state.tab_manager.active_session_mut()?;
+                session.input_box.scrollbar_metrics(area)
+            }
+            ScrollDragTarget::RawEventsList => {
+                let area = self.state.raw_events_area?;
+                let session = self.state.tab_manager.active_session_mut()?;
+                let RawEventsScrollbarMetrics { list, .. } =
+                    session.raw_events_view.scrollbar_metrics(area);
+                list
+            }
+            ScrollDragTarget::RawEventsDetail => {
+                let area = self.state.raw_events_area?;
+                let session = self.state.tab_manager.active_session_mut()?;
+                let RawEventsScrollbarMetrics { detail, .. } =
+                    session.raw_events_view.scrollbar_metrics(area);
+                detail
+            }
         }
     }
 
