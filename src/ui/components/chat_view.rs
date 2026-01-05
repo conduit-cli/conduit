@@ -809,10 +809,9 @@ impl ChatView {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("└─ {} ", status_icon),
-                Style::default().fg(status_color),
-            ),
+            Span::styled("└─ ", Style::default().fg(Color::Cyan)),
+            Span::styled(status_icon, Style::default().fg(status_color)),
+            Span::raw(" "),
             Span::styled(
                 if is_error { "Failed" } else { "Completed" },
                 Style::default()
