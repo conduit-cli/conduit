@@ -21,6 +21,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame, Terminal,
 };
+use unicode_width::UnicodeWidthStr;
 use tokio::sync::mpsc;
 
 use crate::agent::{
@@ -3896,10 +3897,12 @@ impl App {
                 // Render command prompt if in command mode (outside session borrow)
                 if is_command_mode {
                     self.render_command_prompt(chunks[2], f.buffer_mut());
-                    // Cursor at end of command buffer (after ":" inside border)
-                    // +1 for left border, +1 for colon, then buffer length
-                    let cx = chunks[2].x + 2 + self.state.command_buffer.len() as u16;
-                    let cy = chunks[2].y + 1; // +1 for top border
+                    // Cursor at end of command buffer (after ":" in padded area)
+                    let prompt = format!(":{}", self.state.command_buffer);
+                    let prompt_width = prompt.width() as u16;
+                    let max_x = chunks[2].x + chunks[2].width.saturating_sub(1);
+                    let cx = (chunks[2].x + prompt_width).min(max_x);
+                    let cy = chunks[2].y + 1; // top padding
                     f.set_cursor_position((cx, cy));
                 }
 
@@ -4074,19 +4077,57 @@ impl App {
     /// Render command mode prompt
     fn render_command_prompt(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
         use ratatui::style::{Color, Style};
-        use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+        use ratatui::widgets::{Clear, Paragraph, Widget};
+        use unicode_width::UnicodeWidthStr;
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(" Command ");
+        Clear.render(area, buf);
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                buf[(x, y)].set_bg(crate::ui::components::INPUT_BG);
+            }
+        }
 
-        let inner = block.inner(area);
-        block.render(area, buf);
+        if area.height < 3 || area.width == 0 {
+            return;
+        }
+
+        let padding_top: u16 = 1;
+        let padding_bottom: u16 = 1;
+        let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+        if content_height == 0 {
+            return;
+        }
 
         let prompt = format!(":{}", self.state.command_buffer);
-        let para = Paragraph::new(prompt).style(Style::default().fg(Color::White));
-        para.render(inner, buf);
+        let prompt_width = UnicodeWidthStr::width(prompt.as_str()) as u16;
+        let content_width = area.width;
+        let display = if prompt_width > content_width {
+            let mut truncated = String::new();
+            let mut width = 0usize;
+            for ch in prompt.chars().rev() {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+                if width + w > content_width.saturating_sub(1) as usize {
+                    break;
+                }
+                width += w;
+                truncated.insert(0, ch);
+            }
+            format!("…{}", truncated)
+        } else {
+            prompt
+        };
+
+        let para = Paragraph::new(display)
+            .style(Style::default().fg(Color::White).bg(crate::ui::components::INPUT_BG));
+        para.render(
+            Rect {
+                x: area.x,
+                y: area.y + padding_top,
+                width: content_width,
+                height: content_height,
+            },
+            buf,
+        );
     }
 
     /// Extract a filename from tool result text
