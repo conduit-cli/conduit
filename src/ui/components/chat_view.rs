@@ -3,10 +3,9 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    symbols::border,
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Paragraph, Widget,
-    },
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -164,7 +163,8 @@ impl ChatView {
     pub fn scrollbar_metrics(&mut self, area: Rect, show_thinking_line: bool) -> Option<ScrollbarMetrics> {
         let block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
             .title(" Chat ");
 
         let inner = block.inner(area);
@@ -881,7 +881,8 @@ impl ChatView {
     ) {
         let block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
             .title(" Chat ");
 
         let inner = block.inner(area);

@@ -7,6 +7,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    symbols::border,
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
@@ -137,7 +138,8 @@ impl HelpDialogState {
         let block = Block::default()
             .title(" Help - Keybindings ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)));
         let inner = block.inner(dialog_area);
         let inner = Rect {
             x: inner.x.saturating_add(1),
@@ -416,7 +418,8 @@ impl HelpDialog {
         // Search box with border
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray))
+            .border_set(border::ROUNDED)
+            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
             .title(" Search ");
 
         let inner = block.inner(area);

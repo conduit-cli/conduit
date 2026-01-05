@@ -4,6 +4,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
+    symbols::border,
     widgets::{Block, Borders, Paragraph, Widget},
 };
 use std::path::PathBuf;
@@ -193,6 +194,7 @@ impl BaseDirDialog {
 
         let input_block = Block::default()
             .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(input_style);
 
         let input_inner = input_block.inner(chunks[2]);
