@@ -84,6 +84,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     // Enter submits (or expands in raw events)
     chat.insert(KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE), Action::Submit);
     chat.insert(KeyCombo::new(KeyCode::Enter, KeyModifiers::SHIFT), Action::InsertNewline);
+    chat.insert(KeyCombo::new(KeyCode::Enter, KeyModifiers::ALT), Action::InsertNewline);
 
     // Navigation
     chat.insert(KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE), Action::Backspace);

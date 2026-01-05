@@ -34,6 +34,8 @@ pub struct InputBox {
     focused: bool,
     /// Scroll offset for when content exceeds visible area
     scroll_offset: usize,
+    /// Last content width used for wrapping (excludes scrollbar)
+    last_content_width: Option<u16>,
 }
 
 impl InputBox {
@@ -46,6 +48,7 @@ impl InputBox {
             saved_input: String::new(),
             focused: true,
             scroll_offset: 0,
+            last_content_width: None,
         }
     }
 
@@ -130,8 +133,8 @@ impl InputBox {
 
         for (line_idx, line) in self.input.split('\n').enumerate() {
             let is_first_line = line_idx == 0;
-            let first_prefix = if is_first_line { "> " } else { "" };
-            let cont_prefix = if is_first_line { "  " } else { "" };
+            let first_prefix = if is_first_line { "> " } else { "  " };
+            let cont_prefix = "  ";
             let prefix_width = UnicodeWidthStr::width(first_prefix);
             let wrap_width = content_width.saturating_sub(prefix_width);
             let segments = wrap_line_segments(line, wrap_width);
@@ -323,7 +326,21 @@ impl InputBox {
 
     /// Move cursor to start
     pub fn move_start(&mut self) {
-        self.cursor_pos = 0;
+        if let Some(width) = self.last_content_width {
+            let visual_lines = self.build_visual_lines(width);
+            let line_idx = self.cursor_visual_index(&visual_lines);
+            if let Some(line) = visual_lines.get(line_idx) {
+                self.cursor_pos = line.start.min(self.input.len());
+                return;
+            }
+        }
+
+        // Fallback: start of current logical line
+        if let Some(prev_newline) = self.input[..self.cursor_pos].rfind('\n') {
+            self.cursor_pos = prev_newline + 1;
+        } else {
+            self.cursor_pos = 0;
+        }
     }
 
     /// Move cursor to end

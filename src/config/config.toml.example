@@ -56,7 +56,7 @@
 # Chat mode keybindings (when typing in the input box)
 #
 # submit = "<Enter>"
-# insert_newline = "S-<Enter>"
+# insert_newline = "S-<Enter>" # or "M-<Enter>" for Alt/Option+Enter
 # scroll_page_up = "<PgUp>"
 # scroll_page_down = "<PgDn>"
 # scroll_to_bottom = "<Esc>"

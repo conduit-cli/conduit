@@ -786,7 +786,7 @@ impl ChatView {
         pr_number: Option<u32>,
     ) {
         let block = Block::default()
-            .borders(Borders::TOP | Borders::BOTTOM)
+            .borders(Borders::TOP)
             .border_style(Style::default().fg(Color::DarkGray))
             .title(" Chat ");
 
