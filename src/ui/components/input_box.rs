@@ -8,7 +8,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_vertical_scrollbar, ScrollbarSymbols, INPUT_BG};
+use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols, INPUT_BG};
 
 #[derive(Debug, Clone)]
 struct VisualLine {
@@ -540,6 +540,56 @@ impl InputBox {
     /// Get current scroll offset
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
+    }
+
+    pub fn set_scroll_offset(&mut self, offset: usize, total: usize, visible: usize) {
+        let max_scroll = total.saturating_sub(visible);
+        self.scroll_offset = offset.min(max_scroll);
+    }
+
+    pub fn scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
+        if area.height < 3 || area.width == 0 {
+            return None;
+        }
+
+        let padding_top = 1;
+        let padding_bottom = 1;
+        let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+        if content_height == 0 {
+            return None;
+        }
+
+        let visible_lines = content_height as usize;
+        let base_width = area.width;
+        let visual_lines_full = self.build_visual_lines(base_width);
+        let show_scrollbar = visual_lines_full.len() > visible_lines;
+        if !show_scrollbar {
+            return None;
+        }
+
+        let content_width = area.width.saturating_sub(1);
+        if content_width == 0 {
+            return None;
+        }
+
+        let visual_lines = self.build_visual_lines(content_width);
+        let total_lines = visual_lines.len();
+        if total_lines <= visible_lines {
+            return None;
+        }
+
+        self.last_content_width = Some(content_width);
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y + padding_top,
+                width: 1,
+                height: content_height,
+            },
+            total: total_lines,
+            visible: visible_lines,
+        })
     }
 
     /// Set cursor position from a mouse click

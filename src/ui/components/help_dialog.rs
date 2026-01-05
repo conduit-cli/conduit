@@ -14,7 +14,8 @@ use crate::config::{KeybindingConfig, KeyContext};
 use crate::ui::action::Action;
 
 use super::{
-    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarSymbols, TextInputState,
+    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, ScrollbarSymbols,
+    TextInputState,
 };
 
 /// A keybinding entry for display
@@ -110,6 +111,77 @@ impl HelpDialogState {
 
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    pub fn scrollbar_metrics(&self, area: Rect) -> Option<ScrollbarMetrics> {
+        if !self.visible {
+            return None;
+        }
+
+        let dialog_width = (area.width * 70 / 100).min(80).max(50);
+        let dialog_height = (area.height * 80 / 100).min(35).max(15);
+
+        let dialog_width = dialog_width.min(area.width.saturating_sub(4));
+        let dialog_height = dialog_height.min(area.height.saturating_sub(2));
+
+        let x = (area.width.saturating_sub(dialog_width)) / 2;
+        let y = (area.height.saturating_sub(dialog_height)) / 2;
+
+        let dialog_area = Rect {
+            x,
+            y,
+            width: dialog_width,
+            height: dialog_height,
+        };
+
+        let block = Block::default()
+            .title(" Help - Keybindings ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(dialog_area);
+        let inner = Rect {
+            x: inner.x.saturating_add(1),
+            y: inner.y,
+            width: inner.width.saturating_sub(2),
+            height: inner.height,
+        };
+
+        if inner.height < 5 {
+            return None;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(3),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+
+        let content_area = Rect {
+            x: chunks[1].x,
+            y: chunks[1].y,
+            width: chunks[1].width.saturating_sub(2),
+            height: chunks[1].height,
+        };
+        let visible_height = content_area.height as usize;
+        let total_lines = self.total_lines;
+
+        if total_lines <= visible_height {
+            return None;
+        }
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: chunks[1].x + chunks[1].width.saturating_sub(1),
+                y: chunks[1].y,
+                width: 1,
+                height: chunks[1].height,
+            },
+            total: total_lines,
+            visible: visible_height,
+        })
     }
 
     /// Populate entries from keybinding config

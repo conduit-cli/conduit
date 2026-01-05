@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use super::{
-    render_vertical_scrollbar, DialogFrame, InstructionBar, SearchableListState,
+    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
     ScrollbarSymbols, SELECTED_BG,
 };
 use crate::agent::AgentType;
@@ -282,6 +282,58 @@ impl SessionImportPickerState {
     /// Check if there are no sessions
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
+    }
+
+    pub fn scrollbar_metrics(&self, area: Rect) -> Option<ScrollbarMetrics> {
+        if !self.visible {
+            return None;
+        }
+
+        let dialog_width = (area.width * DIALOG_WIDTH_PERCENT / 100)
+            .min(DIALOG_MAX_WIDTH)
+            .max(DIALOG_MIN_WIDTH)
+            .min(area.width.saturating_sub(4));
+        let dialog_height = (area.height * DIALOG_HEIGHT_PERCENT / 100)
+            .min(DIALOG_MAX_HEIGHT)
+            .max(DIALOG_MIN_HEIGHT)
+            .min(area.height.saturating_sub(2));
+
+        let dialog_x = area.width.saturating_sub(dialog_width) / 2;
+        let dialog_y = area.height.saturating_sub(dialog_height) / 2;
+
+        let inner_x = dialog_x + 2;
+        let inner_y = dialog_y + 1;
+        let inner_width = dialog_width.saturating_sub(4);
+
+        let list_y = inner_y + 3;
+        let list_height_actual = dialog_height.saturating_sub(7);
+        if list_height_actual == 0 {
+            return None;
+        }
+
+        let list_area = Rect {
+            x: inner_x,
+            y: list_y,
+            width: inner_width,
+            height: list_height_actual,
+        };
+
+        let total = self.list.filtered.len();
+        let visible = list_area.height as usize;
+        if total <= visible {
+            return None;
+        }
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: list_area.x + list_area.width - 1,
+                y: list_area.y,
+                width: 1,
+                height: list_area.height,
+            },
+            total,
+            visible,
+        })
     }
 }
 

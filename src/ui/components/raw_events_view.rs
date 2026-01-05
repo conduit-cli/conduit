@@ -13,7 +13,7 @@ use ratatui::{
 use serde_json::Value;
 
 use super::raw_events_types::{EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT};
-use super::{render_vertical_scrollbar, ScrollbarSymbols};
+use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols};
 /// View for displaying raw agent events with interactive selection
 pub struct RawEventsView {
     /// All recorded events
@@ -28,6 +28,11 @@ pub struct RawEventsView {
     session_start: Instant,
     /// Event detail panel state
     pub event_detail: EventDetailState,
+}
+
+pub struct RawEventsScrollbarMetrics {
+    pub list: Option<ScrollbarMetrics>,
+    pub detail: Option<ScrollbarMetrics>,
 }
 
 impl RawEventsView {
@@ -354,6 +359,42 @@ impl RawEventsView {
         }
     }
 
+    pub fn scrollbar_metrics(&mut self, area: Rect) -> RawEventsScrollbarMetrics {
+        let use_split = self.event_detail.visible && area.width >= DETAIL_PANEL_BREAKPOINT;
+        let use_overlay = self.event_detail.visible && area.width < DETAIL_PANEL_BREAKPOINT;
+
+        if use_split {
+            let chunks = Layout::horizontal([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(area);
+            RawEventsScrollbarMetrics {
+                list: self.event_list_scrollbar_metrics(chunks[0]),
+                detail: self.detail_panel_scrollbar_metrics(chunks[1]),
+            }
+        } else {
+            RawEventsScrollbarMetrics {
+                list: self.event_list_scrollbar_metrics(area),
+                detail: if use_overlay {
+                    self.detail_overlay_scrollbar_metrics(area)
+                } else {
+                    None
+                },
+            }
+        }
+    }
+
+    pub fn set_list_scroll_offset(&mut self, offset: usize, total: usize, visible: usize) {
+        let max_scroll = total.saturating_sub(visible);
+        self.scroll_offset = offset.min(max_scroll);
+    }
+
+    pub fn set_detail_scroll_offset(&mut self, offset: usize, total: usize, visible: usize) {
+        let max_scroll = total.saturating_sub(visible);
+        self.event_detail.scroll_offset = offset.min(max_scroll);
+    }
+
     /// Render the event list
     fn render_event_list(&mut self, area: Rect, buf: &mut Buffer) {
         let title = format!(" Raw Events ({}) ", self.events.len());
@@ -401,6 +442,35 @@ impl RawEventsView {
         );
     }
 
+    fn event_list_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+
+        let inner = block.inner(area);
+        if inner.width < 3 || inner.height < 1 {
+            return None;
+        }
+
+        let (lines, _, _) = self.build_lines();
+        let total_lines = lines.len();
+        let visible_height = inner.height as usize;
+        if total_lines <= visible_height {
+            return None;
+        }
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: inner.x + inner.width,
+                y: inner.y,
+                width: 1,
+                height: inner.height,
+            },
+            total: total_lines,
+            visible: visible_height,
+        })
+    }
+
     /// Render the detail panel (split mode - right side)
     fn render_detail_panel(&mut self, area: Rect, buf: &mut Buffer) {
         let event_type = self
@@ -419,6 +489,14 @@ impl RawEventsView {
         block.render(area, buf);
 
         self.render_detail_content(inner, buf);
+    }
+
+    fn detail_panel_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(area);
+        self.detail_content_scrollbar_metrics(inner)
     }
 
     /// Render the detail overlay (centered floating dialog)
@@ -456,6 +534,22 @@ impl RawEventsView {
         block.render(overlay_area, buf);
 
         self.render_detail_content(inner, buf);
+    }
+
+    fn detail_overlay_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
+        let overlay_width = (area.width as f32 * 0.9) as u16;
+        let overlay_height = (area.height as f32 * 0.8) as u16;
+
+        let overlay_x = area.x + (area.width.saturating_sub(overlay_width)) / 2;
+        let overlay_y = area.y + (area.height.saturating_sub(overlay_height)) / 2;
+
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_width, overlay_height);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let inner = block.inner(overlay_area);
+        self.detail_content_scrollbar_metrics(inner)
     }
 
     /// Render the detail content (shared by panel and overlay)
@@ -501,6 +595,30 @@ impl RawEventsView {
             self.event_detail.scroll_offset,
             ScrollbarSymbols::arrows(),
         );
+    }
+
+    fn detail_content_scrollbar_metrics(&mut self, area: Rect) -> Option<ScrollbarMetrics> {
+        if area.width < 3 || area.height < 1 {
+            return None;
+        }
+
+        let lines = self.build_detail_lines();
+        let total_lines = lines.len();
+        let visible_height = area.height as usize;
+        if total_lines <= visible_height {
+            return None;
+        }
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: area.x + area.width,
+                y: area.y,
+                width: 1,
+                height: area.height,
+            },
+            total: total_lines,
+            visible: visible_height,
+        })
     }
 
     /// Ensure the selected item is visible in the viewport

@@ -11,7 +11,8 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
-    render_vertical_scrollbar, ChatMessage, MarkdownRenderer, MessageRole, ScrollbarSymbols,
+    render_vertical_scrollbar, ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics,
+    ScrollbarSymbols,
 };
 
 mod chat_view_cache;
@@ -153,6 +154,67 @@ impl ChatView {
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+    }
+
+    pub fn set_scroll_from_top(&mut self, offset_from_top: usize, total: usize, visible: usize) {
+        let max_scroll = total.saturating_sub(visible);
+        self.scroll_offset = max_scroll.saturating_sub(offset_from_top.min(max_scroll));
+    }
+
+    pub fn scrollbar_metrics(&mut self, area: Rect, show_thinking_line: bool) -> Option<ScrollbarMetrics> {
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title(" Chat ");
+
+        let inner = block.inner(area);
+        let content = Rect {
+            x: inner.x.saturating_add(1),
+            y: inner.y,
+            width: inner.width.saturating_sub(3),
+            height: inner.height,
+        };
+
+        if content.width < 3 || content.height < 1 {
+            return None;
+        }
+
+        self.ensure_cache(content.width);
+        self.ensure_flat_cache();
+
+        if let Some(ref buffer) = self.streaming_buffer {
+            if self.streaming_cache.is_none() {
+                let msg = ChatMessage::streaming(buffer.clone());
+                let mut streaming_lines = Vec::new();
+                self.format_message(&msg, content.width as usize, &mut streaming_lines);
+                self.streaming_cache = Some(streaming_lines);
+            }
+        }
+
+        let cached_len = self.flat_cache.len();
+        let streaming_len = self
+            .streaming_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let indicator_len = if show_thinking_line { 1 } else { 0 };
+
+        let total_lines = cached_len + streaming_len + indicator_len;
+        let visible_height = content.height as usize;
+        if total_lines <= visible_height {
+            return None;
+        }
+
+        Some(ScrollbarMetrics {
+            area: Rect {
+                x: inner.x + inner.width.saturating_sub(1),
+                y: inner.y,
+                width: 1,
+                height: inner.height,
+            },
+            total: total_lines,
+            visible: visible_height,
+        })
     }
 
     /// Get message count
@@ -892,19 +954,27 @@ impl ChatView {
         }
         Paragraph::new(visible_lines).render(content, buf);
 
+        let scrollbar_area = Rect {
+            x: inner.x + inner.width.saturating_sub(1),
+            y: inner.y,
+            width: 1,
+            height: inner.height,
+        };
         render_vertical_scrollbar(
-            Rect {
-                x: inner.x + inner.width.saturating_sub(1),
-                y: inner.y,
-                width: 1,
-                height: inner.height,
-            },
+            scrollbar_area,
             buf,
             total_lines,
             visible_height,
             scroll_from_top,
             ScrollbarSymbols::arrows(),
         );
+        if total_lines > visible_height {
+            for y in scrollbar_area.y..scrollbar_area.y.saturating_add(scrollbar_area.height) {
+                for x in scrollbar_area.x..scrollbar_area.x.saturating_add(scrollbar_area.width) {
+                    buf[(x, y)].set_fg(Color::DarkGray);
+                }
+            }
+        }
     }
 }
 

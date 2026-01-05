@@ -8,6 +8,13 @@ use ratatui::{
 use ratatui::prelude::StatefulWidget;
 
 #[derive(Debug, Clone, Copy)]
+pub struct ScrollbarMetrics {
+    pub area: Rect,
+    pub total: usize,
+    pub visible: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct ScrollbarSymbols {
     pub begin: Option<&'static str>,
     pub end: Option<&'static str>,
@@ -72,4 +79,20 @@ pub fn render_vertical_scrollbar(
 
     let mut scrollbar_state = ScrollbarState::new(max_scroll).position(offset);
     scrollbar.render(area, buf, &mut scrollbar_state);
+}
+
+pub fn scrollbar_offset_from_point(y: u16, area: Rect, total: usize, visible: usize) -> usize {
+    let max_scroll = total.saturating_sub(visible);
+    if max_scroll == 0 || area.height == 0 {
+        return 0;
+    }
+
+    let track_len = area.height.saturating_sub(1) as usize;
+    if track_len == 0 {
+        return 0;
+    }
+
+    let rel = y.saturating_sub(area.y) as usize;
+    let rel = rel.min(track_len);
+    (rel * max_scroll + track_len / 2) / track_len
 }
