@@ -9,10 +9,11 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::display::MessageDisplay;
-use crate::ui::components::ChatMessage;
+use crate::ui::components::{ChatMessage, TurnSummary};
 #[cfg(test)]
 use crate::ui::components::MessageRole;
 
@@ -27,6 +28,246 @@ struct FunctionCallInfo {
 struct ClaudeToolUseInfo {
     name: String,
     input: serde_json::Value,
+}
+
+struct ClaudeTurnTracker {
+    started_at: Option<DateTime<Utc>>,
+    last_assistant_at: Option<DateTime<Utc>>,
+    usage_by_request: HashMap<String, (u64, u64)>,
+    fallback_usage: (u64, u64),
+    has_turn: bool,
+}
+
+struct CodexTurnTracker {
+    started_at: Option<DateTime<Utc>>,
+    last_assistant_at: Option<DateTime<Utc>>,
+    last_usage: Option<(u64, u64)>,
+    last_usage_at: Option<DateTime<Utc>>,
+    has_turn: bool,
+}
+
+impl CodexTurnTracker {
+    fn new() -> Self {
+        Self {
+            started_at: None,
+            last_assistant_at: None,
+            last_usage: None,
+            last_usage_at: None,
+            has_turn: false,
+        }
+    }
+
+    fn start_turn(&mut self, started_at: Option<DateTime<Utc>>) {
+        self.started_at = started_at;
+        self.last_assistant_at = None;
+        self.last_usage = None;
+        self.last_usage_at = None;
+        self.has_turn = true;
+    }
+
+    fn update_usage(&mut self, usage: (u64, u64), timestamp: Option<DateTime<Utc>>) {
+        self.last_usage = Some(usage);
+        if timestamp.is_some() {
+            self.last_usage_at = timestamp;
+        }
+    }
+
+    fn update_assistant(&mut self, timestamp: Option<DateTime<Utc>>) {
+        if timestamp.is_some() {
+            self.last_assistant_at = timestamp;
+        }
+    }
+
+    fn finish_turn(&mut self) -> Option<TurnSummary> {
+        if !self.has_turn {
+            return None;
+        }
+        let end_at = self.last_assistant_at.or(self.last_usage_at);
+        let summary = build_turn_summary(self.started_at, end_at, self.last_usage);
+        self.has_turn = false;
+        summary
+    }
+}
+impl ClaudeTurnTracker {
+    fn new() -> Self {
+        Self {
+            started_at: None,
+            last_assistant_at: None,
+            usage_by_request: HashMap::new(),
+            fallback_usage: (0, 0),
+            has_turn: false,
+        }
+    }
+
+    fn start_turn(&mut self, started_at: Option<DateTime<Utc>>) {
+        self.started_at = started_at;
+        self.last_assistant_at = None;
+        self.usage_by_request.clear();
+        self.fallback_usage = (0, 0);
+        self.has_turn = true;
+    }
+
+    fn update_assistant(
+        &mut self,
+        request_id: Option<&str>,
+        usage: (u64, u64),
+        timestamp: Option<DateTime<Utc>>,
+    ) {
+        if let Some(ts) = timestamp {
+            self.last_assistant_at = Some(ts);
+        }
+        if let Some(request_id) = request_id {
+            let entry = self
+                .usage_by_request
+                .entry(request_id.to_string())
+                .or_insert((0, 0));
+            entry.0 = entry.0.max(usage.0);
+            entry.1 = entry.1.max(usage.1);
+        } else {
+            self.fallback_usage.0 = self.fallback_usage.0.saturating_add(usage.0);
+            self.fallback_usage.1 = self.fallback_usage.1.saturating_add(usage.1);
+        }
+    }
+
+    fn finish_turn(&mut self) -> Option<TurnSummary> {
+        if !self.has_turn {
+            return None;
+        }
+
+        let mut input_tokens = self.fallback_usage.0;
+        let mut output_tokens = self.fallback_usage.1;
+        for usage in self.usage_by_request.values() {
+            input_tokens = input_tokens.saturating_add(usage.0);
+            output_tokens = output_tokens.saturating_add(usage.1);
+        }
+
+        let mut has_data = false;
+        let mut summary = TurnSummary::new();
+
+        if input_tokens > 0 || output_tokens > 0 {
+            summary = summary.with_tokens(input_tokens, output_tokens);
+            has_data = true;
+        }
+
+        if let (Some(start), Some(end)) = (self.started_at, self.last_assistant_at) {
+            let duration = (end - start).num_seconds().max(0) as u64;
+            if duration > 0 {
+                summary = summary.with_duration(duration);
+                has_data = true;
+            }
+        }
+
+        self.has_turn = false;
+
+        if has_data {
+            Some(summary)
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_timestamp(entry: &Value) -> Option<DateTime<Utc>> {
+    entry
+        .get("timestamp")
+        .and_then(|t| t.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn extract_claude_usage(entry: &Value) -> Option<(u64, u64)> {
+    let usage = entry
+        .get("message")
+        .and_then(|m| m.get("usage"))
+        .or_else(|| entry.get("usage"))?;
+    let input = usage.get("input_tokens").and_then(|v| v.as_u64())?;
+    let output = usage.get("output_tokens").and_then(|v| v.as_u64())?;
+    Some((input, output))
+}
+
+fn extract_codex_usage(entry: &Value) -> Option<(u64, u64)> {
+    let usage = entry
+        .get("usage")
+        .or_else(|| entry.get("info").and_then(|info| info.get("last_token_usage")))
+        .or_else(|| entry.get("info").and_then(|info| info.get("total_token_usage")))?;
+    let input = usage.get("input_tokens").and_then(|v| v.as_u64())?;
+    let output = usage.get("output_tokens").and_then(|v| v.as_u64())?;
+    Some((input, output))
+}
+
+fn is_claude_user_prompt(entry: &Value) -> bool {
+    if entry.get("type").and_then(|t| t.as_str()) != Some("user") {
+        return false;
+    }
+    let message = match entry.get("message") {
+        Some(message) => message,
+        None => return false,
+    };
+    let content = match message.get("content") {
+        Some(content) => content,
+        None => return false,
+    };
+
+    if let Some(text) = content.as_str() {
+        return !text.trim().is_empty();
+    }
+
+    let Some(blocks) = content.as_array() else {
+        return false;
+    };
+
+    let mut has_text = false;
+    let mut has_tool_result = false;
+    for block in blocks {
+        match block.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if block
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|t| !t.trim().is_empty())
+                    .unwrap_or(false)
+                {
+                    has_text = true;
+                }
+            }
+            Some("tool_result") => {
+                has_tool_result = true;
+            }
+            _ => {}
+        }
+    }
+
+    has_text || (!has_tool_result && !blocks.is_empty())
+}
+
+fn build_turn_summary(
+    started_at: Option<DateTime<Utc>>,
+    ended_at: Option<DateTime<Utc>>,
+    usage: Option<(u64, u64)>,
+) -> Option<TurnSummary> {
+    let mut has_data = false;
+    let mut summary = TurnSummary::new();
+
+    if let Some((input, output)) = usage {
+        if input > 0 || output > 0 {
+            summary = summary.with_tokens(input, output);
+            has_data = true;
+        }
+    }
+
+    if let (Some(start), Some(end)) = (started_at, ended_at) {
+        let duration = (end - start).num_seconds().max(0) as u64;
+        if duration > 0 {
+            summary = summary.with_duration(duration);
+            has_data = true;
+        }
+    }
+
+    if has_data {
+        Some(summary)
+    } else {
+        None
+    }
 }
 
 /// Debug entry for history loading - shows what happened to each JSONL line
@@ -163,14 +404,7 @@ fn parse_claude_history_file(path: &PathBuf) -> Result<Vec<ChatMessage>, History
         }
     }
 
-    // Second pass: convert entries to messages
-    let mut messages = Vec::new();
-    for entry in &entries {
-        let converted = convert_claude_entry_with_tools(entry, &tool_uses);
-        messages.extend(converted);
-    }
-
-    Ok(messages)
+    Ok(build_claude_messages(&entries, &tool_uses))
 }
 
 /// Parse a Claude history JSONL file with debug information
@@ -227,8 +461,6 @@ fn parse_claude_history_file_with_debug(path: &PathBuf) -> Result<(Vec<ChatMessa
     }
 
     // Second pass: convert entries to messages with debug info
-    let mut messages = Vec::new();
-
     for (line_num, entry) in &raw_entries {
         let entry_type = entry.get("type")
             .and_then(|t| t.as_str())
@@ -245,14 +477,49 @@ fn parse_claude_history_file_with_debug(path: &PathBuf) -> Result<(Vec<ChatMessa
             reason,
             raw_json: entry.clone(),
         });
-
-        messages.extend(converted);
     }
+
+    let entries: Vec<Value> = raw_entries.iter().map(|(_, entry)| entry.clone()).collect();
+    let messages = build_claude_messages(&entries, &tool_uses);
 
     // Sort debug entries by line number
     debug_entries.sort_by_key(|e| e.line_number);
 
     Ok((messages, debug_entries))
+}
+
+fn build_claude_messages(
+    entries: &[Value],
+    tool_uses: &HashMap<String, ClaudeToolUseInfo>,
+) -> Vec<ChatMessage> {
+    let mut messages = Vec::new();
+    let mut tracker = ClaudeTurnTracker::new();
+
+    for entry in entries {
+        let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if is_claude_user_prompt(entry) {
+            if let Some(summary) = tracker.finish_turn() {
+                messages.push(ChatMessage::turn_summary(summary));
+            }
+            tracker.start_turn(parse_timestamp(entry));
+        }
+
+        let converted = convert_claude_entry_with_tools(entry, tool_uses);
+        messages.extend(converted);
+
+        if matches!(entry_type, "assistant" | "result") {
+            if let Some(usage) = extract_claude_usage(entry) {
+                let request_id = entry.get("requestId").and_then(|id| id.as_str());
+                tracker.update_assistant(request_id, usage, parse_timestamp(entry));
+            }
+        }
+    }
+
+    if let Some(summary) = tracker.finish_turn() {
+        messages.push(ChatMessage::turn_summary(summary));
+    }
+
+    messages
 }
 
 /// Get debug info for a Claude entry conversion
@@ -641,6 +908,7 @@ pub fn parse_codex_history_file_with_debug(path: &PathBuf) -> Result<(Vec<ChatMe
     // Second pass: process all entries with function_call lookup
     let mut messages = Vec::new();
     let mut debug_entries = Vec::new();
+    let mut tracker = CodexTurnTracker::new();
 
     for (line_num, line) in lines.iter().enumerate() {
         if line.trim().is_empty() {
@@ -649,11 +917,97 @@ pub fn parse_codex_history_file_with_debug(path: &PathBuf) -> Result<(Vec<ChatMe
 
         match serde_json::from_str::<Value>(line) {
             Ok(entry) => {
-                let (msg, status, reason) = convert_codex_entry_with_debug(&entry, &function_calls);
-                let entry_type = entry.get("type")
+                let entry_type = entry
+                    .get("type")
                     .and_then(|t| t.as_str())
                     .unwrap_or("unknown")
                     .to_string();
+
+                if entry_type == "turn.started" {
+                    tracker.start_turn(parse_timestamp(&entry));
+                    debug_entries.push(HistoryDebugEntry {
+                        line_number: line_num,
+                        entry_type,
+                        status: "SKIP".to_string(),
+                        reason: "turn started".to_string(),
+                        raw_json: entry,
+                    });
+                    continue;
+                }
+
+                if entry_type == "turn.failed" {
+                    tracker.finish_turn();
+                    debug_entries.push(HistoryDebugEntry {
+                        line_number: line_num,
+                        entry_type,
+                        status: "SKIP".to_string(),
+                        reason: "turn failed".to_string(),
+                        raw_json: entry,
+                    });
+                    continue;
+                }
+
+                if entry_type == "turn.completed" {
+                    tracker.update_usage(
+                        extract_codex_usage(&entry).unwrap_or((0, 0)),
+                        parse_timestamp(&entry),
+                    );
+                    let summary = tracker.finish_turn();
+                    let (status, reason) = if summary.is_some() {
+                        ("INCLUDE", "turn summary".to_string())
+                    } else {
+                        ("SKIP", "turn summary missing data".to_string())
+                    };
+                    if let Some(summary) = summary {
+                        messages.push(ChatMessage::turn_summary(summary));
+                    }
+                    debug_entries.push(HistoryDebugEntry {
+                        line_number: line_num,
+                        entry_type,
+                        status: status.to_string(),
+                        reason,
+                        raw_json: entry,
+                    });
+                    continue;
+                }
+
+                if entry_type == "event_msg" {
+                    let payload_type = entry
+                        .get("payload")
+                        .and_then(|p| p.get("type"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if payload_type == "token_count" {
+                        if let Some(payload) = entry.get("payload") {
+                            if let Some(usage) = extract_codex_usage(payload) {
+                                tracker.update_usage(usage, parse_timestamp(&entry));
+                            }
+                        }
+                        debug_entries.push(HistoryDebugEntry {
+                            line_number: line_num,
+                            entry_type,
+                            status: "SKIP".to_string(),
+                            reason: "token_count".to_string(),
+                            raw_json: entry,
+                        });
+                        continue;
+                    }
+                }
+
+                let (msg, status, reason) = convert_codex_entry_with_debug(&entry, &function_calls);
+                if let Some(payload) = entry.get("payload") {
+                    if payload.get("type").and_then(|t| t.as_str()) == Some("message") {
+                        if payload.get("role").and_then(|r| r.as_str()) == Some("user") {
+                            if let Some(summary) = tracker.finish_turn() {
+                                messages.push(ChatMessage::turn_summary(summary));
+                            }
+                            tracker.start_turn(parse_timestamp(&entry));
+                        }
+                        if payload.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                            tracker.update_assistant(parse_timestamp(&entry));
+                        }
+                    }
+                }
 
                 debug_entries.push(HistoryDebugEntry {
                     line_number: line_num,
@@ -677,6 +1031,10 @@ pub fn parse_codex_history_file_with_debug(path: &PathBuf) -> Result<(Vec<ChatMe
                 });
             }
         }
+    }
+
+    if let Some(summary) = tracker.finish_turn() {
+        messages.push(ChatMessage::turn_summary(summary));
     }
 
     Ok((messages, debug_entries))
