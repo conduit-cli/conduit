@@ -1443,42 +1443,42 @@ impl App {
                 }
             }
             Action::EventDetailScrollDown => {
+                let detail_height = self.raw_events_detail_visible_height();
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     let content_height = session.raw_events_view.detail_content_height();
-                    let visible_height = self
-                        .state
-                        .raw_events_area
-                        .map(|r| r.height.saturating_sub(2) as usize)
-                        .unwrap_or(20);
                     session.raw_events_view.event_detail.scroll_down(
                         1,
                         content_height,
-                        visible_height,
+                        detail_height,
                     );
                 }
             }
             Action::EventDetailPageUp => {
+                let list_height = self.raw_events_list_visible_height();
+                let detail_height = self.raw_events_detail_visible_height();
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    let visible_height = self
-                        .state
-                        .raw_events_area
-                        .map(|r| r.height.saturating_sub(2) as usize)
-                        .unwrap_or(20);
-                    session.raw_events_view.event_detail.page_up(visible_height);
+                    if session.raw_events_view.is_detail_visible() {
+                        session.raw_events_view.event_detail.page_up(detail_height);
+                    } else {
+                        let amount = list_height.saturating_sub(2).max(1);
+                        session.raw_events_view.scroll_up(amount);
+                    }
                 }
             }
             Action::EventDetailPageDown => {
+                let list_height = self.raw_events_list_visible_height();
+                let detail_height = self.raw_events_detail_visible_height();
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     let content_height = session.raw_events_view.detail_content_height();
-                    let visible_height = self
-                        .state
-                        .raw_events_area
-                        .map(|r| r.height.saturating_sub(2) as usize)
-                        .unwrap_or(20);
-                    session
-                        .raw_events_view
-                        .event_detail
-                        .page_down(visible_height, content_height);
+                    if session.raw_events_view.is_detail_visible() {
+                        session
+                            .raw_events_view
+                            .event_detail
+                            .page_down(detail_height, content_height);
+                    } else {
+                        let amount = list_height.saturating_sub(2).max(1);
+                        session.raw_events_view.scroll_down(amount, list_height);
+                    }
                 }
             }
             Action::EventDetailScrollToTop => {
@@ -1487,17 +1487,13 @@ impl App {
                 }
             }
             Action::EventDetailScrollToBottom => {
+                let detail_height = self.raw_events_detail_visible_height();
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     let content_height = session.raw_events_view.detail_content_height();
-                    let visible_height = self
-                        .state
-                        .raw_events_area
-                        .map(|r| r.height.saturating_sub(2) as usize)
-                        .unwrap_or(20);
                     session
                         .raw_events_view
                         .event_detail
-                        .scroll_to_bottom(content_height, visible_height);
+                        .scroll_to_bottom(content_height, detail_height);
                 }
             }
             Action::EventDetailCopy => {
@@ -2705,6 +2701,25 @@ impl App {
                 && self.state.session_import_state.is_visible())
     }
 
+    fn raw_events_list_visible_height(&self) -> usize {
+        self.state
+            .raw_events_area
+            .map(|r| r.height.saturating_sub(2) as usize)
+            .unwrap_or(20)
+    }
+
+    fn raw_events_detail_visible_height(&self) -> usize {
+        let Some(area) = self.state.raw_events_area else {
+            return 20;
+        };
+        if area.width < crate::ui::components::DETAIL_PANEL_BREAKPOINT {
+            let overlay_height = (area.height as f32 * 0.8) as u16;
+            overlay_height.saturating_sub(2) as usize
+        } else {
+            area.height.saturating_sub(2) as usize
+        }
+    }
+
     fn flush_scroll_deltas(&mut self, pending_up: &mut usize, pending_down: &mut usize) {
         if *pending_up == 0 && *pending_down == 0 {
             return;
@@ -2735,6 +2750,32 @@ impl App {
             }
             for _ in 0..*pending_down {
                 self.state.session_import_state.select_next();
+            }
+        } else if self.state.view_mode == ViewMode::RawEvents {
+            let list_height = self.raw_events_list_visible_height();
+            let detail_height = self.raw_events_detail_visible_height();
+            if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if session.raw_events_view.is_detail_visible() {
+                    let content_height = session.raw_events_view.detail_content_height();
+                    let visible_height = detail_height;
+                    if *pending_up > 0 {
+                        session.raw_events_view.event_detail.scroll_up(*pending_up);
+                    }
+                    if *pending_down > 0 {
+                        session.raw_events_view.event_detail.scroll_down(
+                            *pending_down,
+                            content_height,
+                            visible_height,
+                        );
+                    }
+                } else {
+                    if *pending_up > 0 {
+                        session.raw_events_view.scroll_up(*pending_up);
+                    }
+                    if *pending_down > 0 {
+                        session.raw_events_view.scroll_down(*pending_down, list_height);
+                    }
+                }
             }
         } else if let Some(session) = self.state.tab_manager.active_session_mut() {
             if *pending_up > 0 {
@@ -2771,7 +2812,11 @@ impl App {
                     self.state.session_import_state.select_prev();
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        session.raw_events_view.scroll_up(3);
+                        if session.raw_events_view.is_detail_visible() {
+                            session.raw_events_view.event_detail.scroll_up(3);
+                        } else {
+                            session.raw_events_view.scroll_up(3);
+                        }
                     }
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.chat_view.scroll_up(1);
@@ -2792,10 +2837,18 @@ impl App {
                 {
                     self.state.session_import_state.select_next();
                 } else if self.state.view_mode == ViewMode::RawEvents {
-                    if let Some(raw_events_area) = self.state.raw_events_area {
-                        let visible_height = raw_events_area.height.saturating_sub(2) as usize;
-                        if let Some(session) = self.state.tab_manager.active_session_mut() {
-                            session.raw_events_view.scroll_down(3, visible_height);
+                    let list_height = self.raw_events_list_visible_height();
+                    let detail_height = self.raw_events_detail_visible_height();
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        if session.raw_events_view.is_detail_visible() {
+                            let content_height = session.raw_events_view.detail_content_height();
+                            session.raw_events_view.event_detail.scroll_down(
+                                3,
+                                content_height,
+                                detail_height,
+                            );
+                        } else {
+                            session.raw_events_view.scroll_down(3, list_height);
                         }
                     }
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {

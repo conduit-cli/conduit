@@ -30,6 +30,8 @@ pub struct RawEventsView {
     expanded_indices: HashSet<usize>,
     /// Scroll offset for viewport (in lines)
     scroll_offset: usize,
+    /// Whether selection should be kept visible
+    follow_selection: bool,
     /// Session start time
     session_start: Instant,
     /// Event detail panel state
@@ -50,6 +52,7 @@ impl RawEventsView {
             selected_index: 0,
             expanded_indices: HashSet::new(),
             scroll_offset: 0,
+            follow_selection: true,
             session_start: Instant::now(),
             event_detail: EventDetailState::new(),
             session_id: None,
@@ -79,6 +82,7 @@ impl RawEventsView {
         ));
         // Auto-select new event (keep existing expansions)
         self.selected_index = self.events.len().saturating_sub(1);
+        self.follow_selection = true;
     }
 
     /// Move selection to previous event
@@ -87,6 +91,7 @@ impl RawEventsView {
             return;
         }
         self.selected_index = self.selected_index.saturating_sub(1);
+        self.follow_selection = true;
         // Sync detail panel to follow selection
         self.event_detail.sync_to_event(self.selected_index);
     }
@@ -97,6 +102,7 @@ impl RawEventsView {
             return;
         }
         self.selected_index = (self.selected_index + 1).min(self.events.len().saturating_sub(1));
+        self.follow_selection = true;
         // Sync detail panel to follow selection
         self.event_detail.sync_to_event(self.selected_index);
     }
@@ -109,6 +115,7 @@ impl RawEventsView {
             } else {
                 self.expanded_indices.insert(self.selected_index);
             }
+            self.follow_selection = true;
         }
     }
 
@@ -148,6 +155,7 @@ impl RawEventsView {
         self.selected_index = 0;
         self.expanded_indices.clear();
         self.scroll_offset = 0;
+        self.follow_selection = true;
         self.session_start = Instant::now();
         self.event_detail = EventDetailState::new();
     }
@@ -241,6 +249,7 @@ impl RawEventsView {
     /// Scroll up by n lines
     pub fn scroll_up(&mut self, n: usize) {
         self.scroll_offset = self.scroll_offset.saturating_sub(n);
+        self.follow_selection = false;
     }
 
     /// Scroll down by n lines
@@ -248,6 +257,7 @@ impl RawEventsView {
         let (lines, _, _) = self.build_lines();
         let max_scroll = lines.len().saturating_sub(visible_height);
         self.scroll_offset = (self.scroll_offset + n).min(max_scroll);
+        self.follow_selection = false;
     }
 
     /// Handle a click at the given position within the view area
@@ -302,6 +312,7 @@ impl RawEventsView {
             if clicked_line >= event_start && clicked_line < event_end {
                 // Clicked on this event - select it
                 self.selected_index = i;
+                self.follow_selection = true;
                 // Sync detail panel to follow selection
                 self.event_detail.sync_to_event(self.selected_index);
                 return Some(RawEventsClick::Event(i));
@@ -469,6 +480,7 @@ impl RawEventsView {
     pub fn set_list_scroll_offset(&mut self, offset: usize, total: usize, visible: usize) {
         let max_scroll = total.saturating_sub(visible);
         self.scroll_offset = offset.min(max_scroll);
+        self.follow_selection = false;
     }
 
     pub fn set_detail_scroll_offset(&mut self, offset: usize, total: usize, visible: usize) {
@@ -496,8 +508,10 @@ impl RawEventsView {
         let total_lines = lines.len();
         let visible_height = inner.height as usize;
 
-        // Ensure selected item is visible
-        self.ensure_selection_visible(selected_start, selected_end, visible_height, total_lines);
+        // Ensure selected item is visible unless the user scrolled away
+        if self.follow_selection {
+            self.ensure_selection_visible(selected_start, selected_end, visible_height, total_lines);
+        }
 
         // Calculate which lines to show
         let start_line = self.scroll_offset;
