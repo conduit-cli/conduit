@@ -63,6 +63,7 @@ pub fn paste_image_as_png() -> Result<(Vec<u8>, PastedImageInfo), PasteImageErro
 }
 
 /// Convenience: write to a temp file and return its path + info.
+#[cfg(not(target_os = "macos"))]
 pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImageError> {
     let (png, info) = paste_image_as_png()?;
     let tmp = Builder::new()
