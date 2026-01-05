@@ -3780,16 +3780,7 @@ impl App {
             return Ok(effects);
         };
 
-        // Record user input for debug view
-        let mut debug_payload = serde_json::json!({ "prompt": &prompt });
-        if !images.is_empty() {
-            let image_paths: Vec<String> = images
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect();
-            debug_payload["images"] = serde_json::json!(image_paths);
-        }
-        session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
+        let mut prompt = prompt;
 
         // Add user message to chat
         let display = MessageDisplay::User {
@@ -3830,13 +3821,7 @@ impl App {
 
         // Start agent
         if agent_type == AgentType::Claude && !images.is_empty() {
-            let display = MessageDisplay::System {
-                content: format!(
-                    "Claude does not support image attachments yet; skipping {} image(s).",
-                    images.len()
-                ),
-            };
-            session.chat_view.push(display.to_chat_message());
+            prompt = Self::append_image_paths_for_claude(prompt, &images);
             images.clear();
         } else if agent_type == AgentType::Codex && !images.is_empty() {
             images = Self::stage_images_for_agent(&working_dir, images, session);
@@ -3846,6 +3831,18 @@ impl App {
             session.stop_processing();
             return Ok(effects);
         }
+
+        // Record user input for debug view (post-processing)
+        let mut debug_payload =
+            serde_json::json!({ "prompt": &prompt, "agent_type": agent_type.as_str() });
+        if !images.is_empty() {
+            let image_paths: Vec<String> = images
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            debug_payload["images"] = serde_json::json!(image_paths);
+        }
+        session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
 
         let mut config = AgentStartConfig::new(prompt, working_dir)
             .with_tools(self.config.claude_allowed_tools.clone())
@@ -3868,6 +3865,24 @@ impl App {
         });
 
         Ok(effects)
+    }
+
+    fn append_image_paths_for_claude(prompt: String, images: &[PathBuf]) -> String {
+        if images.is_empty() {
+            return prompt;
+        }
+
+        let mut lines: Vec<String> = Vec::new();
+        if !prompt.trim().is_empty() {
+            lines.push(prompt.trim_end().to_string());
+        }
+
+        lines.push("Image file(s):".to_string());
+        for path in images {
+            lines.push(format!("- {}", path.display()));
+        }
+
+        lines.join("\n")
     }
 
     fn stage_images_for_agent(
