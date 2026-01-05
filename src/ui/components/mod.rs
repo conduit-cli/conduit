@@ -53,7 +53,7 @@ pub use model_selector::{ModelSelector, ModelSelectorItem, ModelSelectorState};
 pub use path_input::PathInputState;
 pub use searchable_list::SearchableListState;
 pub use raw_events_types::{EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT};
-pub use raw_events_view::{RawEventsScrollbarMetrics, RawEventsView};
+pub use raw_events_view::{RawEventsClick, RawEventsScrollbarMetrics, RawEventsView};
 pub use sidebar::{Sidebar, SidebarState};
 pub use spinner::Spinner;
 pub use splash_screen::SplashScreen;

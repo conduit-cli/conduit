@@ -6,14 +6,20 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Clear, Paragraph, Widget, Wrap,
-    },
+    widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
 use serde_json::Value;
+use unicode_width::UnicodeWidthStr;
 
-use super::raw_events_types::{EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT};
+use super::raw_events_types::{
+    EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT,
+};
 use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols};
+
+pub enum RawEventsClick {
+    SessionId,
+    Event(usize),
+}
 /// View for displaying raw agent events with interactive selection
 pub struct RawEventsView {
     /// All recorded events
@@ -28,6 +34,8 @@ pub struct RawEventsView {
     session_start: Instant,
     /// Event detail panel state
     pub event_detail: EventDetailState,
+    /// Agent session ID (for display/copy)
+    session_id: Option<String>,
 }
 
 pub struct RawEventsScrollbarMetrics {
@@ -44,11 +52,25 @@ impl RawEventsView {
             scroll_offset: 0,
             session_start: Instant::now(),
             event_detail: EventDetailState::new(),
+            session_id: None,
         }
     }
 
+    pub fn set_session_id(&mut self, session_id: Option<String>) {
+        self.session_id = session_id;
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
     /// Add a new event and select it
-    pub fn push_event(&mut self, direction: EventDirection, event_type: impl Into<String>, raw_json: Value) {
+    pub fn push_event(
+        &mut self,
+        direction: EventDirection,
+        event_type: impl Into<String>,
+        raw_json: Value,
+    ) {
         self.events.push(RawEventEntry::new(
             direction,
             event_type,
@@ -190,7 +212,9 @@ impl RawEventsView {
             Span::styled("Type: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 event.event_type.clone(),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -228,7 +252,19 @@ impl RawEventsView {
 
     /// Handle a click at the given position within the view area
     /// Returns Some(event_index) if a click was handled, None otherwise
-    pub fn handle_click(&mut self, x: u16, y: u16, area: Rect) -> Option<usize> {
+    pub fn handle_click(&mut self, x: u16, y: u16, area: Rect) -> Option<RawEventsClick> {
+        // Check title click (top border)
+        if y == area.y {
+            if let Some((_, start, width)) =
+                self.title_right_span(area.width.saturating_sub(2) as usize)
+            {
+                let title_x = area.x.saturating_add(1 + start);
+                if x >= title_x && x < title_x.saturating_add(width) {
+                    return Some(RawEventsClick::SessionId);
+                }
+            }
+        }
+
         // Check if click is within the inner area (accounting for border)
         let inner_x = area.x + 1;
         let inner_y = area.y + 1;
@@ -268,7 +304,7 @@ impl RawEventsView {
                 self.selected_index = i;
                 // Sync detail panel to follow selection
                 self.event_detail.sync_to_event(self.selected_index);
-                return Some(i);
+                return Some(RawEventsClick::Event(i));
             }
 
             current_line = event_end;
@@ -314,10 +350,7 @@ impl RawEventsView {
                 lines.extend(json_lines);
             } else if is_selected {
                 // Selected but collapsed: ▶ prefix with highlight
-                let line = event.render_compact(
-                    "▶",
-                    Style::default().bg(Color::Rgb(40, 40, 50)),
-                );
+                let line = event.render_compact("▶", Style::default().bg(Color::Rgb(40, 40, 50)));
                 lines.push(line);
             } else {
                 // Normal: space prefix
@@ -333,6 +366,58 @@ impl RawEventsView {
         (lines, selected_start, selected_end)
     }
 
+    fn session_id_label(&self, max_width: usize) -> Option<String> {
+        let session_id = self.session_id.as_ref()?;
+        if max_width == 0 {
+            return None;
+        }
+
+        let prefix = "Session ID: ";
+        let mut label = format!(" {prefix}{session_id} ");
+        if UnicodeWidthStr::width(label.as_str()) > max_width {
+            let available = max_width.saturating_sub(UnicodeWidthStr::width(prefix) + 3);
+            if available == 0 {
+                return None;
+            }
+            let shortened: String = session_id.chars().take(available).collect();
+            label = format!("{prefix}{shortened}...");
+        }
+
+        Some(label)
+    }
+
+    fn title_right_span(&self, max_width: usize) -> Option<(String, u16, u16)> {
+        let left = format!(" Raw Events ({}) ", self.events.len());
+        let left_width = UnicodeWidthStr::width(left.as_str());
+        let available = max_width.saturating_sub(left_width);
+        let right = self.session_id_label(available)?;
+        let right_width = UnicodeWidthStr::width(right.as_str());
+        if left_width + right_width > max_width {
+            return None;
+        }
+        let spacer = max_width.saturating_sub(left_width + right_width);
+        Some((right, (left_width + spacer) as u16, right_width as u16))
+    }
+
+    fn build_title_line(&self, max_width: usize) -> Line<'static> {
+        let left = format!(" Raw Events ({}) ", self.events.len());
+        let left_width = UnicodeWidthStr::width(left.as_str());
+
+        if let Some(right) = self.session_id_label(max_width.saturating_sub(left_width)) {
+            let right_width = UnicodeWidthStr::width(right.as_str());
+            if left_width + right_width <= max_width {
+                let spacer = max_width.saturating_sub(left_width + right_width);
+                return Line::from(vec![
+                    Span::styled(left, Style::default().fg(Color::DarkGray)),
+                    Span::styled("─".repeat(spacer), Style::default().fg(Color::DarkGray)),
+                    Span::styled(right, Style::default().fg(Color::DarkGray)),
+                ]);
+            }
+        }
+
+        Line::from(Span::styled(left, Style::default().fg(Color::DarkGray)))
+    }
+
     /// Render the raw events view with optional detail panel
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let use_split = self.event_detail.visible && area.width >= DETAIL_PANEL_BREAKPOINT;
@@ -340,11 +425,9 @@ impl RawEventsView {
 
         if use_split {
             // Split layout: event list on left, detail panel on right
-            let chunks = Layout::horizontal([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(area);
+            let chunks =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(area);
 
             self.render_event_list(chunks[0], buf);
             self.render_detail_panel(chunks[1], buf);
@@ -364,11 +447,9 @@ impl RawEventsView {
         let use_overlay = self.event_detail.visible && area.width < DETAIL_PANEL_BREAKPOINT;
 
         if use_split {
-            let chunks = Layout::horizontal([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(area);
+            let chunks =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(area);
             RawEventsScrollbarMetrics {
                 list: self.event_list_scrollbar_metrics(chunks[0]),
                 detail: self.detail_panel_scrollbar_metrics(chunks[1]),
@@ -397,7 +478,7 @@ impl RawEventsView {
 
     /// Render the event list
     fn render_event_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let title = format!(" Raw Events ({}) ", self.events.len());
+        let title = self.build_title_line(area.width.saturating_sub(2) as usize);
 
         let block = Block::default()
             .borders(Borders::ALL)

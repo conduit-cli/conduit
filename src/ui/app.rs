@@ -43,7 +43,7 @@ use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
     scrollbar_offset_from_point, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage,
     ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection,
-    GlobalFooter, HelpDialog, ModelSelector, ProcessingState, ProjectPicker,
+    GlobalFooter, HelpDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
     RawEventsScrollbarMetrics, ScrollbarMetrics, SessionImportPicker, Sidebar, SidebarData, TabBar,
 };
 use crate::ui::effect::Effect;
@@ -229,6 +229,8 @@ impl App {
                     }
                 }
             }
+
+            session.update_status();
 
             self.state.tab_manager.add_session(session);
         }
@@ -2675,6 +2677,8 @@ impl App {
             }
         }
 
+        session.update_status();
+
         // Add the session to the tab manager
         self.state.tab_manager.add_session(session);
 
@@ -3045,27 +3049,41 @@ impl App {
             if let Some(raw_events_area) = self.state.raw_events_area {
                 if Self::point_in_rect(x, y, raw_events_area) {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        if let Some(clicked_index) =
+                        if let Some(click) =
                             session.raw_events_view.handle_click(x, y, raw_events_area)
                         {
-                            // Check for double-click (same index within 500ms)
-                            let now = Instant::now();
-                            let is_double_click = if let Some((last_time, last_index)) =
-                                self.state.last_raw_events_click
-                            {
-                                last_index == clicked_index
-                                    && now.duration_since(last_time) < Duration::from_millis(500)
-                            } else {
-                                false
-                            };
+                            match click {
+                                RawEventsClick::SessionId => {
+                                    if let Some(session_id) = session.raw_events_view.session_id() {
+                                        effects.push(Effect::CopyToClipboard(
+                                            session_id.to_string(),
+                                        ));
+                                    }
+                                    self.state.last_raw_events_click = None;
+                                }
+                                RawEventsClick::Event(clicked_index) => {
+                                    // Check for double-click (same index within 500ms)
+                                    let now = Instant::now();
+                                    let is_double_click = if let Some((last_time, last_index)) =
+                                        self.state.last_raw_events_click
+                                    {
+                                        last_index == clicked_index
+                                            && now.duration_since(last_time)
+                                                < Duration::from_millis(500)
+                                    } else {
+                                        false
+                                    };
 
-                            if is_double_click {
-                                // Double-click: toggle detail panel
-                                session.raw_events_view.toggle_detail();
-                                self.state.last_raw_events_click = None;
-                            } else {
-                                // Single click: just select (already done in handle_click)
-                                self.state.last_raw_events_click = Some((now, clicked_index));
+                                    if is_double_click {
+                                        // Double-click: toggle detail panel
+                                        session.raw_events_view.toggle_detail();
+                                        self.state.last_raw_events_click = None;
+                                    } else {
+                                        // Single click: just select (already done in handle_click)
+                                        self.state.last_raw_events_click =
+                                            Some((now, clicked_index));
+                                    }
+                                }
                             }
                         }
                     }

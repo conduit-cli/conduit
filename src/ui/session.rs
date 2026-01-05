@@ -122,6 +122,12 @@ impl AgentSession {
         self.status_bar.set_session_id(self.agent_session_id.clone());
         self.status_bar.set_token_usage(self.total_usage.clone());
         self.status_bar.set_processing(self.is_processing);
+        let session_id = self
+            .agent_session_id
+            .as_ref()
+            .or(self.resume_session_id.as_ref())
+            .map(|s| s.as_str().to_string());
+        self.raw_events_view.set_session_id(session_id);
     }
 
     /// Add token usage from a turn
