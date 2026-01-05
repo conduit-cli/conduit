@@ -3789,7 +3789,8 @@ impl App {
                 // Calculate dynamic input height (max 30% of screen)
                 let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
                 let input_height = if let Some(session) = self.state.tab_manager.active_session() {
-                    session.input_box.desired_height(max_input_height)
+                    session.input_box
+                        .desired_height(max_input_height, content_area.width)
                 } else {
                     3 // Minimum height
                 };

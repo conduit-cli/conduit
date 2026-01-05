@@ -59,7 +59,9 @@ pub use spinner::Spinner;
 pub use splash_screen::SplashScreen;
 pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;
-pub use theme::{FOOTER_BG, KEY_HINT_BG, SELECTED_BG, SELECTED_BG_DIM, STATUS_BAR_BG, TAB_BAR_BG};
+pub use theme::{
+    FOOTER_BG, INPUT_BG, KEY_HINT_BG, SELECTED_BG, SELECTED_BG_DIM, STATUS_BAR_BG, TAB_BAR_BG,
+};
 pub use thinking_indicator::{ProcessingState, ThinkingIndicator};
 pub use tree_view::{ActionType, NodeType, SidebarData, TreeNode, TreeView, TreeViewState};
 pub use turn_summary::{FileChange, TurnSummary};

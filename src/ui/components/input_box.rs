@@ -3,12 +3,21 @@ use ratatui::{
     layout::Rect,
     style::{Color, Style},
     widgets::{
-        Block, Borders, Paragraph, Widget, Wrap,
+        Clear, Paragraph, Widget, Wrap,
     },
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_vertical_scrollbar, ScrollbarSymbols};
+use super::{render_vertical_scrollbar, ScrollbarSymbols, INPUT_BG};
+
+#[derive(Debug, Clone)]
+struct VisualLine {
+    text: String,
+    start: usize,
+    end: usize,
+    prefix_width: u16,
+}
+
 /// Text input component with cursor and history
 pub struct InputBox {
     /// Current input text
@@ -73,30 +82,25 @@ impl InputBox {
         input
     }
 
-    /// Count the number of lines in the input
+    /// Count the number of logical lines in the input
     pub fn line_count(&self) -> usize {
         self.input.split('\n').count().max(1)
     }
 
-    /// Calculate the desired height for the input box (content + borders)
-    pub fn desired_height(&self, max_height: u16) -> u16 {
-        let content_lines = self.line_count() as u16;
-        // +2 for top and bottom borders
+    /// Calculate the desired height for the input box (content + padding)
+    pub fn desired_height(&self, max_height: u16, width: u16) -> u16 {
+        let content_lines = self.visual_line_count(width) as u16;
+        // +2 for top and bottom padding
         let desired = content_lines + 2;
-        // Minimum of 3 (1 line + borders), maximum of max_height
+        // Minimum of 3 (1 line + padding), maximum of max_height
         desired.clamp(3, max_height)
     }
 
     /// Ensure cursor line is visible, adjusting scroll if needed
-    fn ensure_cursor_visible(&mut self, visible_lines: usize) {
-        let cursor_line = self.cursor_line();
-
-        // If cursor is above visible area, scroll up
+    fn ensure_cursor_visible(&mut self, cursor_line: usize, visible_lines: usize) {
         if cursor_line < self.scroll_offset {
             self.scroll_offset = cursor_line;
-        }
-        // If cursor is below visible area, scroll down
-        else if cursor_line >= self.scroll_offset + visible_lines {
+        } else if cursor_line >= self.scroll_offset + visible_lines {
             self.scroll_offset = cursor_line.saturating_sub(visible_lines - 1);
         }
     }
@@ -104,6 +108,77 @@ impl InputBox {
     /// Get the line number where the cursor is (0-indexed)
     fn cursor_line(&self) -> usize {
         self.input[..self.cursor_pos].matches('\n').count()
+    }
+
+    fn visual_line_count(&self, width: u16) -> usize {
+        self.build_visual_lines(width).len().max(1)
+    }
+
+    fn build_visual_lines(&self, width: u16) -> Vec<VisualLine> {
+        if width == 0 {
+            return vec![VisualLine {
+                text: String::new(),
+                start: 0,
+                end: 0,
+                prefix_width: 0,
+            }];
+        }
+
+        let mut visual = Vec::new();
+        let mut base_offset = 0usize;
+        let content_width = width as usize;
+
+        for (line_idx, line) in self.input.split('\n').enumerate() {
+            let is_first_line = line_idx == 0;
+            let first_prefix = if is_first_line { "> " } else { "" };
+            let cont_prefix = if is_first_line { "  " } else { "" };
+            let prefix_width = UnicodeWidthStr::width(first_prefix);
+            let wrap_width = content_width.saturating_sub(prefix_width);
+            let segments = wrap_line_segments(line, wrap_width);
+
+            for (seg_idx, (start, end)) in segments.into_iter().enumerate() {
+                let prefix = if seg_idx == 0 { first_prefix } else { cont_prefix };
+                let prefix_width = UnicodeWidthStr::width(prefix) as u16;
+                let segment_text = if start <= end && end <= line.len() {
+                    &line[start..end]
+                } else {
+                    ""
+                };
+                visual.push(VisualLine {
+                    text: format!("{}{}", prefix, segment_text),
+                    start: base_offset + start,
+                    end: base_offset + end,
+                    prefix_width,
+                });
+            }
+
+            base_offset += line.len() + 1; // +1 for newline
+        }
+
+        if visual.is_empty() {
+            visual.push(VisualLine {
+                text: String::new(),
+                start: 0,
+                end: 0,
+                prefix_width: 0,
+            });
+        }
+
+        visual
+    }
+
+    fn cursor_visual_index(&self, lines: &[VisualLine]) -> usize {
+        if lines.is_empty() {
+            return 0;
+        }
+
+        for (i, line) in lines.iter().enumerate() {
+            if self.cursor_pos >= line.start && self.cursor_pos <= line.end {
+                return i;
+            }
+        }
+
+        lines.len().saturating_sub(1)
     }
 
     /// Insert character at cursor
@@ -404,17 +479,45 @@ impl InputBox {
 
     /// Get cursor position for rendering, accounting for scroll offset
     pub fn cursor_position(&self, area: Rect, scroll_offset: usize) -> (u16, u16) {
-        // Calculate cursor position accounting for multi-line
-        let text_before_cursor = &self.input[..self.cursor_pos];
-        let lines: Vec<&str> = text_before_cursor.split('\n').collect();
+        if area.height < 3 || area.width == 0 {
+            return (area.x, area.y);
+        }
 
-        let absolute_y = lines.len() - 1;
-        let visible_y = absolute_y.saturating_sub(scroll_offset);
-        let x = lines.last().map(|l| l.width() as u16).unwrap_or(0);
+        let padding_top: u16 = 1;
+        let padding_bottom: u16 = 1;
+        let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+        if content_height == 0 {
+            return (area.x, area.y + padding_top);
+        }
 
-        // Account for border; prompt "> " only on first line (when not scrolled)
-        let prompt_offset = if absolute_y == 0 && scroll_offset == 0 { 2 } else { 0 };
-        (area.x + 1 + prompt_offset + x, area.y + 1 + visible_y as u16)
+        let visible_lines = content_height as usize;
+        let visual_lines_full = self.build_visual_lines(area.width);
+        let show_scrollbar = visual_lines_full.len() > visible_lines;
+        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        if content_width == 0 {
+            return (area.x, area.y + padding_top);
+        }
+        let visual_lines = if show_scrollbar {
+            self.build_visual_lines(content_width)
+        } else {
+            visual_lines_full
+        };
+        if visual_lines.is_empty() {
+            return (area.x, area.y + padding_top);
+        }
+
+        let cursor_line = self.cursor_visual_index(&visual_lines);
+        let line = &visual_lines[cursor_line];
+        let cursor_pos = self.cursor_pos.clamp(line.start, line.end);
+        let segment = &self.input[line.start..cursor_pos];
+        let segment_width = UnicodeWidthStr::width(segment) as u16;
+        let cursor_x = area.x + line.prefix_width + segment_width;
+        let max_x = area.x + content_width.saturating_sub(1);
+        let visible_y = cursor_line.saturating_sub(scroll_offset);
+        (
+            cursor_x.min(max_x),
+            area.y + padding_top + visible_y as u16,
+        )
     }
 
     /// Get current scroll offset
@@ -424,140 +527,257 @@ impl InputBox {
 
     /// Set cursor position from a mouse click
     pub fn set_cursor_from_click(&mut self, click_x: u16, click_y: u16, area: Rect) {
-        // Calculate position relative to inner area (accounting for border)
-        let inner_x = area.x + 1;
-        let inner_y = area.y + 1;
-
-        // Check if click is within the inner area
-        if click_x < inner_x || click_y < inner_y {
+        if area.height < 3 || area.width == 0 {
             return;
         }
 
-        let relative_x = (click_x - inner_x) as usize;
-        let relative_y = (click_y - inner_y) as usize;
+        let padding_top: u16 = 1;
+        let padding_bottom: u16 = 1;
+        let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+        if content_height == 0 {
+            return;
+        }
 
-        // Calculate which line was clicked (accounting for scroll)
-        let target_line = relative_y + self.scroll_offset;
+        let visible_lines = content_height as usize;
+        let visual_lines_full = self.build_visual_lines(area.width);
+        let show_scrollbar = visual_lines_full.len() > visible_lines;
+        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        if content_width == 0 {
+            return;
+        }
 
-        let lines: Vec<&str> = self.input.split('\n').collect();
-        let total_lines = lines.len();
+        let content_x = area.x;
+        let content_y = area.y + padding_top;
 
-        // Clamp to valid line range
-        let target_line = target_line.min(total_lines.saturating_sub(1));
+        // Check if click is within the content area
+        if click_x < content_x
+            || click_y < content_y
+            || click_x >= content_x + content_width
+            || click_y >= content_y + content_height
+        {
+            return;
+        }
 
-        // Account for prompt "> " on the first visible line when not scrolled
-        let effective_x = if target_line == 0 {
-            // First line has "> " prefix (2 chars)
-            relative_x.saturating_sub(2)
+        let relative_x = (click_x - content_x) as u16;
+        let relative_y = (click_y - content_y) as usize;
+
+        let visual_lines = if show_scrollbar {
+            self.build_visual_lines(content_width)
         } else {
-            relative_x
+            visual_lines_full
         };
 
-        // Find byte offset for the target position
-        let line = lines.get(target_line).unwrap_or(&"");
-
-        // Convert visual x position to byte offset within the line
-        // We need to account for Unicode character widths
-        let mut byte_offset_in_line = 0;
-        let mut visual_x = 0;
-
-        for (idx, ch) in line.char_indices() {
-            if visual_x >= effective_x {
-                byte_offset_in_line = idx;
-                break;
-            }
-            visual_x += ch.width().unwrap_or(1);
-            byte_offset_in_line = idx + ch.len_utf8();
+        let target_line = relative_y + self.scroll_offset;
+        if target_line >= visual_lines.len() {
+            return;
         }
 
-        // If we went past all characters, set to end of line
-        if visual_x < effective_x {
-            byte_offset_in_line = line.len();
+        let line = &visual_lines[target_line];
+        if relative_x < line.prefix_width {
+            self.cursor_pos = line.start.min(self.input.len());
+            return;
         }
 
-        // Calculate absolute byte offset
-        let mut cursor_pos = 0;
-        for (i, line) in lines.iter().enumerate() {
-            if i == target_line {
-                cursor_pos += byte_offset_in_line;
-                break;
-            }
-            cursor_pos += line.len() + 1; // +1 for newline
-        }
-
-        // Clamp to valid range
-        self.cursor_pos = cursor_pos.min(self.input.len());
+        let target_x = (relative_x - line.prefix_width) as usize;
+        let segment = &self.input[line.start..line.end];
+        let byte_offset = byte_offset_for_x(segment, target_x);
+        self.cursor_pos = (line.start + byte_offset).min(self.input.len());
     }
 
     /// Render the input box
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.focused {
-                Color::Cyan
-            } else {
-                Color::DarkGray
-            }))
-            .title(" Input ");
+        Clear.render(area, buf);
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                buf[(x, y)].set_bg(INPUT_BG);
+            }
+        }
 
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        if inner.height == 0 || inner.width == 0 {
+        if area.height < 3 || area.width == 0 {
             return;
         }
 
-        let visible_lines = inner.height as usize;
-        let total_lines = self.line_count();
+        let padding_top = 1;
+        let padding_bottom = 1;
+        let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+        if content_height == 0 {
+            return;
+        }
+
+        let visible_lines = content_height as usize;
+        let base_width = area.width;
+        let visual_lines_full = self.build_visual_lines(base_width);
+        let show_scrollbar = visual_lines_full.len() > visible_lines;
+        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        if content_width == 0 {
+            return;
+        }
+
+        let visual_lines = if show_scrollbar {
+            self.build_visual_lines(content_width)
+        } else {
+            visual_lines_full
+        };
+        let total_lines = visual_lines.len();
+        let cursor_line = self.cursor_visual_index(&visual_lines);
 
         // Ensure cursor is visible
-        self.ensure_cursor_visible(visible_lines);
+        self.ensure_cursor_visible(cursor_line, visible_lines);
 
         // Clamp scroll offset
         let max_scroll = total_lines.saturating_sub(visible_lines);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        // Build lines with prompt on first line
-        let lines: Vec<&str> = self.input.split('\n').collect();
-        let mut display_lines: Vec<String> = Vec::new();
-
-        for (i, line) in lines.iter().enumerate() {
-            if i == 0 {
-                display_lines.push(format!("> {}", line));
-            } else {
-                display_lines.push(line.to_string());
-            }
-        }
-
-        // Apply scroll offset
-        let visible_display: Vec<String> = display_lines
-            .into_iter()
+        let display_text = visual_lines
+            .iter()
             .skip(self.scroll_offset)
             .take(visible_lines)
-            .collect();
-
-        let display_text = visible_display.join("\n");
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let paragraph = Paragraph::new(display_text)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(Color::White).bg(INPUT_BG))
             .wrap(Wrap { trim: false });
 
-        paragraph.render(inner, buf);
+        let content_area = Rect {
+            x: area.x,
+            y: area.y + padding_top,
+            width: content_width,
+            height: content_height,
+        };
+
+        paragraph.render(content_area, buf);
 
         // Render scrollbar if content exceeds visible area
-        render_vertical_scrollbar(
-            Rect {
-                x: inner.x + inner.width,
-                y: inner.y,
-                width: 1,
-                height: inner.height,
-            },
-            buf,
-            total_lines,
-            visible_lines,
-            self.scroll_offset,
-            ScrollbarSymbols::arrows(),
-        );
+        if total_lines > visible_lines {
+            render_vertical_scrollbar(
+                Rect {
+                    x: area.x + area.width.saturating_sub(1),
+                    y: area.y + padding_top,
+                    width: 1,
+                    height: content_height,
+                },
+                buf,
+                total_lines,
+                visible_lines,
+                self.scroll_offset,
+                ScrollbarSymbols::arrows(),
+            );
+        }
+    }
+}
+
+fn wrap_line_segments(line: &str, max_width: usize) -> Vec<(usize, usize)> {
+    if line.is_empty() {
+        return vec![(0, 0)];
+    }
+    if max_width == 0 {
+        return vec![(0, 0)];
+    }
+
+    #[derive(Clone, Copy)]
+    struct CharInfo {
+        ch: char,
+        width: usize,
+        byte_idx: usize,
+        byte_len: usize,
+    }
+
+    let mut segments = Vec::new();
+    let mut current: Vec<CharInfo> = Vec::new();
+    let mut line_width = 0usize;
+    let mut last_break: Option<(usize, usize)> = None; // (index in current, width at break)
+
+    let flush_segment = |current: &mut Vec<CharInfo>, split_idx: usize, segments: &mut Vec<(usize, usize)>| {
+        if split_idx == 0 || current.is_empty() {
+            return;
+        }
+        let seg_end_idx = split_idx.saturating_sub(1);
+        let seg_start = current[0].byte_idx;
+        let seg_end = current[seg_end_idx].byte_idx + current[seg_end_idx].byte_len;
+        segments.push((seg_start, seg_end));
+
+        let mut remainder = current.split_off(split_idx);
+        while !remainder.is_empty() && remainder[0].ch.is_whitespace() {
+            remainder.remove(0);
+        }
+        *current = remainder;
+    };
+
+    let recompute_state = |current: &Vec<CharInfo>| -> (usize, Option<(usize, usize)>) {
+        let mut width = 0usize;
+        let mut last = None;
+        for (i, info) in current.iter().enumerate() {
+            width += info.width;
+            if info.ch.is_whitespace() {
+                last = Some((i + 1, width));
+            }
+        }
+        (width, last)
+    };
+
+    for (byte_idx, ch) in line.char_indices() {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
+        current.push(CharInfo {
+            ch,
+            width,
+            byte_idx,
+            byte_len: ch.len_utf8(),
+        });
+        line_width += width;
+
+        if ch.is_whitespace() {
+            last_break = Some((current.len(), line_width));
+        }
+
+        if line_width > max_width && !current.is_empty() {
+            if let Some((break_idx, _)) = last_break {
+                if break_idx > 0 {
+                    flush_segment(&mut current, break_idx, &mut segments);
+                    let (w, lb) = recompute_state(&current);
+                    line_width = w;
+                    last_break = lb;
+                    continue;
+                }
+            }
+
+            let split_idx = if current.len() > 1 { current.len() - 1 } else { 1 };
+            flush_segment(&mut current, split_idx, &mut segments);
+            let (w, lb) = recompute_state(&current);
+            line_width = w;
+            last_break = lb;
+        }
+    }
+
+    if !current.is_empty() {
+        let seg_start = current[0].byte_idx;
+        let last = current.last().unwrap();
+        let seg_end = last.byte_idx + last.byte_len;
+        segments.push((seg_start, seg_end));
+    }
+
+    segments
+}
+
+fn byte_offset_for_x(text: &str, target_x: usize) -> usize {
+    let mut visual_x = 0usize;
+    let mut byte_offset = 0usize;
+
+    for (idx, ch) in text.char_indices() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
+        if visual_x >= target_x {
+            byte_offset = idx;
+            return byte_offset;
+        }
+        visual_x += ch_width;
+        byte_offset = idx + ch.len_utf8();
+    }
+
+    if visual_x < target_x {
+        text.len()
+    } else {
+        byte_offset
     }
 }
 
