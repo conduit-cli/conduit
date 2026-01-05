@@ -3,13 +3,16 @@ use std::time::Duration;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
 
 use crate::agent::{AgentType, ModelRegistry, SessionId, TokenUsage};
-use crate::ui::components::{Spinner, STATUS_BAR_BG};
+use crate::ui::components::{
+    Spinner, ACCENT_ERROR, ACCENT_SUCCESS, ACCENT_WARNING, AGENT_CLAUDE, AGENT_CODEX, BG_BASE,
+    STATUS_BAR_BG, TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+};
 
 /// Status bar component showing session info
 pub struct StatusBar {
@@ -134,10 +137,10 @@ impl StatusBar {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         let mut spans = Vec::new();
 
-        // Agent type indicator with icon
+        // Agent type indicator with icon - softer brand colors
         let agent_color = match self.agent_type {
-            AgentType::Claude => Color::Cyan,
-            AgentType::Codex => Color::Magenta,
+            AgentType::Claude => AGENT_CLAUDE,
+            AgentType::Codex => AGENT_CODEX,
         };
         let agent_icon = ModelRegistry::agent_icon(self.agent_type);
 
@@ -145,13 +148,13 @@ impl StatusBar {
             format!(" {} {} ", agent_icon, self.agent_type.display_name()),
             Style::default()
                 .bg(agent_color)
-                .fg(Color::Black)
+                .fg(BG_BASE)
                 .add_modifier(Modifier::BOLD),
         ));
 
         spans.push(Span::raw(" "));
 
-        // Model name - always use display name for consistency
+        // Model name - primary text
         let model_id = self
             .model
             .clone()
@@ -162,77 +165,79 @@ impl StatusBar {
 
         spans.push(Span::styled(
             format!("{} ", model_display),
-            Style::default().fg(Color::White),
+            Style::default().fg(TEXT_PRIMARY),
         ));
 
-        // Session ID (smaller, dimmed)
+        // Session ID (very muted)
         if let Some(ref id) = self.session_id {
             let short_id = &id.as_str()[..8.min(id.as_str().len())];
             spans.push(Span::styled(
                 format!("({})", short_id),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(TEXT_FAINT),
             ));
             spans.push(Span::raw(" "));
         }
 
         // Processing indicator with spinner
         if self.is_processing {
-            spans.push(self.spinner.span(Color::Yellow));
+            spans.push(self.spinner.span(ACCENT_WARNING));
             spans.push(Span::styled(
                 " thinking... ",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(ACCENT_WARNING),
             ));
         }
 
-        spans.push(Span::raw("│ "));
+        // Separator
+        spans.push(Span::styled(" │ ", Style::default().fg(TEXT_FAINT)));
 
-        // Token usage
+        // Token usage with muted labels
         let input_str = self.format_tokens(self.token_usage.input_tokens);
         let output_str = self.format_tokens(self.token_usage.output_tokens);
 
-        spans.push(Span::styled("in:", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled("in:", Style::default().fg(TEXT_MUTED)));
         spans.push(Span::styled(
             format!("{} ", input_str),
-            Style::default().fg(Color::White),
+            Style::default().fg(TEXT_SECONDARY),
         ));
 
-        spans.push(Span::styled("out:", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled("out:", Style::default().fg(TEXT_MUTED)));
         spans.push(Span::styled(
             format!("{} ", output_str),
-            Style::default().fg(Color::White),
+            Style::default().fg(TEXT_SECONDARY),
         ));
 
         // Cached tokens if any
         if self.token_usage.cached_tokens > 0 {
             spans.push(Span::styled(
                 format!("(+{} cached) ", self.format_tokens(self.token_usage.cached_tokens)),
-                Style::default().fg(Color::Green),
+                Style::default().fg(ACCENT_SUCCESS),
             ));
         }
 
-        spans.push(Span::raw("│ "));
+        // Separator
+        spans.push(Span::styled(" │ ", Style::default().fg(TEXT_FAINT)));
 
-        // Estimated cost
+        // Estimated cost - color based on threshold
         spans.push(Span::styled(
             format!("${:.4}", self.estimated_cost),
             Style::default().fg(if self.estimated_cost > 0.1 {
-                Color::Yellow
+                ACCENT_WARNING
             } else {
-                Color::Green
+                ACCENT_SUCCESS
             }),
         ));
 
         // Performance metrics (when enabled)
         if self.show_metrics {
-            spans.push(Span::raw(" │ "));
+            spans.push(Span::styled(" │ ", Style::default().fg(TEXT_FAINT)));
 
             // FPS indicator
             let fps_color = if self.fps >= 55.0 {
-                Color::Green
+                ACCENT_SUCCESS
             } else if self.fps >= 30.0 {
-                Color::Yellow
+                ACCENT_WARNING
             } else {
-                Color::Red
+                ACCENT_ERROR
             };
             spans.push(Span::styled(
                 format!("FPS:{:.0} ", self.fps),
@@ -242,11 +247,11 @@ impl StatusBar {
             // Work time = draw + event (actual CPU work, excluding sleep)
             let work_ms = self.draw_time.as_millis() + self.event_time.as_millis();
             let work_color = if work_ms <= 8 {
-                Color::Green
+                ACCENT_SUCCESS
             } else if work_ms <= 14 {
-                Color::Yellow
+                ACCENT_WARNING
             } else {
-                Color::Red
+                ACCENT_ERROR
             };
             spans.push(Span::styled(
                 format!("work:{}ms ", work_ms),
@@ -255,10 +260,12 @@ impl StatusBar {
 
             // Breakdown: draw/event
             spans.push(Span::styled(
-                format!("(draw:{} evt:{})",
+                format!(
+                    "(draw:{} evt:{})",
                     self.draw_time.as_millis(),
-                    self.event_time.as_millis()),
-                Style::default().fg(Color::DarkGray),
+                    self.event_time.as_millis()
+                ),
+                Style::default().fg(TEXT_MUTED),
             ));
 
             // Scroll responsiveness (only highlight if active)
@@ -266,14 +273,14 @@ impl StatusBar {
             let latency_avg_ms = self.scroll_latency_avg.as_secs_f64() * 1000.0;
             let scroll_color = if self.scroll_active {
                 if latency_ms <= 16.0 {
-                    Color::Green
+                    ACCENT_SUCCESS
                 } else if latency_ms <= 33.0 {
-                    Color::Yellow
+                    ACCENT_WARNING
                 } else {
-                    Color::Red
+                    ACCENT_ERROR
                 }
             } else {
-                Color::DarkGray
+                TEXT_MUTED
             };
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
@@ -285,13 +292,12 @@ impl StatusBar {
                     "scroll:{:.0}l/s ev:{:.0}/s",
                     self.scroll_lines_per_sec, self.scroll_events_per_sec
                 ),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(TEXT_MUTED),
             ));
         }
 
         let line = Line::from(spans);
-        let paragraph = Paragraph::new(line)
-            .style(Style::default().bg(STATUS_BAR_BG));
+        let paragraph = Paragraph::new(line).style(Style::default().bg(STATUS_BAR_BG));
 
         paragraph.render(area, buf);
     }

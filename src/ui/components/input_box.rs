@@ -1,14 +1,14 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols, INPUT_BG};
+use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols, INPUT_BG, TEXT_PRIMARY};
 use crate::ui::clipboard_paste::normalize_pasted_path;
 
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
@@ -841,7 +841,7 @@ impl InputBox {
             .join("\n");
 
         let paragraph = Paragraph::new(display_text)
-            .style(Style::default().fg(Color::White).bg(INPUT_BG))
+            .style(Style::default().fg(TEXT_PRIMARY).bg(INPUT_BG))
             .wrap(Wrap { trim: false });
 
         let content_area = Rect {

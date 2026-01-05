@@ -8,6 +8,8 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
+use super::{ACCENT_PRIMARY, TEXT_FAINT, TEXT_MUTED, TEXT_SECONDARY};
+
 #[derive(Debug, Clone, Copy)]
 pub struct KeyHintBarStyle {
     pub key_style: Style,
@@ -24,9 +26,9 @@ pub struct KeyHintBarStyle {
 impl KeyHintBarStyle {
     pub fn instruction_bar() -> Self {
         Self {
-            key_style: Style::default().fg(Color::Cyan),
-            action_style: Style::default().fg(Color::Gray),
-            separator: Some((" │ ", Style::default().fg(Color::DarkGray))),
+            key_style: Style::default().fg(ACCENT_PRIMARY),
+            action_style: Style::default().fg(TEXT_SECONDARY),
+            separator: Some((" │ ", Style::default().fg(TEXT_FAINT))),
             item_gap: "",
             key_prefix: "",
             key_suffix: "",
@@ -38,8 +40,8 @@ impl KeyHintBarStyle {
 
     pub fn footer_bar(key_bg: Color, footer_bg: Color) -> Self {
         Self {
-            key_style: Style::default().fg(Color::White).bg(key_bg),
-            action_style: Style::default().fg(Color::Rgb(120, 120, 120)),
+            key_style: Style::default().fg(TEXT_SECONDARY).bg(key_bg),
+            action_style: Style::default().fg(TEXT_MUTED),
             separator: None,
             item_gap: "   ",
             key_prefix: " ",

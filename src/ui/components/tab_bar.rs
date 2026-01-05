@@ -1,12 +1,15 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
 
-use super::TAB_BAR_BG;
+use super::{
+    ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, BG_ELEVATED, TAB_BAR_BG, TEXT_MUTED,
+    TEXT_PRIMARY, TEXT_SECONDARY,
+};
 /// Spinner animation frames
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -81,41 +84,41 @@ impl TabBar {
             let needs_attention = self.attention_flags.get(i).copied().unwrap_or(false);
             let pr_number = self.pr_numbers.get(i).copied().flatten();
 
-            // Tab indicator - only show when focused
+            // Tab indicator - subtle marker for active tab
             if is_active && self.focused {
-                spans.push(Span::styled(" ▶ ", Style::default().fg(Color::Cyan)));
+                spans.push(Span::styled(" ▸ ", Style::default().fg(ACCENT_PRIMARY)));
                 _total_width += 3;
             } else {
                 spans.push(Span::raw("   "));
                 _total_width += 3;
             }
 
-            // Processing spinner (yellow)
+            // Processing spinner
             if is_processing {
                 spans.push(Span::styled(
                     format!("{} ", self.spinner_char()),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(ACCENT_WARNING),
                 ));
                 _total_width += 2;
             }
-            // Attention indicator (green dot) - only if not processing
+            // Attention indicator (dot) - only if not processing
             else if needs_attention {
-                spans.push(Span::styled("● ", Style::default().fg(Color::Green)));
+                spans.push(Span::styled("● ", Style::default().fg(ACCENT_SUCCESS)));
                 _total_width += 2;
             }
 
-            // Tab name - dim the active tab when not focused
+            // Tab name with proper text hierarchy
             let tab_style = if is_active {
                 if self.focused {
                     Style::default()
-                        .fg(Color::White)
+                        .fg(TEXT_PRIMARY)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    // Active but unfocused - slightly brighter than inactive
-                    Style::default().fg(Color::Gray)
+                    // Active but unfocused - secondary text
+                    Style::default().fg(TEXT_SECONDARY)
                 }
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(TEXT_MUTED)
             };
 
             let tab_text = format!("[{}] {}", i + 1, tab);
@@ -133,8 +136,8 @@ impl TabBar {
                     spans.push(Span::styled(
                         badge,
                         Style::default()
-                            .bg(Color::Blue)
-                            .fg(Color::White)
+                            .bg(BG_ELEVATED)
+                            .fg(TEXT_PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     ));
                     spans.push(Span::raw(" "));
@@ -143,11 +146,11 @@ impl TabBar {
             }
         }
 
-        // Add new tab button
+        // Add new tab button - muted until hovered
         if self.can_add {
             spans.push(Span::styled(
                 " [+] New ",
-                Style::default().fg(Color::Green),
+                Style::default().fg(TEXT_MUTED),
             ));
         }
 
