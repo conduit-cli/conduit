@@ -40,6 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 ansi-to-tui = "8.0"
 arboard = "3.4"
+image = "0.25"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }

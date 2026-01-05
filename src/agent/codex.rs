@@ -53,6 +53,12 @@ impl CodexCliRunner {
             cmd.arg("-m").arg(model);
         }
 
+        if !config.images.is_empty() {
+            for image in &config.images {
+                cmd.arg("--image").arg(image);
+            }
+        }
+
         // High reasoning effort for better responses
         cmd.arg("-c").arg("model_reasoning_effort=\"high\"");
 
@@ -194,7 +200,10 @@ impl CodexCliRunner {
         match payload_type {
             "message" => Self::convert_message(payload),
             "function_call" => {
-                let name = payload.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+                let name = payload
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("tool");
                 let args = Self::parse_args(payload).unwrap_or(Value::Null);
                 Some(AgentEvent::ToolStarted(ToolStartedEvent {
                     tool_name: name.to_string(),
@@ -203,7 +212,10 @@ impl CodexCliRunner {
                 }))
             }
             "function_call_output" => {
-                let call_id = payload.get("call_id").and_then(|c| c.as_str()).unwrap_or("");
+                let call_id = payload
+                    .get("call_id")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
                 let raw_output = payload.get("output").and_then(|o| o.as_str()).unwrap_or("");
                 let (output, exit_code) = MessageDisplay::parse_codex_tool_output(raw_output);
                 let info = function_calls.get(call_id);
@@ -263,9 +275,7 @@ impl CodexCliRunner {
                     .get("total_tokens")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(input_tokens + output_tokens);
-                let context_window = info
-                    .get("model_context_window")
-                    .and_then(|v| v.as_i64());
+                let context_window = info.get("model_context_window").and_then(|v| v.as_i64());
 
                 Some(AgentEvent::TokenUsage(TokenUsageEvent {
                     usage: TokenUsage {
@@ -349,8 +359,8 @@ impl CodexCliRunner {
                 .get("payload")
                 .and_then(|payload| Self::convert_event_msg(payload)),
             "message" => Self::convert_message(raw),
-            "thread.started" | "turn.started" | "turn.completed" | "turn.failed" | "item.updated"
-            | "item.completed" | "error" => Self::convert_thread_event(raw),
+            "thread.started" | "turn.started" | "turn.completed" | "turn.failed"
+            | "item.updated" | "item.completed" | "error" => Self::convert_thread_event(raw),
             _ => Some(AgentEvent::Raw { data: raw.clone() }),
         }
     }

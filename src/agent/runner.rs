@@ -54,6 +54,8 @@ pub struct AgentStartConfig {
     pub additional_args: Vec<String>,
     /// Model to use (e.g., "sonnet", "opus" for Claude; "o4-mini" for Codex)
     pub model: Option<String>,
+    /// Optional image paths to attach to the initial prompt
+    pub images: Vec<PathBuf>,
 }
 
 impl AgentStartConfig {
@@ -66,6 +68,7 @@ impl AgentStartConfig {
             timeout_ms: None,
             additional_args: vec![],
             model: None,
+            images: Vec::new(),
         }
     }
 
@@ -86,6 +89,11 @@ impl AgentStartConfig {
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    pub fn with_images(mut self, images: Vec<PathBuf>) -> Self {
+        self.images = images;
         self
     }
 }

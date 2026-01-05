@@ -2,13 +2,16 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    widgets::{
-        Clear, Paragraph, Widget, Wrap,
-    },
+    widgets::{Clear, Paragraph, Widget, Wrap},
 };
+use std::collections::HashMap;
+use std::path::PathBuf;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols, INPUT_BG};
+use crate::ui::clipboard_paste::normalize_pasted_path;
+
+const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 
 #[derive(Debug, Clone)]
 struct VisualLine {
@@ -16,6 +19,18 @@ struct VisualLine {
     start: usize,
     end: usize,
     prefix_width: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct InputSubmit {
+    pub text: String,
+    pub image_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct AttachedImage {
+    placeholder: String,
+    path: PathBuf,
 }
 
 /// Text input component with cursor and history
@@ -36,6 +51,12 @@ pub struct InputBox {
     scroll_offset: usize,
     /// Last content width used for wrapping (excludes scrollbar)
     last_content_width: Option<u16>,
+    /// Large paste placeholders → actual content
+    pending_pastes: Vec<(String, String)>,
+    /// Counter for large paste placeholders by size
+    large_paste_counters: HashMap<usize, usize>,
+    /// Attached images tracked by placeholder
+    attached_images: Vec<AttachedImage>,
 }
 
 impl InputBox {
@@ -49,6 +70,9 @@ impl InputBox {
             focused: true,
             scroll_offset: 0,
             last_content_width: None,
+            pending_pastes: Vec::new(),
+            large_paste_counters: HashMap::new(),
+            attached_images: Vec::new(),
         }
     }
 
@@ -61,6 +85,8 @@ impl InputBox {
     pub fn set_input(&mut self, text: String) {
         self.input = text;
         self.cursor_pos = self.input.len();
+        self.pending_pastes.clear();
+        self.attached_images.clear();
     }
 
     /// Clear input
@@ -69,20 +95,35 @@ impl InputBox {
         self.cursor_pos = 0;
         self.history_index = None;
         self.scroll_offset = 0;
+        self.pending_pastes.clear();
+        self.attached_images.clear();
     }
 
     /// Submit input and add to history
-    pub fn submit(&mut self) -> String {
+    pub fn submit(&mut self) -> InputSubmit {
         let input = std::mem::take(&mut self.input);
         self.cursor_pos = 0;
         self.history_index = None;
         self.scroll_offset = 0;
 
-        if !input.trim().is_empty() {
-            self.history.push(input.clone());
+        let mut expanded = input;
+        for (placeholder, actual) in &self.pending_pastes {
+            if expanded.contains(placeholder) {
+                expanded = expanded.replace(placeholder, actual);
+            }
+        }
+        self.pending_pastes.clear();
+
+        let image_paths = self.take_attached_images(&expanded);
+
+        if !expanded.trim().is_empty() {
+            self.history.push(expanded.clone());
         }
 
-        input
+        InputSubmit {
+            text: expanded,
+            image_paths,
+        }
     }
 
     /// Count the number of logical lines in the input
@@ -140,7 +181,11 @@ impl InputBox {
             let segments = wrap_line_segments(line, wrap_width);
 
             for (seg_idx, (start, end)) in segments.into_iter().enumerate() {
-                let prefix = if seg_idx == 0 { first_prefix } else { cont_prefix };
+                let prefix = if seg_idx == 0 {
+                    first_prefix
+                } else {
+                    cont_prefix
+                };
                 let prefix_width = UnicodeWidthStr::width(prefix) as u16;
                 let segment_text = if start <= end && end <= line.len() {
                     &line[start..end]
@@ -188,6 +233,15 @@ impl InputBox {
     pub fn insert_char(&mut self, c: char) {
         self.input.insert(self.cursor_pos, c);
         self.cursor_pos += c.len_utf8();
+    }
+
+    /// Insert a string at cursor
+    pub fn insert_str(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.input.insert_str(self.cursor_pos, text);
+        self.cursor_pos += text.len();
     }
 
     /// Insert newline
@@ -494,6 +548,82 @@ impl InputBox {
         self.input.trim().is_empty()
     }
 
+    pub fn handle_paste(&mut self, pasted: String) {
+        let char_count = pasted.chars().count();
+        if char_count > LARGE_PASTE_CHAR_THRESHOLD {
+            let placeholder = self.next_large_paste_placeholder(char_count);
+            self.insert_str(&placeholder);
+            self.pending_pastes.push((placeholder, pasted));
+        } else if char_count > 1 && self.handle_paste_image_path(&pasted) {
+            self.insert_str(" ");
+        } else {
+            self.insert_str(&pasted);
+        }
+    }
+
+    pub fn attach_image(&mut self, path: PathBuf, width: u32, height: u32) {
+        let file_label = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "image".to_string());
+        let base_placeholder = format!("{file_label} {width}x{height}");
+        let placeholder = self.next_image_placeholder(&base_placeholder);
+        self.insert_str(&placeholder);
+        self.attached_images
+            .push(AttachedImage { placeholder, path });
+    }
+
+    fn take_attached_images(&mut self, text: &str) -> Vec<PathBuf> {
+        let mut images = Vec::new();
+        for img in self.attached_images.drain(..) {
+            if text.contains(&img.placeholder) {
+                images.push(img.path);
+            }
+        }
+        images
+    }
+
+    fn handle_paste_image_path(&mut self, pasted: &str) -> bool {
+        let Some(path_buf) = normalize_pasted_path(pasted) else {
+            return false;
+        };
+
+        match image::image_dimensions(&path_buf) {
+            Ok((w, h)) => {
+                self.attach_image(path_buf, w, h);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn next_large_paste_placeholder(&mut self, char_count: usize) -> String {
+        let base = format!("[Pasted Content {char_count} chars]");
+        let next_suffix = self.large_paste_counters.entry(char_count).or_insert(0);
+        *next_suffix += 1;
+        if *next_suffix == 1 {
+            base
+        } else {
+            format!("{base} #{next_suffix}")
+        }
+    }
+
+    fn next_image_placeholder(&mut self, base: &str) -> String {
+        let text = &self.input;
+        let mut suffix = 1;
+        loop {
+            let placeholder = if suffix == 1 {
+                format!("[{base}]")
+            } else {
+                format!("[{base} #{suffix}]")
+            };
+            if !text.contains(&placeholder) {
+                return placeholder;
+            }
+            suffix += 1;
+        }
+    }
+
     /// Get cursor position for rendering, accounting for scroll offset
     pub fn cursor_position(&self, area: Rect, scroll_offset: usize) -> (u16, u16) {
         if area.height < 3 || area.width == 0 {
@@ -510,7 +640,9 @@ impl InputBox {
         let visible_lines = content_height as usize;
         let visual_lines_full = self.build_visual_lines(area.width);
         let show_scrollbar = visual_lines_full.len() > visible_lines;
-        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        let content_width = area
+            .width
+            .saturating_sub(if show_scrollbar { 1 } else { 0 });
         if content_width == 0 {
             return (area.x, area.y + padding_top);
         }
@@ -531,10 +663,7 @@ impl InputBox {
         let cursor_x = area.x + line.prefix_width + segment_width;
         let max_x = area.x + content_width.saturating_sub(1);
         let visible_y = cursor_line.saturating_sub(scroll_offset);
-        (
-            cursor_x.min(max_x),
-            area.y + padding_top + visible_y as u16,
-        )
+        (cursor_x.min(max_x), area.y + padding_top + visible_y as u16)
     }
 
     /// Get current scroll offset
@@ -608,7 +737,9 @@ impl InputBox {
         let visible_lines = content_height as usize;
         let visual_lines_full = self.build_visual_lines(area.width);
         let show_scrollbar = visual_lines_full.len() > visible_lines;
-        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        let content_width = area
+            .width
+            .saturating_sub(if show_scrollbar { 1 } else { 0 });
         if content_width == 0 {
             return;
         }
@@ -675,7 +806,9 @@ impl InputBox {
         let base_width = area.width;
         let visual_lines_full = self.build_visual_lines(base_width);
         let show_scrollbar = visual_lines_full.len() > visible_lines;
-        let content_width = area.width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+        let content_width = area
+            .width
+            .saturating_sub(if show_scrollbar { 1 } else { 0 });
         if content_width == 0 {
             return;
         }
@@ -756,21 +889,22 @@ fn wrap_line_segments(line: &str, max_width: usize) -> Vec<(usize, usize)> {
     let mut line_width = 0usize;
     let mut last_break: Option<(usize, usize)> = None; // (index in current, width at break)
 
-    let flush_segment = |current: &mut Vec<CharInfo>, split_idx: usize, segments: &mut Vec<(usize, usize)>| {
-        if split_idx == 0 || current.is_empty() {
-            return;
-        }
-        let seg_end_idx = split_idx.saturating_sub(1);
-        let seg_start = current[0].byte_idx;
-        let seg_end = current[seg_end_idx].byte_idx + current[seg_end_idx].byte_len;
-        segments.push((seg_start, seg_end));
+    let flush_segment =
+        |current: &mut Vec<CharInfo>, split_idx: usize, segments: &mut Vec<(usize, usize)>| {
+            if split_idx == 0 || current.is_empty() {
+                return;
+            }
+            let seg_end_idx = split_idx.saturating_sub(1);
+            let seg_start = current[0].byte_idx;
+            let seg_end = current[seg_end_idx].byte_idx + current[seg_end_idx].byte_len;
+            segments.push((seg_start, seg_end));
 
-        let mut remainder = current.split_off(split_idx);
-        while !remainder.is_empty() && remainder[0].ch.is_whitespace() {
-            remainder.remove(0);
-        }
-        *current = remainder;
-    };
+            let mut remainder = current.split_off(split_idx);
+            while !remainder.is_empty() && remainder[0].ch.is_whitespace() {
+                remainder.remove(0);
+            }
+            *current = remainder;
+        };
 
     let recompute_state = |current: &Vec<CharInfo>| -> (usize, Option<(usize, usize)>) {
         let mut width = 0usize;
@@ -809,7 +943,11 @@ fn wrap_line_segments(line: &str, max_width: usize) -> Vec<(usize, usize)> {
                 }
             }
 
-            let split_idx = if current.len() > 1 { current.len() - 1 } else { 1 };
+            let split_idx = if current.len() > 1 {
+                current.len() - 1
+            } else {
+                1
+            };
             flush_segment(&mut current, split_idx, &mut segments);
             let (w, lb) = recompute_state(&current);
             line_width = w;

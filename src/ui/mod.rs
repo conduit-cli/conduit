@@ -1,6 +1,7 @@
 pub mod action;
 pub mod app;
 pub mod app_state;
+pub mod clipboard_paste;
 pub mod components;
 pub mod effect;
 pub mod events;

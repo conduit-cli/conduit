@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
-        MouseEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+        KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
     execute,
@@ -21,8 +21,8 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame, Terminal,
 };
-use unicode_width::UnicodeWidthStr;
 use tokio::sync::mpsc;
+use unicode_width::UnicodeWidthStr;
 
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentRunner,
@@ -39,11 +39,12 @@ use crate::data::{
 use crate::git::{PrManager, WorktreeManager};
 use crate::ui::action::Action;
 use crate::ui::app_state::{AppState, ScrollDragTarget};
+use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
-    AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage, ConfirmationContext,
-    ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
-    ModelSelector, ProcessingState, ProjectPicker, RawEventsScrollbarMetrics, ScrollbarMetrics,
-    SessionImportPicker, Sidebar, SidebarData, TabBar, scrollbar_offset_from_point,
+    scrollbar_offset_from_point, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage,
+    ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection,
+    GlobalFooter, HelpDialog, ModelSelector, ProcessingState, ProjectPicker,
+    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionImportPicker, Sidebar, SidebarData, TabBar,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -399,26 +400,27 @@ impl App {
         // Enable Kitty keyboard protocol for proper Ctrl+Shift detection
         // This MUST be done before EnterAlternateScreen for proper detection
         // Supported terminals: kitty, foot, WezTerm, alacritty, Ghostty
-        let keyboard_enhancement_enabled = if supports_keyboard_enhancement()
-            .map_or(false, |supported| supported)
-        {
-            execute!(
-                stdout,
-                PushKeyboardEnhancementFlags(
-                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+        let keyboard_enhancement_enabled =
+            if supports_keyboard_enhancement().map_or(false, |supported| supported) {
+                execute!(
+                    stdout,
+                    PushKeyboardEnhancementFlags(
+                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                            | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    )
                 )
-            )
-            .is_ok()
-        } else {
-            false
-        };
+                .is_ok()
+            } else {
+                false
+            };
 
         if keyboard_enhancement_enabled {
             tracing::info!("Kitty keyboard protocol enabled");
         } else {
-            tracing::warn!("Kitty keyboard protocol NOT available - Ctrl+Shift combos may not work");
+            tracing::warn!(
+                "Kitty keyboard protocol NOT available - Ctrl+Shift combos may not work"
+            );
         }
 
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -554,6 +556,10 @@ impl App {
         match input {
             Event::Key(key) => self.handle_key_event(key).await,
             Event::Mouse(mouse) => self.handle_mouse_event(mouse).await,
+            Event::Paste(text) => {
+                self.handle_paste_input(text);
+                Ok(Vec::new())
+            }
             _ => Ok(Vec::new()),
         }
     }
@@ -608,6 +614,30 @@ impl App {
                 }
                 _ => {}
             }
+        }
+
+        if self.state.input_mode == InputMode::Normal
+            && key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'v'))
+        {
+            if let Some(session) = self.state.tab_manager.active_session_mut() {
+                match paste_image_to_temp_png() {
+                    Ok((path, info)) => {
+                        session
+                            .input_box
+                            .attach_image(path, info.width, info.height);
+                    }
+                    Err(err) => {
+                        let display = MessageDisplay::Error {
+                            content: format!("Failed to paste image: {err}"),
+                        };
+                        session.chat_view.push(display.to_chat_message());
+                    }
+                }
+            }
+            return Ok(Vec::new());
         }
 
         // Global command mode trigger - ':' from most modes enters command mode
@@ -757,7 +787,9 @@ impl App {
             }
             Action::ImportSession => {
                 if self.state.input_mode == InputMode::ImportingSession {
-                    if let Some(session) = self.state.session_import_state.selected_session().cloned() {
+                    if let Some(session) =
+                        self.state.session_import_state.selected_session().cloned()
+                    {
                         self.state.session_import_state.hide();
                         self.state.input_mode = InputMode::Normal;
                         effects.push(Effect::ImportSession(session));
@@ -1009,8 +1041,13 @@ impl App {
             Action::Submit => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if !session.input_box.is_empty() {
-                        let prompt = session.input_box.submit();
-                        effects.extend(self.submit_prompt(prompt)?);
+                        let submission = session.input_box.submit();
+                        if !submission.text.trim().is_empty() || !submission.image_paths.is_empty()
+                        {
+                            effects.extend(
+                                self.submit_prompt(submission.text, submission.image_paths)?,
+                            );
+                        }
                     }
                 }
             }
@@ -1409,10 +1446,11 @@ impl App {
                         .raw_events_area
                         .map(|r| r.height.saturating_sub(2) as usize)
                         .unwrap_or(20);
-                    session
-                        .raw_events_view
-                        .event_detail
-                        .scroll_down(1, content_height, visible_height);
+                    session.raw_events_view.event_detail.scroll_down(
+                        1,
+                        content_height,
+                        visible_height,
+                    );
                 }
             }
             Action::EventDetailPageUp => {
@@ -1865,12 +1903,19 @@ impl App {
                 Effect::ImportSession(session) => {
                     // Create a new tab with the session's agent type and working directory
                     let agent_type = session.agent_type.clone();
-                    let working_dir = session.project.clone()
+                    let working_dir = session
+                        .project
+                        .clone()
                         .map(std::path::PathBuf::from)
                         .unwrap_or_else(|| self.config.working_dir.clone());
 
                     // Load the session history into a new tab
-                    self.create_imported_session_tab(agent_type, session.file_path.clone(), working_dir).await?;
+                    self.create_imported_session_tab(
+                        agent_type,
+                        session.file_path.clone(),
+                        working_dir,
+                    )
+                    .await?;
                 }
             }
         }
@@ -1950,6 +1995,52 @@ impl App {
             }
             InputMode::ImportingSession => {
                 self.state.session_import_state.insert_char(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_paste_input(&mut self, pasted: String) {
+        let pasted = pasted.replace('\r', "\n");
+        match self.state.input_mode {
+            InputMode::Normal => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session.input_box.handle_paste(pasted);
+                }
+            }
+            InputMode::Command => {
+                let sanitized = pasted.replace('\n', " ");
+                self.state.command_buffer.push_str(&sanitized);
+            }
+            InputMode::ShowingHelp => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.help_dialog_state.insert_char(ch);
+                }
+            }
+            InputMode::AddingRepository => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.add_repo_dialog_state.insert_char(ch);
+                }
+            }
+            InputMode::SettingBaseDir => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.base_dir_dialog_state.insert_char(ch);
+                }
+            }
+            InputMode::PickingProject => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.project_picker_state.insert_char(ch);
+                }
+            }
+            InputMode::ImportingSession => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.session_import_state.insert_char(ch);
+                }
             }
             _ => {}
         }
@@ -2180,7 +2271,10 @@ impl App {
                 // Extract the part after "/pull/"
                 let after_pull = &word[pull_idx + 6..];
                 // Parse the number (stop at any non-digit character)
-                let num_str: String = after_pull.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let num_str: String = after_pull
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if !num_str.is_empty() {
                     if let Ok(num) = num_str.parse::<u32>() {
                         return Some(num);
@@ -2584,7 +2678,9 @@ impl App {
 
         // Switch to the new tab
         let tab_count = self.state.tab_manager.sessions().len();
-        self.state.tab_manager.switch_to(tab_count.saturating_sub(1));
+        self.state
+            .tab_manager
+            .switch_to(tab_count.saturating_sub(1));
 
         Ok(())
     }
@@ -2777,14 +2873,17 @@ impl App {
             return false;
         };
 
-        let new_offset = scrollbar_offset_from_point(y, metrics.area, metrics.total, metrics.visible);
+        let new_offset =
+            scrollbar_offset_from_point(y, metrics.area, metrics.total, metrics.visible);
 
         match target {
             ScrollDragTarget::Chat => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session
-                        .chat_view
-                        .set_scroll_from_top(new_offset, metrics.total, metrics.visible);
+                    session.chat_view.set_scroll_from_top(
+                        new_offset,
+                        metrics.total,
+                        metrics.visible,
+                    );
                 }
             }
             ScrollDragTarget::Input => {
@@ -2800,26 +2899,28 @@ impl App {
             }
             ScrollDragTarget::ProjectPicker => {
                 let max_scroll = metrics.total.saturating_sub(metrics.visible);
-                self.state.project_picker_state.list.scroll_offset =
-                    new_offset.min(max_scroll);
+                self.state.project_picker_state.list.scroll_offset = new_offset.min(max_scroll);
             }
             ScrollDragTarget::SessionImport => {
                 let max_scroll = metrics.total.saturating_sub(metrics.visible);
-                self.state.session_import_state.list.scroll_offset =
-                    new_offset.min(max_scroll);
+                self.state.session_import_state.list.scroll_offset = new_offset.min(max_scroll);
             }
             ScrollDragTarget::RawEventsList => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session
-                        .raw_events_view
-                        .set_list_scroll_offset(new_offset, metrics.total, metrics.visible);
+                    session.raw_events_view.set_list_scroll_offset(
+                        new_offset,
+                        metrics.total,
+                        metrics.visible,
+                    );
                 }
             }
             ScrollDragTarget::RawEventsDetail => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session
-                        .raw_events_view
-                        .set_detail_scroll_offset(new_offset, metrics.total, metrics.visible);
+                    session.raw_events_view.set_detail_scroll_offset(
+                        new_offset,
+                        metrics.total,
+                        metrics.visible,
+                    );
                 }
             }
         }
@@ -2827,15 +2928,18 @@ impl App {
         true
     }
 
-    fn scrollbar_metrics_for_target(&mut self, target: ScrollDragTarget) -> Option<ScrollbarMetrics> {
+    fn scrollbar_metrics_for_target(
+        &mut self,
+        target: ScrollDragTarget,
+    ) -> Option<ScrollbarMetrics> {
         let (width, height) = crossterm::terminal::size().unwrap_or((0, 0));
         let screen = Rect::new(0, 0, width, height);
 
         match target {
-            ScrollDragTarget::HelpDialog => {
-                self.state.help_dialog_state.scrollbar_metrics(screen)
+            ScrollDragTarget::HelpDialog => self.state.help_dialog_state.scrollbar_metrics(screen),
+            ScrollDragTarget::ProjectPicker => {
+                self.state.project_picker_state.scrollbar_metrics(screen)
             }
-            ScrollDragTarget::ProjectPicker => self.state.project_picker_state.scrollbar_metrics(screen),
             ScrollDragTarget::SessionImport => {
                 self.state.session_import_state.scrollbar_metrics(screen)
             }
@@ -3179,8 +3283,12 @@ impl App {
                 ModelSelectorItem::Model(_) => {
                     if current_row == relative_y {
                         // Find which selectable index this corresponds to
-                        for (sel_idx, &sel_item_idx) in
-                            self.state.model_selector_state.selectable_indices.iter().enumerate()
+                        for (sel_idx, &sel_item_idx) in self
+                            .state
+                            .model_selector_state
+                            .selectable_indices
+                            .iter()
+                            .enumerate()
                         {
                             if sel_item_idx == item_idx {
                                 clicked_selectable_idx = Some(sel_idx);
@@ -3239,11 +3347,7 @@ impl App {
         let screen_height = terminal_size.1;
 
         let dialog_width: u16 = 60;
-        let list_height =
-            self.state
-                .project_picker_state
-                .list
-                .visible_len() as u16;
+        let list_height = self.state.project_picker_state.list.visible_len() as u16;
         let dialog_height = 7 + list_height;
 
         // Calculate dialog position (centered)
@@ -3491,7 +3595,9 @@ impl App {
             }
             AppEvent::SessionRemoved { file_path } => {
                 // Remove session by file path (file no longer exists)
-                self.state.session_import_state.remove_session_by_path(&file_path);
+                self.state
+                    .session_import_state
+                    .remove_session_by_path(&file_path);
             }
             AppEvent::SessionDiscoveryComplete => {
                 // Background refresh done - stop spinner
@@ -3662,7 +3768,11 @@ impl App {
         Ok(())
     }
 
-    fn submit_prompt(&mut self, prompt: String) -> anyhow::Result<Vec<Effect>> {
+    fn submit_prompt(
+        &mut self,
+        prompt: String,
+        mut images: Vec<PathBuf>,
+    ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
         let tab_index = self.state.tab_manager.active_index();
         let Some(session) = self.state.tab_manager.active_session_mut() else {
@@ -3670,11 +3780,15 @@ impl App {
         };
 
         // Record user input for debug view
-        session.record_raw_event(
-            EventDirection::Sent,
-            "UserPrompt",
-            serde_json::json!({ "prompt": &prompt }),
-        );
+        let mut debug_payload = serde_json::json!({ "prompt": &prompt });
+        if !images.is_empty() {
+            let image_paths: Vec<String> = images
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            debug_payload["images"] = serde_json::json!(image_paths);
+        }
+        session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
 
         // Add user message to chat
         let display = MessageDisplay::User {
@@ -3714,8 +3828,25 @@ impl App {
         }
 
         // Start agent
+        if agent_type == AgentType::Claude && !images.is_empty() {
+            let display = MessageDisplay::System {
+                content: format!(
+                    "Claude does not support image attachments yet; skipping {} image(s).",
+                    images.len()
+                ),
+            };
+            session.chat_view.push(display.to_chat_message());
+            images.clear();
+        }
+
+        if prompt.trim().is_empty() && images.is_empty() {
+            session.stop_processing();
+            return Ok(effects);
+        }
+
         let mut config = AgentStartConfig::new(prompt, working_dir)
-            .with_tools(self.config.claude_allowed_tools.clone());
+            .with_tools(self.config.claude_allowed_tools.clone())
+            .with_images(images);
 
         // Add model if specified
         if let Some(model_id) = model {
@@ -3875,7 +4006,7 @@ impl App {
         let prompt = PrManager::generate_pr_prompt(&preflight);
 
         // Submit to current chat session
-        self.submit_prompt(prompt)
+        self.submit_prompt(prompt, Vec::new())
     }
 
     fn draw(&mut self, f: &mut Frame) {
@@ -3948,7 +4079,8 @@ impl App {
                 // Calculate dynamic input height (max 30% of screen)
                 let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
                 let input_height = if let Some(session) = self.state.tab_manager.active_session() {
-                    session.input_box
+                    session
+                        .input_box
                         .desired_height(max_input_height, content_area.width)
                 } else {
                     3 // Minimum height
@@ -4275,8 +4407,11 @@ impl App {
             prompt
         };
 
-        let para = Paragraph::new(display)
-            .style(Style::default().fg(Color::White).bg(crate::ui::components::INPUT_BG));
+        let para = Paragraph::new(display).style(
+            Style::default()
+                .fg(Color::White)
+                .bg(crate::ui::components::INPUT_BG),
+        );
         para.render(
             Rect {
                 x: area.x,
