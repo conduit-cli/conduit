@@ -3821,10 +3821,11 @@ impl App {
 
         // Start agent
         if agent_type == AgentType::Claude && !images.is_empty() {
-            prompt = Self::append_image_paths_for_claude(prompt, &images);
+            prompt = Self::append_image_paths_to_prompt(prompt, &images);
             images.clear();
         } else if agent_type == AgentType::Codex && !images.is_empty() {
             images = Self::stage_images_for_agent(&working_dir, images, session);
+            prompt = Self::append_image_paths_to_prompt(prompt, &images);
         }
 
         if prompt.trim().is_empty() && images.is_empty() {
@@ -3867,7 +3868,7 @@ impl App {
         Ok(effects)
     }
 
-    fn append_image_paths_for_claude(prompt: String, images: &[PathBuf]) -> String {
+    fn append_image_paths_to_prompt(prompt: String, images: &[PathBuf]) -> String {
         if images.is_empty() {
             return prompt;
         }
