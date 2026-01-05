@@ -25,6 +25,7 @@ struct VisualLine {
 pub struct InputSubmit {
     pub text: String,
     pub image_paths: Vec<PathBuf>,
+    pub image_placeholders: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +115,7 @@ impl InputBox {
         }
         self.pending_pastes.clear();
 
-        let image_paths = self.take_attached_images(&expanded);
+        let (image_paths, image_placeholders) = self.take_attached_images(&expanded);
 
         if !expanded.trim().is_empty() {
             self.history.push(expanded.clone());
@@ -123,6 +124,7 @@ impl InputBox {
         InputSubmit {
             text: expanded,
             image_paths,
+            image_placeholders,
         }
     }
 
@@ -573,14 +575,16 @@ impl InputBox {
             .push(AttachedImage { placeholder, path });
     }
 
-    fn take_attached_images(&mut self, text: &str) -> Vec<PathBuf> {
+    fn take_attached_images(&mut self, text: &str) -> (Vec<PathBuf>, Vec<String>) {
         let mut images = Vec::new();
+        let mut placeholders = Vec::new();
         for img in self.attached_images.drain(..) {
             if text.contains(&img.placeholder) {
                 images.push(img.path);
+                placeholders.push(img.placeholder);
             }
         }
-        images
+        (images, placeholders)
     }
 
     fn handle_paste_image_path(&mut self, pasted: &str) -> bool {

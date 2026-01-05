@@ -1044,9 +1044,11 @@ impl App {
                         let submission = session.input_box.submit();
                         if !submission.text.trim().is_empty() || !submission.image_paths.is_empty()
                         {
-                            effects.extend(
-                                self.submit_prompt(submission.text, submission.image_paths)?,
-                            );
+                            effects.extend(self.submit_prompt(
+                                submission.text,
+                                submission.image_paths,
+                                submission.image_placeholders,
+                            )?);
                         }
                     }
                 }
@@ -3772,6 +3774,7 @@ impl App {
         &mut self,
         prompt: String,
         mut images: Vec<PathBuf>,
+        image_placeholders: Vec<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
         let tab_index = self.state.tab_manager.active_index();
@@ -3781,14 +3784,6 @@ impl App {
 
         let mut prompt = prompt;
 
-        // Add user message to chat
-        let display = MessageDisplay::User {
-            content: prompt.clone(),
-        };
-        session.chat_view.push(display.to_chat_message());
-        session.start_processing();
-
-        // Capture session state before releasing borrow
         let agent_type = session.agent_type;
         let model = session.model.clone();
         // Use agent_session_id if available (set by agent after first prompt)
@@ -3802,6 +3797,13 @@ impl App {
             .working_dir
             .clone()
             .unwrap_or_else(|| self.config.working_dir.clone());
+
+        // Add user message to chat
+        let display = MessageDisplay::User {
+            content: prompt.clone(),
+        };
+        session.chat_view.push(display.to_chat_message());
+        session.start_processing();
 
         // Validate working directory exists
         if !working_dir.exists() {
@@ -3819,6 +3821,9 @@ impl App {
         }
 
         // Start agent
+        if agent_type == AgentType::Codex && !images.is_empty() {
+            prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
+        }
         if agent_type == AgentType::Claude && !images.is_empty() {
             prompt = Self::append_image_paths_to_prompt(prompt, &images);
             images.clear();
@@ -3880,6 +3885,19 @@ impl App {
         }
 
         lines.join("\n")
+    }
+
+    fn strip_image_placeholders(prompt: String, placeholders: &[String]) -> String {
+        if placeholders.is_empty() {
+            return prompt;
+        }
+
+        let mut cleaned = prompt;
+        for placeholder in placeholders {
+            cleaned = cleaned.replace(placeholder, "");
+        }
+
+        cleaned.trim().to_string()
     }
 
     /// Handle Ctrl+P: Open existing PR or create new one
@@ -4021,7 +4039,7 @@ impl App {
         let prompt = PrManager::generate_pr_prompt(&preflight);
 
         // Submit to current chat session
-        self.submit_prompt(prompt, Vec::new())
+        self.submit_prompt(prompt, Vec::new(), Vec::new())
     }
 
     fn draw(&mut self, f: &mut Frame) {
