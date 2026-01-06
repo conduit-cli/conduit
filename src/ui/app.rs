@@ -1273,8 +1273,17 @@ impl App {
                             }
                         }
                     }
+                    // Cancel selected - use same context-aware logic
                     self.state.confirmation_dialog_state.hide();
-                    self.state.input_mode = InputMode::SidebarNavigation;
+                    if matches!(
+                        self.state.confirmation_dialog_state.context,
+                        Some(ConfirmationContext::CreatePullRequest { .. })
+                            | Some(ConfirmationContext::OpenExistingPr { .. })
+                    ) {
+                        self.state.input_mode = InputMode::Normal;
+                    } else {
+                        self.state.input_mode = InputMode::SidebarNavigation;
+                    }
                 }
                 InputMode::ShowingError => {
                     self.state.error_dialog_state.hide();
@@ -3074,11 +3083,20 @@ impl App {
         let mut effects = Vec::new();
 
         // Handle confirmation dialog - close on any click outside
+        // Use same context-aware logic as Cancel action for consistent UX
         if self.state.input_mode == InputMode::Confirming
             && self.state.confirmation_dialog_state.visible
         {
             self.state.confirmation_dialog_state.hide();
-            self.state.input_mode = InputMode::Normal;
+            if matches!(
+                self.state.confirmation_dialog_state.context,
+                Some(ConfirmationContext::CreatePullRequest { .. })
+                    | Some(ConfirmationContext::OpenExistingPr { .. })
+            ) {
+                self.state.input_mode = InputMode::Normal;
+            } else {
+                self.state.input_mode = InputMode::SidebarNavigation;
+            }
             return Ok(effects);
         }
 
