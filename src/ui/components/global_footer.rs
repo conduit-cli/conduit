@@ -1,9 +1,9 @@
 use ratatui::{buffer::Buffer, layout::Rect};
 
-use crate::ui::components::{render_key_hints, KeyHintBarStyle, FOOTER_BG, KEY_HINT_BG};
+use crate::ui::components::{render_key_hints, KeyHintBarStyle};
 use crate::ui::events::ViewMode;
 
-/// Global footer showing keyboard shortcuts in neovim style
+/// Global footer showing keyboard shortcuts in minimal style
 pub struct GlobalFooter {
     hints: Vec<(&'static str, &'static str)>,
     view_mode: ViewMode,
@@ -13,12 +13,12 @@ impl GlobalFooter {
     pub fn new() -> Self {
         Self {
             hints: vec![
-                ("Tab", "Switch"),
-                ("C-t", "Sidebar"),
-                ("C-n", "Project"),
-                ("M-S-w", "Close"),
-                ("C-c", "Stop"),
-                ("C-q", "Quit"),
+                ("tab", "switch agent"),
+                ("C-t", "sidebar"),
+                ("C-n", "project"),
+                ("M-S-w", "close"),
+                ("C-c", "stop"),
+                ("C-q", "quit"),
             ],
             view_mode: ViewMode::Chat,
         }
@@ -33,19 +33,19 @@ impl GlobalFooter {
     fn update_hints(&mut self) {
         self.hints = match self.view_mode {
             ViewMode::Chat => vec![
-                ("Tab", "Switch"),
-                ("C-t", "Sidebar"),
-                ("C-n", "Project"),
-                ("M-S-w", "Close"),
-                ("C-c", "Stop"),
-                ("C-q", "Quit"),
+                ("tab", "switch agent"),
+                ("C-t", "sidebar"),
+                ("C-n", "project"),
+                ("M-S-w", "close"),
+                ("C-c", "stop"),
+                ("C-q", "quit"),
             ],
             ViewMode::RawEvents => vec![
-                ("j/k", "Nav"),
-                ("e", "Detail"),
-                ("C-j/k", "Panel"),
-                ("c", "Copy"),
-                ("C-g", "Chat"),
+                ("j/k", "nav"),
+                ("e", "detail"),
+                ("C-j/k", "panel"),
+                ("c", "copy"),
+                ("C-g", "chat"),
             ],
         };
     }
@@ -58,12 +58,7 @@ impl GlobalFooter {
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        render_key_hints(
-            area,
-            buf,
-            &self.hints,
-            KeyHintBarStyle::footer_bar(KEY_HINT_BG, FOOTER_BG),
-        );
+        render_key_hints(area, buf, &self.hints, KeyHintBarStyle::minimal_footer());
     }
 }
 

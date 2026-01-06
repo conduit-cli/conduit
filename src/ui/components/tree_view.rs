@@ -268,9 +268,20 @@ impl StatefulWidget for TreeView<'_> {
             state.offset = state.selected - max_visible + 1;
         }
 
-        // Render visible items
-        for (i, node) in visible.iter().enumerate().skip(state.offset).take(max_visible) {
-            let y = inner.y + (i - state.offset) as u16;
+        // Render visible items (with spacing before top-level items)
+        let mut y_offset: u16 = 0;
+        for (i, node) in visible.iter().enumerate().skip(state.offset) {
+            // Add blank line before all top-level items
+            if node.depth == 0 {
+                y_offset += 1;
+            }
+
+            let y = inner.y + (i - state.offset) as u16 + y_offset;
+
+            // Stop if we've exceeded the visible area
+            if y >= inner.y + inner.height {
+                break;
+            }
 
             // Build the line
             let indent = "  ".repeat(node.depth);
@@ -289,33 +300,48 @@ impl StatefulWidget for TreeView<'_> {
                 self.style
             };
 
+            // Check if this is a workspace with a suffix (renders on 2 lines)
+            let is_two_line_workspace =
+                node.node_type == NodeType::Workspace && node.suffix.is_some();
+
+            // For two-line workspaces: line 1 = branch (suffix), line 2 = name
             let mut spans = vec![
-                Span::raw(indent),
+                Span::raw(indent.clone()),
                 Span::styled(expand_marker, self.expand_style),
-                Span::styled(&node.label, label_style),
             ];
 
-            if let Some(suffix) = &node.suffix {
-                spans.push(Span::styled(format!(" ({})", suffix), self.suffix_style));
+            if is_two_line_workspace {
+                // First line shows branch (suffix) with the primary label style
+                if let Some(suffix) = &node.suffix {
+                    spans.push(Span::styled(suffix.as_str(), label_style));
+                }
+            } else {
+                // Single line items show label
+                spans.push(Span::styled(&node.label, label_style));
+                // Non-workspace nodes show suffix inline
+                if let Some(suffix) = &node.suffix {
+                    spans.push(Span::styled(format!(" ({})", suffix), self.suffix_style));
+                }
             }
 
             let line = Line::from(spans);
 
-            // Apply selection style
-            let style = if i == state.selected {
-                self.selected_style
-            } else {
-                Style::default()
-            };
+            // Determine how many rows this item takes
+            let item_height: u16 = if is_two_line_workspace { 2 } else { 1 };
 
-            // Fill background for selection
+            // Fill background for selection (both lines if workspace)
             if i == state.selected {
-                for x in inner.x..inner.x + inner.width {
-                    buf[(x, y)].set_style(style);
+                for row in 0..item_height {
+                    let sel_y = y + row;
+                    if sel_y < inner.y + inner.height {
+                        for x in inner.x..inner.x + inner.width {
+                            buf[(x, sel_y)].set_style(self.selected_style);
+                        }
+                    }
                 }
             }
 
-            // Render the line
+            // Render the main line
             let line_area = Rect {
                 x: inner.x,
                 y,
@@ -324,11 +350,38 @@ impl StatefulWidget for TreeView<'_> {
             };
             line.render(line_area, buf);
 
-            // Re-apply selection style to ensure it covers the text
+            // Render name on second line for workspaces (with suffix_style)
+            if is_two_line_workspace {
+                let name_y = y + 1;
+                if name_y < inner.y + inner.height {
+                    // Indent for second line: same indent + expand_marker width + extra spacing
+                    let name_indent = format!("{}    ", indent);
+                    let name_line = Line::from(vec![
+                        Span::raw(name_indent),
+                        Span::styled(&node.label, self.suffix_style),
+                    ]);
+                    let name_area = Rect {
+                        x: inner.x,
+                        y: name_y,
+                        width: inner.width,
+                        height: 1,
+                    };
+                    name_line.render(name_area, buf);
+                }
+                // Account for the extra line
+                y_offset += 1;
+            }
+
+            // Re-apply selection background to ensure it covers the text
             if i == state.selected {
-                for x in inner.x..inner.x + inner.width {
-                    let cell = &mut buf[(x, y)];
-                    cell.set_bg(self.selected_style.bg.unwrap_or(Color::Reset));
+                for row in 0..item_height {
+                    let sel_y = y + row;
+                    if sel_y < inner.y + inner.height {
+                        for x in inner.x..inner.x + inner.width {
+                            let cell = &mut buf[(x, sel_y)];
+                            cell.set_bg(self.selected_style.bg.unwrap_or(Color::Reset));
+                        }
+                    }
                 }
             }
         }

@@ -4148,16 +4148,28 @@ impl App {
             0
         };
 
-        // Split horizontally for sidebar
+        // First, split vertically to reserve bottom row for footer (full width)
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(5),    // Main content area (sidebar + chat + status bar + gap)
+                Constraint::Length(1), // Footer (full width)
+            ])
+            .split(size);
+
+        let main_area = main_chunks[0];
+        let footer_area = main_chunks[1];
+
+        // Split main area horizontally for sidebar
         let (sidebar_area, content_area) = if sidebar_width > 0 {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(sidebar_width), Constraint::Min(20)])
-                .split(size);
+                .split(main_area);
             (chunks[0], chunks[1])
         } else {
             // No sidebar - use full width
-            (Rect::default(), size)
+            (Rect::default(), main_area)
         };
 
         // Store sidebar area for mouse hit-testing
@@ -4190,7 +4202,7 @@ impl App {
                     3 // Minimum height
                 };
 
-                // Chat layout with input box
+                // Chat layout with input box, status bar, and gap
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -4198,17 +4210,69 @@ impl App {
                         Constraint::Min(5),               // Chat view
                         Constraint::Length(input_height), // Input box (dynamic)
                         Constraint::Length(1),            // Status bar
-                        Constraint::Length(1),            // Footer
+                        Constraint::Length(1),            // Gap row before footer
                     ])
                     .split(content_area);
+
+                // Create margin-adjusted areas for input, status bar, and gap rows
+                // These have 1 char margin on each side with BG_BASE background
+                let margin_left = 1u16;
+                let margin_right = 1u16;
+                let total_margin = margin_left + margin_right;
+
+                let input_area_inner = Rect {
+                    x: chunks[2].x + margin_left,
+                    y: chunks[2].y,
+                    width: chunks[2].width.saturating_sub(total_margin),
+                    height: chunks[2].height,
+                };
+                let status_bar_area_inner = Rect {
+                    x: chunks[3].x + margin_left,
+                    y: chunks[3].y,
+                    width: chunks[3].width.saturating_sub(total_margin),
+                    height: chunks[3].height,
+                };
+                let gap_area_inner = Rect {
+                    x: chunks[4].x + margin_left,
+                    y: chunks[4].y,
+                    width: chunks[4].width.saturating_sub(total_margin),
+                    height: chunks[4].height,
+                };
+
+                // Fill margin areas with default/black for input, status bar, and gap rows
+                let buf = f.buffer_mut();
+                for row_area in [chunks[2], chunks[3], chunks[4]] {
+                    // Left margin
+                    for y in row_area.y..row_area.y + row_area.height {
+                        for x in row_area.x..row_area.x + margin_left {
+                            buf[(x, y)].reset();
+                        }
+                    }
+                    // Right margin
+                    let right_start = row_area.x + row_area.width.saturating_sub(margin_right);
+                    for y in row_area.y..row_area.y + row_area.height {
+                        for x in right_start..row_area.x + row_area.width {
+                            buf[(x, y)].reset();
+                        }
+                    }
+                }
+
+                // Draw separator line in the gap row (▀ characters)
+                // Foreground = box bg color, background = terminal default (creates rounded bottom edge)
+                use crate::ui::components::STATUS_BAR_BG;
+                for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
+                    buf[(x, gap_area_inner.y)]
+                        .set_char('▀')
+                        .set_fg(STATUS_BAR_BG);
+                }
 
                 // Store layout areas for mouse hit-testing
                 self.state.tab_bar_area = Some(chunks[0]);
                 self.state.chat_area = Some(chunks[1]);
                 self.state.raw_events_area = None;
-                self.state.input_area = Some(chunks[2]);
-                self.state.status_bar_area = Some(chunks[3]);
-                self.state.footer_area = Some(chunks[4]);
+                self.state.input_area = Some(input_area_inner);
+                self.state.status_bar_area = Some(status_bar_area_inner);
+                self.state.footer_area = Some(footer_area);
 
                 // Draw tab bar (unfocused when sidebar is focused)
                 let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
@@ -4264,7 +4328,7 @@ impl App {
 
                     // Render input box (not in command mode)
                     if !is_command_mode {
-                        session.input_box.render(chunks[2], f.buffer_mut());
+                        session.input_box.render(input_area_inner, f.buffer_mut());
                     }
                     // Update status bar with performance metrics
                     session.status_bar.set_metrics(
@@ -4278,31 +4342,31 @@ impl App {
                         self.state.metrics.scroll_events_per_sec,
                         self.state.metrics.scroll_active,
                     );
-                    session.status_bar.render(chunks[3], f.buffer_mut());
+                    session.status_bar.render(status_bar_area_inner, f.buffer_mut());
 
                     // Set cursor position (accounting for scroll)
                     if self.state.input_mode == InputMode::Normal {
                         let scroll_offset = session.input_box.scroll_offset();
-                        let (cx, cy) = session.input_box.cursor_position(chunks[2], scroll_offset);
+                        let (cx, cy) = session.input_box.cursor_position(input_area_inner, scroll_offset);
                         f.set_cursor_position((cx, cy));
                     }
                 }
 
                 // Render command prompt if in command mode (outside session borrow)
                 if is_command_mode {
-                    self.render_command_prompt(chunks[2], f.buffer_mut());
+                    self.render_command_prompt(input_area_inner, f.buffer_mut());
                     // Cursor at end of command buffer (after ":" in padded area)
                     let prompt = format!(":{}", self.state.command_buffer);
                     let prompt_width = prompt.width() as u16;
-                    let max_x = chunks[2].x + chunks[2].width.saturating_sub(1);
-                    let cx = (chunks[2].x + prompt_width).min(max_x);
-                    let cy = chunks[2].y + 1; // top padding
+                    let max_x = input_area_inner.x + input_area_inner.width.saturating_sub(1);
+                    let cx = (input_area_inner.x + prompt_width).min(max_x);
+                    let cy = input_area_inner.y + 1; // top padding
                     f.set_cursor_position((cx, cy));
                 }
 
-                // Draw footer
+                // Draw footer (full width)
                 let footer = GlobalFooter::new().with_view_mode(self.state.view_mode);
-                footer.render(chunks[4], f.buffer_mut());
+                footer.render(footer_area, f.buffer_mut());
             }
             ViewMode::RawEvents => {
                 // Raw events layout - no input box, full height for events
@@ -4311,7 +4375,6 @@ impl App {
                     .constraints([
                         Constraint::Length(1), // Tab bar
                         Constraint::Min(5),    // Raw events view (full height)
-                        Constraint::Length(1), // Footer
                     ])
                     .split(content_area);
 
@@ -4321,7 +4384,7 @@ impl App {
                 self.state.raw_events_area = Some(chunks[1]);
                 self.state.input_area = None;
                 self.state.status_bar_area = None;
-                self.state.footer_area = Some(chunks[2]);
+                self.state.footer_area = Some(footer_area);
 
                 // Draw tab bar (unfocused when sidebar is focused)
                 let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
@@ -4362,9 +4425,9 @@ impl App {
                     session.raw_events_view.render(chunks[1], f.buffer_mut());
                 }
 
-                // Draw footer
+                // Draw footer (full width)
                 let footer = GlobalFooter::new().with_view_mode(self.state.view_mode);
-                footer.render(chunks[2], f.buffer_mut());
+                footer.render(footer_area, f.buffer_mut());
             }
         }
 
