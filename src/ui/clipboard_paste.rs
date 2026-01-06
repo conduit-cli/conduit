@@ -106,15 +106,22 @@ on error
 end try"#
     );
 
-    let status = Command::new("osascript")
+    let output = Command::new("osascript")
         .args(["-e", &script])
-        .status()
+        .output()
         .map_err(|e| PasteImageError::ClipboardUnavailable(e.to_string()))?;
 
-    if !status.success() {
-        return Err(PasteImageError::NoImage(
-            "no image on clipboard".to_string(),
-        ));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Distinguish "no image" from actual script errors for better debugging
+        if stderr.is_empty() || stderr.to_lowercase().contains("no image") {
+            return Err(PasteImageError::NoImage("no image on clipboard".to_string()));
+        } else {
+            return Err(PasteImageError::NoImage(format!(
+                "clipboard error: {}",
+                stderr.trim()
+            )));
+        }
     }
 
     let (width, height) =
