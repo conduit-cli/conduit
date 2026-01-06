@@ -190,7 +190,7 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let indicator_len = if show_thinking_line { 1 } else { 0 };
+        let indicator_len = if show_thinking_line { 2 } else { 0 }; // indicator + blank line
 
         let total_lines = cached_len + streaming_len + indicator_len;
         let visible_height = content.height as usize;
@@ -905,7 +905,7 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let indicator_len = if thinking_line.is_some() { 1 } else { 0 };
+        let indicator_len = if thinking_line.is_some() { 2 } else { 0 }; // indicator + blank line
 
         let total_lines = cached_len + streaming_len + indicator_len;
         let visible_height = content.height as usize;
@@ -944,11 +944,15 @@ impl ChatView {
             }
         }
 
-        // Thinking indicator (single line)
+        // Thinking indicator + blank line for spacing from input box
         if let Some(indicator) = thinking_line {
             let indicator_index = streaming_end;
+            let blank_index = streaming_end + 1;
             if start_line <= indicator_index && end_line > indicator_index {
                 visible_lines.push(indicator);
+            }
+            if start_line <= blank_index && end_line > blank_index {
+                visible_lines.push(Line::from(""));
             }
         }
         Paragraph::new(visible_lines).render(content, buf);
