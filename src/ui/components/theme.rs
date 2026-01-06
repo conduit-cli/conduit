@@ -22,6 +22,8 @@ pub const BG_HIGHLIGHT: Color = Color::Rgb(50, 55, 70);
 // Text Hierarchy
 // =============================================================================
 
+/// Brightest text - ~98% cool white, for emphasis
+pub const TEXT_BRIGHT: Color = Color::Rgb(250, 250, 255);
 /// Main content text - 87% white
 pub const TEXT_PRIMARY: Color = Color::Rgb(220, 220, 230);
 /// Labels, metadata, secondary info

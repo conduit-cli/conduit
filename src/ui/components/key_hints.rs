@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use super::{ACCENT_PRIMARY, TEXT_FAINT, TEXT_MUTED, TEXT_SECONDARY};
+use super::{ACCENT_PRIMARY, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED, TEXT_SECONDARY};
 
 #[derive(Debug, Clone, Copy)]
 pub struct KeyHintBarStyle {
@@ -49,6 +49,21 @@ impl KeyHintBarStyle {
             leading: " ",
             alignment: Alignment::Left,
             background: Some(footer_bg),
+        }
+    }
+
+    /// Minimal footer style - just text with bright keys and muted descriptions
+    pub fn minimal_footer() -> Self {
+        Self {
+            key_style: Style::default().fg(TEXT_BRIGHT),
+            action_style: Style::default().fg(TEXT_MUTED),
+            separator: None,
+            item_gap: "   ",
+            key_prefix: "",
+            key_suffix: "",
+            leading: "",
+            alignment: Alignment::Center,
+            background: None,
         }
     }
 }

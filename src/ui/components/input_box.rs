@@ -175,8 +175,8 @@ impl InputBox {
         let content_width = width as usize;
 
         for (line_idx, line) in self.input.split('\n').enumerate() {
-            let is_first_line = line_idx == 0;
-            let first_prefix = if is_first_line { "> " } else { "  " };
+            let _is_first_line = line_idx == 0;
+            let first_prefix = "  ";
             let cont_prefix = "  ";
             let prefix_width = UnicodeWidthStr::width(first_prefix);
             let wrap_width = content_width.saturating_sub(prefix_width);
@@ -727,7 +727,7 @@ impl InputBox {
 
     /// Set cursor position from a mouse click
     pub fn set_cursor_from_click(&mut self, click_x: u16, click_y: u16, area: Rect) {
-        if area.height < 3 || area.width == 0 {
+        if area.height < 3 || area.width < 4 {
             return;
         }
 
@@ -739,11 +739,10 @@ impl InputBox {
         }
 
         let visible_lines = content_height as usize;
-        let visual_lines_full = self.build_visual_lines(area.width);
+        let base_width = area.width;
+        let visual_lines_full = self.build_visual_lines(base_width);
         let show_scrollbar = visual_lines_full.len() > visible_lines;
-        let content_width = area
-            .width
-            .saturating_sub(if show_scrollbar { 1 } else { 0 });
+        let content_width = base_width.saturating_sub(if show_scrollbar { 1 } else { 0 });
         if content_width == 0 {
             return;
         }

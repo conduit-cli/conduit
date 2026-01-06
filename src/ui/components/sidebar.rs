@@ -2,14 +2,15 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    symbols::border,
-    widgets::{Block, Borders, StatefulWidget},
+    widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
+use crate::ui::components::{BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY};
+
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
-use super::{ACCENT_PRIMARY, BORDER_DEFAULT, SELECTED_BG, SELECTED_BG_DIM};
+use super::{SELECTED_BG, SELECTED_BG_DIM};
 
 /// Sidebar widget for workspace navigation
 pub struct Sidebar<'a> {
@@ -29,7 +30,7 @@ impl<'a> Sidebar<'a> {
             data,
             visible: true,
             width: 30,
-            title: " Workspaces ",
+            title: "⬒ Workspaces",
         }
     }
 
@@ -114,33 +115,63 @@ impl StatefulWidget for Sidebar<'_> {
             return;
         }
 
-        // Determine border color based on focus
-        let border_style = if state.focused {
-            Style::default().fg(ACCENT_PRIMARY)
-        } else {
-            Style::default().fg(BORDER_DEFAULT)
-        };
+        // // Determine border color based on focus
+        // let border_style = if state.focused {
+        //     Style::default().fg(ACCENT_PRIMARY)
+        // } else {
+        //     Style::default().fg(BORDER_DEFAULT)
+        // };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title area
+                Constraint::Length(1), // Separator
+                Constraint::Min(1),    // Tree content
+            ])
+            .split(area);
+
+        let title = Paragraph::new(format!(" {} ", self.title.trim()))
+            .style(Style::default().fg(TEXT_PRIMARY).bg(BG_BASE));
+
+        let title_area = chunks[0];
+
+        for y in title_area.y..title_area.y + title_area.height {
+            for x in title_area.x..title_area.x + title_area.width {
+                buf[(x, y)].set_bg(BG_BASE);
+            }
+        }
+
+        let middle_row = Rect::new(title_area.x, title_area.y + 1, title_area.width, 1);
+        title.render(middle_row, buf);
+
+        // Draw horizontal separator line
+        let separator_y = chunks[1].y; // Last row of title area
+                                       // Or: let separator_y = chunks[1].y; // First row of content area
+
+        for x in area.x..area.x + area.width {
+            buf[(x, separator_y)]
+                .set_char('─')
+                .set_fg(BORDER_DEFAULT)
+                .set_bg(BG_BASE);
+        }
 
         let block = Block::default()
-            .title(self.title)
-            .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(border_style);
+            .borders(Borders::NONE)
+            .style(Style::default().bg(BG_BASE));
 
         // Create and render tree view
-        let tree = TreeView::new(&self.data.nodes)
-            .block(block)
-            .selected_style(
-                Style::default()
-                    .bg(if state.focused {
-                        SELECTED_BG
-                    } else {
-                        SELECTED_BG_DIM
-                    })
-                    .fg(Color::White),
-            );
+        let tree = TreeView::new(&self.data.nodes).block(block).selected_style(
+            Style::default()
+                .bg(if state.focused {
+                    SELECTED_BG
+                } else {
+                    SELECTED_BG_DIM
+                })
+                .fg(Color::White),
+        );
 
-        StatefulWidget::render(tree, area, buf, &mut state.tree_state);
+        StatefulWidget::render(tree, chunks[2], buf, &mut state.tree_state);
     }
 }
 
