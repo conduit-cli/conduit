@@ -40,8 +40,10 @@ impl SearchableListState {
     }
 
     pub fn clamp_selection(&mut self) {
-        if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len().saturating_sub(1);
+        if self.filtered.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.filtered.len() {
+            self.selected = self.filtered.len() - 1;
         }
     }
 
