@@ -582,10 +582,7 @@ impl App {
         // Tick session import spinner (for loading state)
         self.state.session_import_state.tick();
 
-        if self.state.show_first_time_splash {
-            // Animate splash screen
-            self.state.splash_screen.tick();
-        } else if let Some(session) = self.state.tab_manager.active_session_mut() {
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
             session.tick();
         }
     }
@@ -4173,31 +4170,6 @@ impl App {
     fn draw(&mut self, f: &mut Frame) {
         let size = f.area();
 
-        // Show splash screen only for first-time users (no repos)
-        if self.state.show_first_time_splash {
-            self.state.splash_screen.first_time_mode = true;
-            self.state.splash_screen.render(size, f.buffer_mut());
-
-            // Draw dialogs over splash screen
-            if self.state.base_dir_dialog_state.is_visible() {
-                let dialog = BaseDirDialog::new();
-                dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
-            } else if self.state.project_picker_state.is_visible() {
-                let picker = ProjectPicker::new();
-                picker.render(size, f.buffer_mut(), &self.state.project_picker_state);
-            } else if self.state.add_repo_dialog_state.is_visible() {
-                let dialog = AddRepoDialog::new();
-                dialog.render(size, f.buffer_mut(), &self.state.add_repo_dialog_state);
-            }
-
-            // Draw agent selector dialog if needed
-            if self.state.agent_selector_state.is_visible() {
-                let selector = AgentSelector::new();
-                selector.render(size, f.buffer_mut(), &self.state.agent_selector_state);
-            }
-            return;
-        }
-
         // Calculate sidebar width
         let sidebar_width = if self.state.sidebar_state.visible {
             30u16
@@ -4284,16 +4256,9 @@ impl App {
                     .with_spinner_frame(self.state.spinner_frame);
                     tab_bar.render(chunks[0], f.buffer_mut());
 
-                    // Empty state message
-                    let lines = vec![
-                        // Line::from(Span::styled("   █████████                          █████             ███   █████   ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled("  ███▒▒▒▒▒███                        ▒▒███             ▒▒▒   ▒▒███    ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled(" ███     ▒▒▒   ██████  ████████    ███████  █████ ████ ████  ███████  ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled("▒███          ███▒▒███▒▒███▒▒███  ███▒▒███ ▒▒███ ▒███ ▒▒███ ▒▒▒███▒   ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled("▒███         ▒███ ▒███ ▒███ ▒███ ▒███ ▒███  ▒███ ▒███  ▒███   ▒███    ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled("▒▒███     ███▒███ ▒███ ▒███ ▒███ ▒███ ▒███  ▒███ ▒███  ▒███   ▒███ ███", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled(" ▒▒█████████ ▒▒██████  ████ █████▒▒████████ ▒▒████████ █████  ▒▒█████ ", Style::default().fg(TEXT_MUTED))),
-                        // Line::from(Span::styled("  ▒▒▒▒▒▒▒▒▒   ▒▒▒▒▒▒  ▒▒▒▒ ▒▒▒▒▒  ▒▒▒▒▒▒▒▒   ▒▒▒▒▒▒▒▒ ▒▒▒▒▒    ▒▒▒▒▒  ", Style::default().fg(TEXT_MUTED))),
+                    // Empty state message - different for first-time users vs returning users
+                    let is_first_time = self.state.show_first_time_splash;
+                    let mut lines = vec![
                         Line::from(Span::styled(
                             "  ░██████                               ░██            ░██   ░██   ",
                             Style::default().fg(TEXT_MUTED),
@@ -4325,25 +4290,40 @@ impl App {
                         Line::from(""),
                         Line::from(""),
                         Line::from(""),
-                        Line::from(Span::styled(
+                    ];
+
+                    if is_first_time {
+                        // First-time user - simpler message
+                        lines.push(Line::from(Span::styled(
+                            "Add your first project with Ctrl+N",
+                            Style::default().fg(TEXT_MUTED),
+                        )));
+                    } else {
+                        // Returning user - full message
+                        lines.push(Line::from(Span::styled(
                             "Add a new project with Ctrl+N",
                             Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(""),
-                        Line::from(Span::styled("- or -", Style::default().fg(TEXT_MUTED))),
-                        Line::from(""),
-                        Line::from(Span::styled(
+                        )));
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(Span::styled(
+                            "- or -",
+                            Style::default().fg(TEXT_MUTED),
+                        )));
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(Span::styled(
                             "Select a project from the sidebar",
                             Style::default().fg(TEXT_MUTED),
-                        )),
-                    ];
+                        )));
+                    }
 
                     let paragraph =
                         Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
 
                     // Center vertically in the content area (chunks[1])
                     let message_area = chunks[1];
-                    let text_height = 15u16; // 7 logo + 3 blank + 5 message lines
+                    // First-time: 7 logo + 3 blank + 1 message = 11 lines
+                    // Returning: 7 logo + 3 blank + 5 message = 15 lines
+                    let text_height = if is_first_time { 11u16 } else { 15u16 };
                     let vertical_offset = message_area.height.saturating_sub(text_height) / 2;
                     let centered_area = Rect {
                         x: message_area.x,

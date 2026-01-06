@@ -21,7 +21,6 @@ mod scrollbar;
 mod session_import_picker;
 mod sidebar;
 mod spinner;
-mod splash_screen;
 mod status_bar;
 mod tab_bar;
 mod theme;
@@ -56,7 +55,6 @@ pub use raw_events_types::{EventDetailState, EventDirection, RawEventEntry, DETA
 pub use raw_events_view::{RawEventsClick, RawEventsScrollbarMetrics, RawEventsView};
 pub use sidebar::{Sidebar, SidebarState};
 pub use spinner::Spinner;
-pub use splash_screen::SplashScreen;
 pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;
 pub use theme::{
