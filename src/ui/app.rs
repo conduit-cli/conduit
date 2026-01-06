@@ -630,10 +630,11 @@ impl App {
             }
         }
 
+        // Image paste: Ctrl+V (Linux/Windows) or Alt+V (macOS terminals report Cmd as Alt)
+        // Uses intersects() to match either modifier, not both simultaneously
         if self.state.input_mode == InputMode::Normal
-            && key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && (key.modifiers.contains(KeyModifiers::CONTROL)
+                || key.modifiers.contains(KeyModifiers::ALT))
             && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'v'))
         {
             if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -3960,6 +3961,10 @@ impl App {
 
         if prompt.trim().is_empty() && images.is_empty() {
             session.stop_processing();
+            let display = MessageDisplay::Error {
+                content: "Cannot submit: prompt is empty after processing".to_string(),
+            };
+            session.chat_view.push(display.to_chat_message());
             return Ok(effects);
         }
 
