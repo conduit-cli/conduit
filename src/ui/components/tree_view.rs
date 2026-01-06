@@ -323,14 +323,16 @@ impl StatefulWidget for TreeView<'_> {
         }
 
         // Render visible items (with spacing before top-level items)
-        let mut y_offset: u16 = 0;
-        for (i, node) in visible.iter().enumerate().skip(state.offset) {
+        // Track visual rows rendered, not node indices, to properly handle
+        // spacers and two-line workspaces
+        let mut visual_row: u16 = 0;
+        for (node_idx, node) in visible.iter().enumerate().skip(state.offset) {
             // Add blank line before all top-level items
             if node.depth == 0 {
-                y_offset += 1;
+                visual_row += 1;
             }
 
-            let y = inner.y + (i - state.offset) as u16 + y_offset;
+            let y = inner.y + visual_row;
 
             // Stop if we've exceeded the visible area
             if y >= inner.y + inner.height {
@@ -384,7 +386,7 @@ impl StatefulWidget for TreeView<'_> {
             let item_height: u16 = if is_two_line_workspace { 2 } else { 1 };
 
             // Fill background for selection (both lines if workspace)
-            if i == state.selected {
+            if node_idx == state.selected {
                 for row in 0..item_height {
                     let sel_y = y + row;
                     if sel_y < inner.y + inner.height {
@@ -422,12 +424,12 @@ impl StatefulWidget for TreeView<'_> {
                     };
                     name_line.render(name_area, buf);
                 }
-                // Account for the extra line
-                y_offset += 1;
+                // Account for the extra line in visual row tracking
+                visual_row += 1;
             }
 
             // Re-apply selection background to ensure it covers the text
-            if i == state.selected {
+            if node_idx == state.selected {
                 for row in 0..item_height {
                     let sel_y = y + row;
                     if sel_y < inner.y + inner.height {
@@ -438,6 +440,9 @@ impl StatefulWidget for TreeView<'_> {
                     }
                 }
             }
+
+            // Advance visual row for the base row of this node
+            visual_row += 1;
         }
     }
 }
