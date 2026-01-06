@@ -84,9 +84,23 @@ impl TabBar {
             let needs_attention = self.attention_flags.get(i).copied().unwrap_or(false);
             let pr_number = self.pr_numbers.get(i).copied().flatten();
 
+            // Base style for active tabs (with background)
+            let active_bg_style = if is_active {
+                Style::default().bg(BG_ELEVATED)
+            } else {
+                Style::default()
+            };
+
             // Tab indicator - subtle marker for active tab
             if is_active && self.focused {
-                spans.push(Span::styled(" ▸ ", Style::default().fg(ACCENT_PRIMARY)));
+                spans.push(Span::styled(
+                    " ▸ ",
+                    active_bg_style.fg(ACCENT_PRIMARY),
+                ));
+                _total_width += 3;
+            } else if is_active {
+                // Active but unfocused - just padding with background
+                spans.push(Span::styled("   ", active_bg_style));
                 _total_width += 3;
             } else {
                 spans.push(Span::raw("   "));
@@ -97,25 +111,28 @@ impl TabBar {
             if is_processing {
                 spans.push(Span::styled(
                     format!("{} ", self.spinner_char()),
-                    Style::default().fg(ACCENT_WARNING),
+                    active_bg_style.fg(ACCENT_WARNING),
                 ));
                 _total_width += 2;
             }
             // Attention indicator (dot) - only if not processing
             else if needs_attention {
-                spans.push(Span::styled("● ", Style::default().fg(ACCENT_SUCCESS)));
+                spans.push(Span::styled(
+                    "● ",
+                    active_bg_style.fg(ACCENT_SUCCESS),
+                ));
                 _total_width += 2;
             }
 
             // Tab name with proper text hierarchy
             let tab_style = if is_active {
                 if self.focused {
-                    Style::default()
+                    active_bg_style
                         .fg(TEXT_PRIMARY)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     // Active but unfocused - secondary text
-                    Style::default().fg(TEXT_SECONDARY)
+                    active_bg_style.fg(TEXT_SECONDARY)
                 }
             } else {
                 Style::default().fg(TEXT_MUTED)
@@ -125,7 +142,12 @@ impl TabBar {
             _total_width += tab_text.len();
             spans.push(Span::styled(tab_text, tab_style));
 
-            spans.push(Span::raw("  "));
+            // Trailing padding (with background for active tabs)
+            if is_active {
+                spans.push(Span::styled("  ", active_bg_style));
+            } else {
+                spans.push(Span::raw("  "));
+            }
             _total_width += 2;
 
             // Show PR badge inline for active tab
@@ -135,12 +157,11 @@ impl TabBar {
                     _total_width += badge.len();
                     spans.push(Span::styled(
                         badge,
-                        Style::default()
-                            .bg(BG_ELEVATED)
+                        active_bg_style
                             .fg(TEXT_PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     ));
-                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(" ", active_bg_style));
                     _total_width += 1;
                 }
             }
@@ -154,10 +175,17 @@ impl TabBar {
             ));
         }
 
+        // Render the tab line on the first row
+        let tab_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        };
         let line = Line::from(spans);
         let paragraph = Paragraph::new(line)
             .style(Style::default().bg(TAB_BAR_BG));
+        paragraph.render(tab_area, buf);
 
-        paragraph.render(area, buf);
     }
 }

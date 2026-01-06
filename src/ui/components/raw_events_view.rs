@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 use super::raw_events_types::{
     EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT,
 };
-use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols};
+use super::{render_minimal_scrollbar, ScrollbarMetrics};
 
 pub enum RawEventsClick {
     SessionId,
@@ -524,7 +524,7 @@ impl RawEventsView {
         let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         paragraph.render(inner, buf);
 
-        render_vertical_scrollbar(
+        render_minimal_scrollbar(
             Rect {
                 x: inner.x + inner.width,
                 y: inner.y,
@@ -535,7 +535,6 @@ impl RawEventsView {
             total_lines,
             visible_height,
             self.scroll_offset,
-            ScrollbarSymbols::arrows(),
         );
     }
 
@@ -684,7 +683,7 @@ impl RawEventsView {
         let paragraph = Paragraph::new(visible_lines);
         paragraph.render(area, buf);
 
-        render_vertical_scrollbar(
+        render_minimal_scrollbar(
             Rect {
                 x: area.x + area.width,
                 y: area.y,
@@ -695,7 +694,6 @@ impl RawEventsView {
             total_lines,
             visible_height,
             self.event_detail.scroll_offset,
-            ScrollbarSymbols::arrows(),
         );
     }
 

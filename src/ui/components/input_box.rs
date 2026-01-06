@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_vertical_scrollbar, ScrollbarMetrics, ScrollbarSymbols, INPUT_BG, TEXT_PRIMARY};
+use super::{render_minimal_scrollbar, ScrollbarMetrics, INPUT_BG, TEXT_PRIMARY};
 use crate::ui::clipboard_paste::normalize_pasted_path;
 
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
@@ -852,22 +852,19 @@ impl InputBox {
 
         paragraph.render(content_area, buf);
 
-        // Render scrollbar if content exceeds visible area
-        if total_lines > visible_lines {
-            render_vertical_scrollbar(
-                Rect {
-                    x: area.x + area.width.saturating_sub(1),
-                    y: area.y + padding_top,
-                    width: 1,
-                    height: content_height,
-                },
-                buf,
-                total_lines,
-                visible_lines,
-                self.scroll_offset,
-                ScrollbarSymbols::arrows(),
-            );
-        }
+        // Render scrollbar
+        render_minimal_scrollbar(
+            Rect {
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y + padding_top,
+                width: 1,
+                height: content_height,
+            },
+            buf,
+            total_lines,
+            visible_lines,
+            self.scroll_offset,
+        );
     }
 }
 
