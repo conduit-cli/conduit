@@ -4223,27 +4223,28 @@ impl App {
             ViewMode::Chat => {
                 // Handle empty state - no tabs open
                 if self.state.tab_manager.is_empty() {
-                    use crate::ui::components::TEXT_MUTED;
+                    use crate::ui::components::{FooterContext, TEXT_MUTED};
                     use ratatui::style::Style;
                     use ratatui::text::{Line, Span};
                     use ratatui::widgets::{Paragraph, Widget};
 
-                    // Layout with just tab bar and content
+                    // Layout with tab bar, content, and footer
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Length(1), // Tab bar
                             Constraint::Min(5),    // Content area
+                            Constraint::Length(1), // Footer
                         ])
                         .split(content_area);
 
-                    // Store tab bar area for mouse hit-testing
+                    // Store areas for mouse hit-testing
                     self.state.tab_bar_area = Some(chunks[0]);
                     self.state.chat_area = None;
                     self.state.raw_events_area = None;
                     self.state.input_area = None;
                     self.state.status_bar_area = None;
-                    self.state.footer_area = None;
+                    self.state.footer_area = Some(chunks[2]);
 
                     // Render tab bar (empty but shows "+ New" button)
                     let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
@@ -4357,6 +4358,34 @@ impl App {
                         let selector = AgentSelector::new();
                         selector.render(size, f.buffer_mut(), &self.state.agent_selector_state);
                     }
+
+                    // Draw confirmation dialog if open
+                    if self.state.confirmation_dialog_state.visible {
+                        use ratatui::widgets::Widget;
+                        let dialog = ConfirmationDialog::new(&self.state.confirmation_dialog_state);
+                        dialog.render(size, f.buffer_mut());
+                    }
+
+                    // Draw error dialog if open
+                    if self.state.error_dialog_state.visible {
+                        use ratatui::widgets::Widget;
+                        let dialog = ErrorDialog::new(&self.state.error_dialog_state);
+                        dialog.render(size, f.buffer_mut());
+                    }
+
+                    // Draw help dialog if open
+                    if self.state.help_dialog_state.is_visible() {
+                        HelpDialog::new().render(size, f.buffer_mut(), &mut self.state.help_dialog_state);
+                    }
+
+                    // Draw footer for empty state (sidebar-aware)
+                    let footer_context = if self.state.input_mode == InputMode::SidebarNavigation {
+                        FooterContext::Sidebar
+                    } else {
+                        FooterContext::Empty
+                    };
+                    let footer = GlobalFooter::for_context(footer_context);
+                    footer.render(chunks[2], f.buffer_mut());
 
                     return;
                 }
@@ -4539,8 +4568,12 @@ impl App {
                     f.set_cursor_position((cx, cy));
                 }
 
-                // Draw footer (full width)
-                let footer = GlobalFooter::new().with_view_mode(self.state.view_mode);
+                // Draw footer (full width) - context-aware based on input mode
+                let footer = GlobalFooter::from_state(
+                    self.state.view_mode,
+                    self.state.input_mode,
+                    !self.state.tab_manager.is_empty(),
+                );
                 footer.render(footer_area, f.buffer_mut());
             }
             ViewMode::RawEvents => {
@@ -4600,8 +4633,12 @@ impl App {
                     session.raw_events_view.render(chunks[1], f.buffer_mut());
                 }
 
-                // Draw footer (full width)
-                let footer = GlobalFooter::new().with_view_mode(self.state.view_mode);
+                // Draw footer (full width) - context-aware based on input mode
+                let footer = GlobalFooter::from_state(
+                    self.state.view_mode,
+                    self.state.input_mode,
+                    !self.state.tab_manager.is_empty(),
+                );
                 footer.render(footer_area, f.buffer_mut());
             }
         }

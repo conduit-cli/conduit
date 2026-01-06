@@ -44,7 +44,7 @@ pub use scrollbar::{render_minimal_scrollbar, scrollbar_offset_from_point, Scrol
 pub use text_input::TextInputState;
 pub use chat_message::{ChatMessage, MessageRole};
 pub use chat_view::ChatView;
-pub use global_footer::GlobalFooter;
+pub use global_footer::{FooterContext, GlobalFooter};
 pub use input_box::InputBox;
 pub use key_hints::{render_key_hints, KeyHintBarStyle};
 pub use markdown::MarkdownRenderer;
