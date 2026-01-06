@@ -420,7 +420,9 @@ impl App {
         if keyboard_enhancement_enabled {
             tracing::info!("Kitty keyboard protocol enabled");
         } else {
-            tracing::warn!(
+            // Use debug level since this is feature detection, not an error -
+            // users cannot control their terminal's capabilities
+            tracing::debug!(
                 "Kitty keyboard protocol NOT available - Ctrl+Shift combos may not work"
             );
         }
@@ -3951,7 +3953,9 @@ impl App {
         session.start_processing();
 
         // Start agent
-        if agent_type == AgentType::Codex && !images.is_empty() {
+        // Strip placeholders unconditionally for Codex (handles edge case where user
+        // manually typed placeholder text without attaching images)
+        if agent_type == AgentType::Codex {
             prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
         }
         if agent_type == AgentType::Claude && !images.is_empty() {
