@@ -4403,10 +4403,10 @@ impl App {
                     return;
                 }
 
-                // Margins for input area (must match values used below)
-                let input_margin_left = 2u16;
-                let input_margin_right = 2u16;
-                let input_total_margin = input_margin_left + input_margin_right;
+                // Margins for input area (constants to avoid duplication)
+                const INPUT_MARGIN_LEFT: u16 = 2;
+                const INPUT_MARGIN_RIGHT: u16 = 2;
+                let input_total_margin = INPUT_MARGIN_LEFT + INPUT_MARGIN_RIGHT;
 
                 // Calculate dynamic input height (max 30% of screen)
                 let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
@@ -4433,19 +4433,19 @@ impl App {
 
                 // Create margin-adjusted areas for input, status bar, and gap rows
                 let input_area_inner = Rect {
-                    x: chunks[2].x + input_margin_left,
+                    x: chunks[2].x + INPUT_MARGIN_LEFT,
                     y: chunks[2].y,
                     width: chunks[2].width.saturating_sub(input_total_margin),
                     height: chunks[2].height,
                 };
                 let status_bar_area_inner = Rect {
-                    x: chunks[3].x + input_margin_left,
+                    x: chunks[3].x + INPUT_MARGIN_LEFT,
                     y: chunks[3].y,
                     width: chunks[3].width.saturating_sub(input_total_margin),
                     height: chunks[3].height,
                 };
                 let gap_area_inner = Rect {
-                    x: chunks[4].x + input_margin_left,
+                    x: chunks[4].x + INPUT_MARGIN_LEFT,
                     y: chunks[4].y,
                     width: chunks[4].width.saturating_sub(input_total_margin),
                     height: chunks[4].height,
@@ -4456,13 +4456,13 @@ impl App {
                 for row_area in [chunks[2], chunks[3], chunks[4]] {
                     // Left margin
                     for y in row_area.y..row_area.y + row_area.height {
-                        for x in row_area.x..row_area.x + input_margin_left {
+                        for x in row_area.x..row_area.x + INPUT_MARGIN_LEFT {
                             buf[(x, y)].reset();
                         }
                     }
                     // Right margin
                     let right_start =
-                        row_area.x + row_area.width.saturating_sub(input_margin_right);
+                        row_area.x + row_area.width.saturating_sub(INPUT_MARGIN_RIGHT);
                     for y in row_area.y..row_area.y + row_area.height {
                         for x in right_start..row_area.x + row_area.width {
                             buf[(x, y)].reset();

@@ -307,8 +307,9 @@ impl StatefulWidget for TreeView<'_> {
                 cumulative += node.visual_height();
             }
         }
-        // Adjust offset if selected is below viewport
-        else if selected_visual_end > offset_visual_start + viewport_height {
+        // Adjust offset if selected is below viewport (use >= for inclusive check
+        // to ensure multi-line items are fully visible, not partially clipped)
+        else if selected_visual_end >= offset_visual_start + viewport_height {
             // Find the smallest offset where selected fits in viewport
             let target_start = selected_visual_end.saturating_sub(viewport_height);
             let mut cumulative = 0;
