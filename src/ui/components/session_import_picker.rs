@@ -62,6 +62,50 @@ impl AgentFilter {
     }
 }
 
+/// Computed layout for the picker dialog
+#[derive(Debug, Clone, Copy)]
+struct PickerLayout {
+    /// Area for the scrollable list
+    list_area: Rect,
+}
+
+/// Calculate dialog layout for consistent positioning
+fn calculate_picker_layout(area: Rect) -> Option<PickerLayout> {
+    let dialog_width = (area.width * DIALOG_WIDTH_PERCENT / 100)
+        .min(DIALOG_MAX_WIDTH)
+        .max(DIALOG_MIN_WIDTH)
+        .min(area.width.saturating_sub(4));
+    let dialog_height = (area.height * DIALOG_HEIGHT_PERCENT / 100)
+        .min(DIALOG_MAX_HEIGHT)
+        .max(DIALOG_MIN_HEIGHT)
+        .min(area.height.saturating_sub(2));
+
+    let dialog_x = area.width.saturating_sub(dialog_width) / 2;
+    let dialog_y = area.height.saturating_sub(dialog_height) / 2;
+
+    // Inner area after dialog border (2 chars each side, 1 top/bottom)
+    let inner_x = dialog_x + 2;
+    let inner_y = dialog_y + 1;
+    let inner_width = dialog_width.saturating_sub(4);
+
+    // List starts after: tab bar (1) + search (1) + separator (1) = 3 rows
+    // Bottom has: spacing (1) + instructions (1) + border (1) = 3 rows
+    // Total vertical overhead from dialog_height: 3 top + 3 bottom + 1 top border = 7
+    let list_height = dialog_height.saturating_sub(7);
+    if list_height == 0 {
+        return None;
+    }
+
+    Some(PickerLayout {
+        list_area: Rect {
+            x: inner_x,
+            y: inner_y + 3,
+            width: inner_width,
+            height: list_height,
+        },
+    })
+}
+
 /// State for the session import picker dialog
 #[derive(Debug, Clone)]
 pub struct SessionImportPickerState {
@@ -289,34 +333,8 @@ impl SessionImportPickerState {
             return None;
         }
 
-        let dialog_width = (area.width * DIALOG_WIDTH_PERCENT / 100)
-            .min(DIALOG_MAX_WIDTH)
-            .max(DIALOG_MIN_WIDTH)
-            .min(area.width.saturating_sub(4));
-        let dialog_height = (area.height * DIALOG_HEIGHT_PERCENT / 100)
-            .min(DIALOG_MAX_HEIGHT)
-            .max(DIALOG_MIN_HEIGHT)
-            .min(area.height.saturating_sub(2));
-
-        let dialog_x = area.width.saturating_sub(dialog_width) / 2;
-        let dialog_y = area.height.saturating_sub(dialog_height) / 2;
-
-        let inner_x = dialog_x + 2;
-        let inner_y = dialog_y + 1;
-        let inner_width = dialog_width.saturating_sub(4);
-
-        let list_y = inner_y + 3;
-        let list_height_actual = dialog_height.saturating_sub(7);
-        if list_height_actual == 0 {
-            return None;
-        }
-
-        let list_area = Rect {
-            x: inner_x,
-            y: list_y,
-            width: inner_width,
-            height: list_height_actual,
-        };
+        let layout = calculate_picker_layout(area)?;
+        let list_area = layout.list_area;
 
         let total = self.list.filtered.len();
         let visible = list_area.height as usize;
