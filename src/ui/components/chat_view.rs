@@ -54,6 +54,30 @@ impl ChatView {
         }
     }
 
+    /// Calculate content area with padding for margins and scrollbar
+    fn content_area(area: Rect) -> Option<Rect> {
+        let content = Rect {
+            x: area.x.saturating_add(2),
+            y: area.y,
+            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
+            height: area.height,
+        };
+        if content.width < 3 || content.height < 1 {
+            return None;
+        }
+        Some(content)
+    }
+
+    /// Calculate scrollbar area (rightmost column)
+    fn scrollbar_area(area: Rect) -> Rect {
+        Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
+            width: 1,
+            height: area.height,
+        }
+    }
+
     /// Add a message to the chat
     pub fn push(&mut self, message: ChatMessage) {
         // If we were streaming, finalize it
@@ -160,17 +184,7 @@ impl ChatView {
     }
 
     pub fn scrollbar_metrics(&mut self, area: Rect, show_thinking_line: bool) -> Option<ScrollbarMetrics> {
-        // Content area with padding for scrollbar
-        let content = Rect {
-            x: area.x.saturating_add(2),
-            y: area.y,
-            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
-            height: area.height,
-        };
-
-        if content.width < 3 || content.height < 1 {
-            return None;
-        }
+        let content = Self::content_area(area)?;
 
         self.ensure_cache(content.width);
         self.ensure_flat_cache();
@@ -199,12 +213,7 @@ impl ChatView {
         }
 
         Some(ScrollbarMetrics {
-            area: Rect {
-                x: area.x + area.width.saturating_sub(1),
-                y: area.y,
-                width: 1,
-                height: area.height,
-            },
+            area: Self::scrollbar_area(area),
             total: total_lines,
             visible: visible_height,
         })
@@ -856,17 +865,9 @@ impl ChatView {
         thinking_line: Option<Line<'static>>,
         _pr_number: Option<u32>,
     ) {
-        // Content area with padding for scrollbar
-        let content = Rect {
-            x: area.x.saturating_add(2),
-            y: area.y,
-            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
-            height: area.height,
-        };
-
-        if content.width < 3 || content.height < 1 {
+        let Some(content) = Self::content_area(area) else {
             return;
-        }
+        };
 
         // Ensure cache is valid for current width
         self.ensure_cache(content.width);
@@ -941,14 +942,8 @@ impl ChatView {
         }
         Paragraph::new(visible_lines).render(content, buf);
 
-        let scrollbar_area = Rect {
-            x: area.x + area.width.saturating_sub(1),
-            y: area.y,
-            width: 1,
-            height: area.height,
-        };
         render_minimal_scrollbar(
-            scrollbar_area,
+            Self::scrollbar_area(area),
             buf,
             total_lines,
             visible_height,
