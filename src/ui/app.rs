@@ -247,12 +247,12 @@ impl App {
             self.state.sidebar_state.visible = visible_str == "true";
         }
 
-        // Restore expanded repos
-        if let Ok(Some(expanded_str)) = app_state_dao.get("tree_expanded_repos") {
-            if !expanded_str.is_empty() {
-                for id_str in expanded_str.split(',') {
+        // Restore collapsed repos (repos default to expanded, so we collapse the saved ones)
+        if let Ok(Some(collapsed_str)) = app_state_dao.get("tree_collapsed_repos") {
+            if !collapsed_str.is_empty() {
+                for id_str in collapsed_str.split(',') {
                     if let Ok(id) = uuid::Uuid::parse_str(id_str) {
-                        self.state.sidebar_data.expand_repo(id);
+                        self.state.sidebar_data.collapse_repo(id);
                     }
                 }
             }
@@ -332,7 +332,7 @@ impl App {
             active_tab_index: self.state.tab_manager.active_index(),
             sidebar_visible: self.state.sidebar_state.visible,
             tree_selected_index: self.state.sidebar_state.tree_state.selected,
-            expanded_repo_ids: self.state.sidebar_data.expanded_repo_ids(),
+            collapsed_repo_ids: self.state.sidebar_data.collapsed_repo_ids(),
         }
     }
 
@@ -383,13 +383,13 @@ impl App {
             eprintln!("Warning: Failed to save tree selection: {}", e);
         }
 
-        let expanded_ids: Vec<String> = snapshot
-            .expanded_repo_ids
+        let collapsed_ids: Vec<String> = snapshot
+            .collapsed_repo_ids
             .iter()
             .map(|id| id.to_string())
             .collect();
-        if let Err(e) = app_state_dao.set("tree_expanded_repos", &expanded_ids.join(",")) {
-            eprintln!("Warning: Failed to save expanded repos: {}", e);
+        if let Err(e) = app_state_dao.set("tree_collapsed_repos", &collapsed_ids.join(",")) {
+            eprintln!("Warning: Failed to save collapsed repos: {}", e);
         }
     }
 
@@ -4931,7 +4931,7 @@ struct SessionStateSnapshot {
     active_tab_index: usize,
     sidebar_visible: bool,
     tree_selected_index: usize,
-    expanded_repo_ids: Vec<uuid::Uuid>,
+    collapsed_repo_ids: Vec<uuid::Uuid>,
 }
 
 #[cfg(test)]
