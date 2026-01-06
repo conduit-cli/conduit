@@ -50,6 +50,7 @@ pub struct TreeNode {
 
 impl TreeNode {
     /// Create a new parent node (repository)
+    /// Note: Repositories start expanded by default so users can see the "+ New workspace" action
     pub fn parent(id: Uuid, label: impl Into<String>) -> Self {
         Self {
             id,
@@ -57,7 +58,7 @@ impl TreeNode {
             label: label.into(),
             suffix: None,
             children: Vec::new(),
-            expanded: false,
+            expanded: true,
             depth: 0,
             node_type: NodeType::Repository,
         }
@@ -508,6 +509,25 @@ impl SidebarData {
             .filter(|node| node.node_type == NodeType::Repository && node.expanded)
             .map(|node| node.id)
             .collect()
+    }
+
+    /// Get IDs of all collapsed repositories
+    pub fn collapsed_repo_ids(&self) -> Vec<Uuid> {
+        self.nodes
+            .iter()
+            .filter(|node| node.node_type == NodeType::Repository && !node.expanded)
+            .map(|node| node.id)
+            .collect()
+    }
+
+    /// Collapse a repository by its ID
+    pub fn collapse_repo(&mut self, repo_id: Uuid) {
+        for node in &mut self.nodes {
+            if node.id == repo_id {
+                node.expanded = false;
+                return;
+            }
+        }
     }
 
     /// Find and focus on a workspace by its ID.
