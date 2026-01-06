@@ -105,6 +105,22 @@ impl TreeNode {
         matches!(self.node_type, NodeType::Action(_))
     }
 
+    /// Calculate the visual row height of this node (including spacer for depth-0)
+    /// Used for scroll offset calculations
+    fn visual_height(&self) -> usize {
+        let base_height = if self.node_type == NodeType::Workspace && self.suffix.is_some() {
+            2 // Two-line workspace
+        } else {
+            1
+        };
+        // Depth-0 nodes have a spacer line before them
+        if self.depth == 0 {
+            base_height + 1
+        } else {
+            base_height
+        }
+    }
+
     /// Add a child node
     pub fn with_child(mut self, mut child: TreeNode) -> Self {
         child.depth = self.depth + 1;
@@ -261,12 +277,48 @@ impl StatefulWidget for TreeView<'_> {
             state.selected = visible_count.saturating_sub(1);
         }
 
-        // Ensure selected item is visible
-        let max_visible = inner.height as usize;
-        if state.selected < state.offset {
-            state.offset = state.selected;
-        } else if state.selected >= state.offset + max_visible {
-            state.offset = state.selected - max_visible + 1;
+        // Ensure selected item is visible using visual rows (not node count)
+        // This accounts for spacer lines before depth-0 nodes and two-line workspaces
+        let viewport_height = inner.height as usize;
+
+        // Calculate visual row position of selected item
+        let selected_visual_start: usize = visible[..state.selected]
+            .iter()
+            .map(|n| n.visual_height())
+            .sum();
+        let selected_visual_end =
+            selected_visual_start + visible[state.selected].visual_height();
+
+        // Calculate visual row position of current offset
+        let offset_visual_start: usize = visible[..state.offset]
+            .iter()
+            .map(|n| n.visual_height())
+            .sum();
+
+        // Adjust offset if selected is above viewport
+        if selected_visual_start < offset_visual_start {
+            // Find the node whose visual start is at or before selected_visual_start
+            let mut cumulative = 0;
+            for (i, node) in visible.iter().enumerate() {
+                if cumulative + node.visual_height() > selected_visual_start {
+                    state.offset = i;
+                    break;
+                }
+                cumulative += node.visual_height();
+            }
+        }
+        // Adjust offset if selected is below viewport
+        else if selected_visual_end > offset_visual_start + viewport_height {
+            // Find the smallest offset where selected fits in viewport
+            let target_start = selected_visual_end.saturating_sub(viewport_height);
+            let mut cumulative = 0;
+            for (i, node) in visible.iter().enumerate() {
+                if cumulative >= target_start {
+                    state.offset = i;
+                    break;
+                }
+                cumulative += node.visual_height();
+            }
         }
 
         // Render visible items (with spacing before top-level items)
