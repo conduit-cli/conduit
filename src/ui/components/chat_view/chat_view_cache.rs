@@ -33,6 +33,7 @@ impl ChatView {
         msg.content.hash(&mut hasher);
         msg.role.hash(&mut hasher);
         msg.is_collapsed.hash(&mut hasher);
+        msg.is_streaming.hash(&mut hasher);
         if let Some(ref name) = msg.tool_name {
             name.hash(&mut hasher);
         }
@@ -40,6 +41,13 @@ impl ChatView {
             args.hash(&mut hasher);
         }
         msg.exit_code.hash(&mut hasher);
+        // Hash summary fields if present (TurnSummary doesn't derive Hash)
+        if let Some(ref summary) = msg.summary {
+            summary.duration_secs.hash(&mut hasher);
+            summary.input_tokens.hash(&mut hasher);
+            summary.output_tokens.hash(&mut hasher);
+            summary.files_changed.len().hash(&mut hasher);
+        }
         hasher.finish()
     }
 
@@ -119,6 +127,12 @@ impl ChatView {
     /// Update cache entry at specific index
     pub(super) fn update_cache_entry(&mut self, index: usize, width: u16) {
         if index < self.messages.len() {
+            // Subtract old line count if replacing an existing entry
+            if let Some(Some(ref old)) = self.line_cache.entries.get(index) {
+                self.line_cache.total_line_count =
+                    self.line_cache.total_line_count.saturating_sub(old.lines.len());
+            }
+
             let add_spacing = self.should_add_spacing_after(index);
             let cached =
                 self.render_message_to_cache(&self.messages[index], width as usize, add_spacing);
@@ -146,11 +160,29 @@ impl ChatView {
         self.flat_cache.reserve(self.line_cache.total_line_count);
         for entry in &self.line_cache.entries {
             if let Some(cached) = entry {
-                self.flat_cache.extend(cached.lines.iter().cloned());
+                for line in &cached.lines {
+                    // Skip consecutive blank lines to avoid excessive spacing
+                    let is_blank = is_blank_line(line);
+                    let last_is_blank = self.flat_cache.last().map(is_blank_line).unwrap_or(false);
+
+                    if is_blank && last_is_blank {
+                        continue;
+                    }
+                    self.flat_cache.push(line.clone());
+                }
             }
         }
         self.flat_cache_width = self.cache_width;
         self.flat_cache_dirty = false;
     }
+}
 
+/// Check if a line is blank (empty or only whitespace)
+fn is_blank_line(line: &Line<'_>) -> bool {
+    if line.spans.is_empty() {
+        return true;
+    }
+    line.spans
+        .iter()
+        .all(|span| span.content.trim().is_empty())
 }

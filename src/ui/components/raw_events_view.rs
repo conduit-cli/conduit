@@ -387,12 +387,13 @@ impl RawEventsView {
         let prefix = "Session ID: ";
         let mut label = format!(" {prefix}{session_id} ");
         if UnicodeWidthStr::width(label.as_str()) > max_width {
-            let available = max_width.saturating_sub(UnicodeWidthStr::width(prefix) + 3);
+            // Account for " " prefix + "... " suffix = 5 chars
+            let available = max_width.saturating_sub(UnicodeWidthStr::width(prefix) + 5);
             if available == 0 {
                 return None;
             }
             let shortened: String = session_id.chars().take(available).collect();
-            label = format!("{prefix}{shortened}...");
+            label = format!(" {prefix}{shortened}... ");
         }
 
         Some(label)

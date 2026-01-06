@@ -197,8 +197,9 @@ impl RawEventEntry {
                     if let Some(val) = map.get(*key) {
                         let val_str = match val {
                             Value::String(s) => {
-                                if s.len() > 50 {
-                                    format!("\"{}...\"", &s[..47])
+                                if s.chars().count() > 50 {
+                                    let truncated: String = s.chars().take(47).collect();
+                                    format!("\"{}...\"", truncated)
                                 } else {
                                     format!("\"{}\"", s)
                                 }
@@ -223,8 +224,9 @@ impl RawEventEntry {
                 }
             }
             Value::String(s) => {
-                if s.len() > 60 {
-                    format!("\"{}...\"", &s[..57])
+                if s.chars().count() > 60 {
+                    let truncated: String = s.chars().take(57).collect();
+                    format!("\"{}...\"", truncated)
                 } else {
                     format!("\"{}\"", s)
                 }
