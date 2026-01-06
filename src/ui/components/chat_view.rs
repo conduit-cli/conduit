@@ -509,7 +509,7 @@ impl ChatView {
         match status {
             "completed" => "✅",
             "in_progress" => "🔄",
-            "pending" | _ => "⬜",
+            _ => "⬜", // includes "pending" and any unknown status
         }
     }
 
@@ -829,9 +829,9 @@ impl ChatView {
     }
 
     fn render_summary_divider(&self, summary: &TurnSummary, width: usize) -> Line<'static> {
-        let duration = Self::format_duration(summary.duration_secs);
-        let input_tokens = Self::format_tokens(summary.input_tokens);
-        let output_tokens = Self::format_tokens(summary.output_tokens);
+        let duration = summary.format_duration();
+        let input_tokens = TurnSummary::format_tokens(summary.input_tokens);
+        let output_tokens = TurnSummary::format_tokens(summary.output_tokens);
         let mut text = format!("─ ⏱ {duration} │ ↓{input_tokens} ↑{output_tokens} ");
         let target_width = width.max(1);
         let current_width = UnicodeWidthStr::width(text.as_str());
@@ -841,22 +841,6 @@ impl ChatView {
             text = text.chars().take(target_width).collect();
         }
         Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))
-    }
-
-    fn format_duration(secs: u64) -> String {
-        if secs >= 60 {
-            format!("{}m {}s", secs / 60, secs % 60)
-        } else {
-            format!("{secs}s")
-        }
-    }
-
-    fn format_tokens(count: u64) -> String {
-        if count >= 1000 {
-            format!("{:.1}k", count as f64 / 1000.0)
-        } else {
-            count.to_string()
-        }
     }
 
     /// Render the chat view
