@@ -599,22 +599,37 @@ impl App {
 
         // First-time splash screen handling (only when no dialogs are visible)
         if self.state.show_first_time_splash
-            && key.modifiers.is_empty()
             && !self.state.base_dir_dialog_state.is_visible()
             && !self.state.project_picker_state.is_visible()
             && !self.state.add_repo_dialog_state.is_visible()
             && self.state.input_mode != InputMode::SelectingAgent
             && self.state.input_mode != InputMode::ShowingError
         {
-            match key.code {
-                KeyCode::Enter => {
-                    // Start new project workflow
-                    return self.execute_action(Action::NewProject).await;
+            // Handle Ctrl+N to add new project
+            let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
+                || matches!(key.code, KeyCode::Char('\x0e'));
+            if is_ctrl_n || (key.modifiers.is_empty() && key.code == KeyCode::Enter) {
+                return self.execute_action(Action::NewProject).await;
+            }
+            if key.modifiers.is_empty() {
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        return self.execute_action(Action::Quit).await;
+                    }
+                    _ => {}
                 }
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    return self.execute_action(Action::Quit).await;
-                }
-                _ => {}
+            }
+        }
+
+        // Handle Ctrl+N for new project when tabs are empty (works from any input mode)
+        if self.state.tab_manager.is_empty() {
+            let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
+                || matches!(key.code, KeyCode::Char('\x0e')); // ASCII 14 = Ctrl+N
+
+            if is_ctrl_n {
+                return self.execute_action(Action::NewProject).await;
             }
         }
 
@@ -817,6 +832,8 @@ impl App {
                 if self.state.tab_manager.is_empty() {
                     self.state.sidebar_state.visible = true;
                     self.state.input_mode = InputMode::SidebarNavigation;
+                } else {
+                    self.sync_sidebar_to_active_tab();
                 }
             }
             Action::NextTab => {
@@ -827,6 +844,7 @@ impl App {
                         self.state.tab_manager.switch_to(0);
                         self.state.sidebar_state.set_focused(false);
                         self.state.input_mode = InputMode::Normal;
+                        self.sync_sidebar_to_active_tab();
                     }
                 } else if self.state.sidebar_state.visible {
                     // Check if on last tab - if so, go to sidebar
@@ -838,9 +856,11 @@ impl App {
                         self.state.input_mode = InputMode::SidebarNavigation;
                     } else {
                         self.state.tab_manager.next_tab();
+                        self.sync_sidebar_to_active_tab();
                     }
                 } else {
                     self.state.tab_manager.next_tab();
+                    self.sync_sidebar_to_active_tab();
                 }
             }
             Action::PrevTab => {
@@ -852,6 +872,7 @@ impl App {
                         self.state.tab_manager.switch_to(count - 1);
                         self.state.sidebar_state.set_focused(false);
                         self.state.input_mode = InputMode::Normal;
+                        self.sync_sidebar_to_active_tab();
                     }
                 } else if self.state.sidebar_state.visible {
                     // Check if on first tab - if so, go to sidebar
@@ -862,14 +883,17 @@ impl App {
                         self.state.input_mode = InputMode::SidebarNavigation;
                     } else {
                         self.state.tab_manager.prev_tab();
+                        self.sync_sidebar_to_active_tab();
                     }
                 } else {
                     self.state.tab_manager.prev_tab();
+                    self.sync_sidebar_to_active_tab();
                 }
             }
             Action::SwitchToTab(n) => {
                 if n > 0 {
                     self.state.tab_manager.switch_to((n - 1) as usize);
+                    self.sync_sidebar_to_active_tab();
                 }
             }
 
@@ -2337,6 +2361,20 @@ impl App {
             .position(|node| node.id == workspace_id && node.node_type == NodeType::Workspace)
     }
 
+    /// Sync sidebar selection to the active tab's workspace (if sidebar is visible)
+    fn sync_sidebar_to_active_tab(&mut self) {
+        if !self.state.sidebar_state.visible {
+            return;
+        }
+        if let Some(session) = self.state.tab_manager.active_session() {
+            if let Some(workspace_id) = session.workspace_id {
+                if let Some(index) = self.state.sidebar_data.focus_workspace(workspace_id) {
+                    self.state.sidebar_state.tree_state.selected = index;
+                }
+            }
+        }
+    }
+
     /// Initiate the archive workspace flow - check git status and show confirmation dialog
     fn initiate_archive_workspace(&mut self, workspace_id: uuid::Uuid) {
         // Get the workspace
@@ -3037,6 +3075,15 @@ impl App {
     async fn handle_mouse_click(&mut self, x: u16, y: u16) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
 
+        // Handle confirmation dialog - close on any click outside
+        if self.state.input_mode == InputMode::Confirming
+            && self.state.confirmation_dialog_state.visible
+        {
+            self.state.confirmation_dialog_state.hide();
+            self.state.input_mode = InputMode::Normal;
+            return Ok(effects);
+        }
+
         // Handle model selector clicks first (it's a modal dialog)
         if self.state.input_mode == InputMode::SelectingModel
             && self.state.model_selector_state.is_visible()
@@ -3163,18 +3210,25 @@ impl App {
 
     /// Handle click in sidebar area
     fn handle_sidebar_click(&mut self, _x: u16, y: u16, sidebar_area: Rect) -> Option<Effect> {
-        // Account for border (1 row at top for title)
-        let inner_y = sidebar_area.y + 1;
-        if y < inner_y {
-            return None; // Clicked on title bar
+        // Account for title area (3 rows) + separator (1 row) = 4 rows
+        let tree_start_y = sidebar_area.y + 4;
+        if y < tree_start_y {
+            return None; // Clicked on title or separator
         }
 
         // Always focus sidebar when clicking on it
         self.state.sidebar_state.set_focused(true);
         self.state.input_mode = InputMode::SidebarNavigation;
 
-        let clicked_row = (y - inner_y) as usize;
-        let clicked_index = clicked_row + self.state.sidebar_state.tree_state.offset;
+        let visual_row = (y - tree_start_y) as usize;
+        let scroll_offset = self.state.sidebar_state.tree_state.offset;
+        let Some(clicked_index) = self
+            .state
+            .sidebar_data
+            .index_from_visual_row(visual_row, scroll_offset)
+        else {
+            return None;
+        };
 
         // Detect double-click (same index within 500ms)
         let now = Instant::now();
@@ -3238,6 +3292,7 @@ impl App {
             if relative_x < current_x + tab_width {
                 // Clicked on this tab
                 self.state.tab_manager.switch_to(i);
+                self.sync_sidebar_to_active_tab();
                 return;
             }
             current_x += tab_width;
@@ -3579,7 +3634,8 @@ impl App {
                     if let Some(index) = self.find_workspace_index(created.workspace_id) {
                         self.state.sidebar_state.tree_state.selected = index;
                     }
-                    self.open_workspace_with_options(created.workspace_id, false);
+                    // Open workspace, close sidebar, and focus prompt box
+                    self.open_workspace_with_options(created.workspace_id, true);
                 }
                 Err(err) => {
                     self.show_error("Workspace Creation Failed", &err);
@@ -4193,12 +4249,144 @@ impl App {
 
         match self.state.view_mode {
             ViewMode::Chat => {
+                // Handle empty state - no tabs open
+                if self.state.tab_manager.is_empty() {
+                    use crate::ui::components::TEXT_MUTED;
+                    use ratatui::style::Style;
+                    use ratatui::text::{Line, Span};
+                    use ratatui::widgets::{Paragraph, Widget};
+
+                    // Layout with just tab bar and content
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(1), // Tab bar
+                            Constraint::Min(5),    // Content area
+                        ])
+                        .split(content_area);
+
+                    // Store tab bar area for mouse hit-testing
+                    self.state.tab_bar_area = Some(chunks[0]);
+                    self.state.chat_area = None;
+                    self.state.raw_events_area = None;
+                    self.state.input_area = None;
+                    self.state.status_bar_area = None;
+                    self.state.footer_area = None;
+
+                    // Render tab bar (empty but shows "+ New" button)
+                    let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+                    let tab_bar = TabBar::new(
+                        self.state.tab_manager.tab_names(),
+                        self.state.tab_manager.active_index(),
+                        self.state.tab_manager.can_add_tab(),
+                    )
+                    .focused(tabs_focused)
+                    .with_spinner_frame(self.state.spinner_frame);
+                    tab_bar.render(chunks[0], f.buffer_mut());
+
+                    // Empty state message
+                    let lines = vec![
+                        // Line::from(Span::styled("   █████████                          █████             ███   █████   ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled("  ███▒▒▒▒▒███                        ▒▒███             ▒▒▒   ▒▒███    ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled(" ███     ▒▒▒   ██████  ████████    ███████  █████ ████ ████  ███████  ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled("▒███          ███▒▒███▒▒███▒▒███  ███▒▒███ ▒▒███ ▒███ ▒▒███ ▒▒▒███▒   ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled("▒███         ▒███ ▒███ ▒███ ▒███ ▒███ ▒███  ▒███ ▒███  ▒███   ▒███    ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled("▒▒███     ███▒███ ▒███ ▒███ ▒███ ▒███ ▒███  ▒███ ▒███  ▒███   ▒███ ███", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled(" ▒▒█████████ ▒▒██████  ████ █████▒▒████████ ▒▒████████ █████  ▒▒█████ ", Style::default().fg(TEXT_MUTED))),
+                        // Line::from(Span::styled("  ▒▒▒▒▒▒▒▒▒   ▒▒▒▒▒▒  ▒▒▒▒ ▒▒▒▒▒  ▒▒▒▒▒▒▒▒   ▒▒▒▒▒▒▒▒ ▒▒▒▒▒    ▒▒▒▒▒  ", Style::default().fg(TEXT_MUTED))),
+                        Line::from(Span::styled(
+                            "  ░██████                               ░██            ░██   ░██   ",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            " ░██   ░██                              ░██                  ░██   ",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            "░██         ░███████  ░████████   ░████████ ░██    ░██ ░██░████████",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            "░██        ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██   ░██   ",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            "░██        ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██   ░██   ",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            " ░██   ░██ ░██    ░██ ░██    ░██ ░██   ░███ ░██   ░███ ░██   ░██   ",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(Span::styled(
+                            "  ░██████   ░███████  ░██    ░██  ░█████░██  ░█████░██ ░██    ░████",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(""),
+                        Line::from(""),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Add a new project with Ctrl+N",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled("- or -", Style::default().fg(TEXT_MUTED))),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Select a project from the sidebar",
+                            Style::default().fg(TEXT_MUTED),
+                        )),
+                    ];
+
+                    let paragraph =
+                        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
+
+                    // Center vertically in the content area (chunks[1])
+                    let message_area = chunks[1];
+                    let text_height = 15u16; // 7 logo + 3 blank + 5 message lines
+                    let vertical_offset = message_area.height.saturating_sub(text_height) / 2;
+                    let centered_area = Rect {
+                        x: message_area.x,
+                        y: message_area.y + vertical_offset,
+                        width: message_area.width,
+                        height: text_height,
+                    };
+
+                    paragraph.render(centered_area, f.buffer_mut());
+
+                    // Render dialogs over empty state (similar to first-time splash)
+                    if self.state.base_dir_dialog_state.is_visible() {
+                        let dialog = BaseDirDialog::new();
+                        dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
+                    } else if self.state.project_picker_state.is_visible() {
+                        let picker = ProjectPicker::new();
+                        picker.render(size, f.buffer_mut(), &self.state.project_picker_state);
+                    } else if self.state.add_repo_dialog_state.is_visible() {
+                        let dialog = AddRepoDialog::new();
+                        dialog.render(size, f.buffer_mut(), &self.state.add_repo_dialog_state);
+                    }
+
+                    // Draw agent selector dialog if needed
+                    if self.state.agent_selector_state.is_visible() {
+                        let selector = AgentSelector::new();
+                        selector.render(size, f.buffer_mut(), &self.state.agent_selector_state);
+                    }
+
+                    return;
+                }
+
+                // Margins for input area (must match values used below)
+                let input_margin_left = 2u16;
+                let input_margin_right = 2u16;
+                let input_total_margin = input_margin_left + input_margin_right;
+
                 // Calculate dynamic input height (max 30% of screen)
                 let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
+                let input_width = content_area.width.saturating_sub(input_total_margin);
                 let input_height = if let Some(session) = self.state.tab_manager.active_session() {
                     session
                         .input_box
-                        .desired_height(max_input_height, content_area.width)
+                        .desired_height(max_input_height, input_width)
                 } else {
                     3 // Minimum height
                 };
@@ -4216,27 +4404,22 @@ impl App {
                     .split(content_area);
 
                 // Create margin-adjusted areas for input, status bar, and gap rows
-                // These have margins matching main content area
-                let margin_left = 2u16;
-                let margin_right = 2u16;
-                let total_margin = margin_left + margin_right;
-
                 let input_area_inner = Rect {
-                    x: chunks[2].x + margin_left,
+                    x: chunks[2].x + input_margin_left,
                     y: chunks[2].y,
-                    width: chunks[2].width.saturating_sub(total_margin),
+                    width: chunks[2].width.saturating_sub(input_total_margin),
                     height: chunks[2].height,
                 };
                 let status_bar_area_inner = Rect {
-                    x: chunks[3].x + margin_left,
+                    x: chunks[3].x + input_margin_left,
                     y: chunks[3].y,
-                    width: chunks[3].width.saturating_sub(total_margin),
+                    width: chunks[3].width.saturating_sub(input_total_margin),
                     height: chunks[3].height,
                 };
                 let gap_area_inner = Rect {
-                    x: chunks[4].x + margin_left,
+                    x: chunks[4].x + input_margin_left,
                     y: chunks[4].y,
-                    width: chunks[4].width.saturating_sub(total_margin),
+                    width: chunks[4].width.saturating_sub(input_total_margin),
                     height: chunks[4].height,
                 };
 
@@ -4245,12 +4428,13 @@ impl App {
                 for row_area in [chunks[2], chunks[3], chunks[4]] {
                     // Left margin
                     for y in row_area.y..row_area.y + row_area.height {
-                        for x in row_area.x..row_area.x + margin_left {
+                        for x in row_area.x..row_area.x + input_margin_left {
                             buf[(x, y)].reset();
                         }
                     }
                     // Right margin
-                    let right_start = row_area.x + row_area.width.saturating_sub(margin_right);
+                    let right_start =
+                        row_area.x + row_area.width.saturating_sub(input_margin_right);
                     for y in row_area.y..row_area.y + row_area.height {
                         for x in right_start..row_area.x + row_area.width {
                             buf[(x, y)].reset();

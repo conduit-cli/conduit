@@ -458,6 +458,32 @@ impl SidebarData {
         self.visible_nodes().get(index).copied()
     }
 
+    /// Convert a visual row number to item index, accounting for extra spacing.
+    /// The tree view adds blank lines before top-level items and two-line workspaces.
+    pub fn index_from_visual_row(&self, visual_row: usize, scroll_offset: usize) -> Option<usize> {
+        let visible = self.visible_nodes();
+        let mut current_row: usize = 0;
+
+        for (i, node) in visible.iter().enumerate().skip(scroll_offset) {
+            // Blank line before top-level items (depth=0)
+            if node.depth == 0 {
+                current_row += 1;
+            }
+
+            // Check if click is on this item's row(s)
+            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let item_height = if is_two_line { 2 } else { 1 };
+
+            if visual_row >= current_row && visual_row < current_row + item_height {
+                return Some(i);
+            }
+
+            current_row += item_height;
+        }
+
+        None
+    }
+
     /// Find the visible index of a repository by its ID
     pub fn find_repo_index(&self, repo_id: Uuid) -> Option<usize> {
         self.visible_nodes()
