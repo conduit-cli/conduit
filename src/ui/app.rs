@@ -3929,27 +3929,24 @@ impl App {
             .clone()
             .unwrap_or_else(|| self.config.working_dir.clone());
 
-        // Add user message to chat
+        // Validate working directory exists before showing user message
+        if !working_dir.exists() {
+            let display = MessageDisplay::Error {
+                content: format!(
+                    "Working directory does not exist: {}",
+                    working_dir.display()
+                ),
+            };
+            session.chat_view.push(display.to_chat_message());
+            return Ok(effects);
+        }
+
+        // Add user message to chat (after validation passes)
         let display = MessageDisplay::User {
             content: prompt.clone(),
         };
         session.chat_view.push(display.to_chat_message());
         session.start_processing();
-
-        // Validate working directory exists
-        if !working_dir.exists() {
-            if let Some(session) = self.state.tab_manager.active_session_mut() {
-                let display = MessageDisplay::Error {
-                    content: format!(
-                        "Working directory does not exist: {}",
-                        working_dir.display()
-                    ),
-                };
-                session.chat_view.push(display.to_chat_message());
-                session.stop_processing();
-            }
-            return Ok(effects);
-        }
 
         // Start agent
         if agent_type == AgentType::Codex && !images.is_empty() {
