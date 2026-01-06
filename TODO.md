@@ -1,0 +1,9 @@
+- [ ] When we have no workspaces under a project, it shows collapsed. It has to be shown expanded.
+- [ ] Alt+I should work with no workspaces
+- [ ] Follow PR status
+  - [ ] If merged offer to archive workspace
+- [ ] It seems like we are only seeing incoming messages when loading messages from history
+- [ ] How to handle tabs overflowing to the right?
+- [ ] Auto name branch based on initial conversation
+- [ ] Support slash commands
+- [ ] Improve splash screen
