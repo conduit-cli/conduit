@@ -41,7 +41,7 @@ pub use error_dialog::{ErrorDialog, ErrorDialogState};
 pub use help_dialog::{HelpCategory, HelpDialog, HelpDialogState, KeybindingEntry};
 pub use project_picker::{ProjectEntry, ProjectPicker, ProjectPickerState};
 pub use session_import_picker::{AgentFilter, SessionImportPicker, SessionImportPickerState};
-pub use scrollbar::{render_vertical_scrollbar, scrollbar_offset_from_point, ScrollbarMetrics, ScrollbarSymbols};
+pub use scrollbar::{render_minimal_scrollbar, scrollbar_offset_from_point, ScrollbarMetrics};
 pub use text_input::TextInputState;
 pub use chat_message::{ChatMessage, MessageRole};
 pub use chat_view::ChatView;
@@ -61,7 +61,7 @@ pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;
 pub use theme::{
     // New modern palette
-    BG_BASE, BG_ELEVATED, BG_HIGHLIGHT, BG_SURFACE,
+    BG_BASE, BG_ELEVATED, BG_HIGHLIGHT, BG_SURFACE, BG_TERMINAL,
     TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SECONDARY, ACCENT_SUCCESS, ACCENT_WARNING,
     AGENT_CLAUDE, AGENT_CODEX,

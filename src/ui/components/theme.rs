@@ -9,6 +9,8 @@ use ratatui::style::Color;
 // Background Layers (dark to light for depth)
 // =============================================================================
 
+/// Terminal's actual background - use for elements that should blend with terminal
+pub const BG_TERMINAL: Color = Color::Rgb(16, 16, 16);
 /// Deepest background - main app background
 pub const BG_BASE: Color = Color::Rgb(22, 22, 30);
 /// Panels, cards, sidebar - slightly elevated

@@ -10,8 +10,8 @@ use ratatui::{
 };
 
 use super::{
-    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
-    ScrollbarSymbols, SELECTED_BG,
+    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
+    SELECTED_BG,
 };
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
@@ -607,9 +607,9 @@ impl SessionImportPicker {
             }
         }
 
-        // Render scrollbar if needed
+        // Render scrollbar
         let total_filtered = state.list.filtered.len();
-        render_vertical_scrollbar(
+        render_minimal_scrollbar(
             Rect {
                 x: area.x + area.width - 1,
                 y: area.y,
@@ -620,7 +620,6 @@ impl SessionImportPicker {
             total_filtered,
             visible_count,
             state.list.scroll_offset,
-            ScrollbarSymbols::standard(),
         );
     }
 }

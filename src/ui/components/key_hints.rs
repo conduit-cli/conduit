@@ -19,6 +19,7 @@ pub struct KeyHintBarStyle {
     pub key_prefix: &'static str,
     pub key_suffix: &'static str,
     pub leading: &'static str,
+    pub trailing: &'static str,
     pub alignment: Alignment,
     pub background: Option<Color>,
 }
@@ -33,6 +34,7 @@ impl KeyHintBarStyle {
             key_prefix: "",
             key_suffix: "",
             leading: "",
+            trailing: "",
             alignment: Alignment::Center,
             background: None,
         }
@@ -47,6 +49,7 @@ impl KeyHintBarStyle {
             key_prefix: " ",
             key_suffix: " ",
             leading: " ",
+            trailing: "",
             alignment: Alignment::Left,
             background: Some(footer_bg),
         }
@@ -62,7 +65,8 @@ impl KeyHintBarStyle {
             key_prefix: "",
             key_suffix: "",
             leading: "",
-            alignment: Alignment::Center,
+            trailing: "  ",
+            alignment: Alignment::Right,
             background: None,
         }
     }
@@ -92,6 +96,10 @@ pub fn render_key_hints(
         let key_text = format!("{}{}{}", style.key_prefix, key, style.key_suffix);
         spans.push(Span::styled(key_text, style.key_style));
         spans.push(Span::styled(format!(" {}", action), style.action_style));
+    }
+
+    if !style.trailing.is_empty() {
+        spans.push(Span::raw(style.trailing));
     }
 
     let line = Line::from(spans);
