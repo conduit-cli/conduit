@@ -4334,7 +4334,7 @@ impl App {
 
                     paragraph.render(centered_area, f.buffer_mut());
 
-                    // Render dialogs over empty state (similar to first-time splash)
+                    // Render dialogs over empty state
                     if self.state.base_dir_dialog_state.is_visible() {
                         let dialog = BaseDirDialog::new();
                         dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
@@ -4344,6 +4344,12 @@ impl App {
                     } else if self.state.add_repo_dialog_state.is_visible() {
                         let dialog = AddRepoDialog::new();
                         dialog.render(size, f.buffer_mut(), &self.state.add_repo_dialog_state);
+                    } else if self.state.session_import_state.is_visible() {
+                        let picker = SessionImportPicker::new();
+                        picker.render(size, f.buffer_mut(), &self.state.session_import_state);
+                    } else if self.state.model_selector_state.is_visible() {
+                        let selector = ModelSelector::new();
+                        selector.render(size, f.buffer_mut(), &self.state.model_selector_state, None);
                     }
 
                     // Draw agent selector dialog if needed
