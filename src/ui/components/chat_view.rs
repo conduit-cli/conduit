@@ -3,15 +3,14 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
-    symbols::border,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
-    render_vertical_scrollbar, ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics,
-    ScrollbarSymbols, TurnSummary,
+    render_minimal_scrollbar, ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics,
+    TurnSummary,
 };
 
 mod chat_view_cache;
@@ -161,18 +160,12 @@ impl ChatView {
     }
 
     pub fn scrollbar_metrics(&mut self, area: Rect, show_thinking_line: bool) -> Option<ScrollbarMetrics> {
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
-            .title(" Chat ");
-
-        let inner = block.inner(area);
+        // Content area with padding for scrollbar
         let content = Rect {
-            x: inner.x.saturating_add(1),
-            y: inner.y,
-            width: inner.width.saturating_sub(3),
-            height: inner.height,
+            x: area.x.saturating_add(2),
+            y: area.y,
+            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
+            height: area.height,
         };
 
         if content.width < 3 || content.height < 1 {
@@ -207,10 +200,10 @@ impl ChatView {
 
         Some(ScrollbarMetrics {
             area: Rect {
-                x: inner.x + inner.width.saturating_sub(1),
-                y: inner.y,
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y,
                 width: 1,
-                height: inner.height,
+                height: area.height,
             },
             total: total_lines,
             visible: visible_height,
@@ -877,42 +870,15 @@ impl ChatView {
         area: Rect,
         buf: &mut Buffer,
         thinking_line: Option<Line<'static>>,
-        pr_number: Option<u32>,
+        _pr_number: Option<u32>,
     ) {
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)))
-            .title(" Chat ");
-
-        let inner = block.inner(area);
+        // Content area with padding for scrollbar
         let content = Rect {
-            x: inner.x.saturating_add(1),
-            y: inner.y,
-            width: inner.width.saturating_sub(3),
-            height: inner.height,
+            x: area.x.saturating_add(2),
+            y: area.y,
+            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
+            height: area.height,
         };
-        block.render(area, buf);
-
-        // Render PR badge in top-right corner if PR exists
-        if let Some(pr_num) = pr_number {
-            let badge = format!(" PR #{} ", pr_num);
-            let badge_width = badge.len() as u16;
-            // Position: top-right corner inside the border
-            // area.x + area.width - 1 is the right border
-            // So we want to start at: area.x + area.width - 1 - badge_width
-            let badge_x = area.x + area.width.saturating_sub(badge_width + 2);
-            let badge_y = area.y;
-
-            let badge_span = Span::styled(
-                badge,
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Rgb(139, 233, 253)) // Cyan/teal color
-                    .add_modifier(Modifier::BOLD),
-            );
-            buf.set_span(badge_x, badge_y, &badge_span, badge_width);
-        }
 
         if content.width < 3 || content.height < 1 {
             return;
@@ -988,26 +954,18 @@ impl ChatView {
         Paragraph::new(visible_lines).render(content, buf);
 
         let scrollbar_area = Rect {
-            x: inner.x + inner.width.saturating_sub(1),
-            y: inner.y,
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
             width: 1,
-            height: inner.height,
+            height: area.height,
         };
-        render_vertical_scrollbar(
+        render_minimal_scrollbar(
             scrollbar_area,
             buf,
             total_lines,
             visible_height,
             scroll_from_top,
-            ScrollbarSymbols::arrows(),
         );
-        if total_lines > visible_height {
-            for y in scrollbar_area.y..scrollbar_area.y.saturating_add(scrollbar_area.height) {
-                for x in scrollbar_area.x..scrollbar_area.x.saturating_add(scrollbar_area.width) {
-                    buf[(x, y)].set_fg(Color::DarkGray);
-                }
-            }
-        }
     }
 }
 

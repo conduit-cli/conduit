@@ -15,8 +15,7 @@ use crate::config::{KeybindingConfig, KeyContext};
 use crate::ui::action::Action;
 
 use super::{
-    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, ScrollbarSymbols,
-    TextInputState,
+    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, TextInputState,
 };
 
 /// A keybinding entry for display
@@ -559,13 +558,12 @@ impl HelpDialog {
     }
 
     fn render_scrollbar(&self, area: Rect, buf: &mut Buffer, state: &HelpDialogState) {
-        render_vertical_scrollbar(
+        render_minimal_scrollbar(
             area,
             buf,
             state.total_lines,
             state.visible_height,
             state.scroll_offset,
-            ScrollbarSymbols::standard(),
         );
     }
 }

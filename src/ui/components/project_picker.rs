@@ -9,8 +9,8 @@ use ratatui::{
 use std::path::PathBuf;
 
 use super::{
-    render_vertical_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
-    ScrollbarSymbols, SELECTED_BG,
+    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
+    SELECTED_BG,
 };
 
 /// A project entry (directory with .git)
@@ -392,9 +392,9 @@ impl ProjectPicker {
                 }
             }
 
-            // Render scrollbar if there are more items than visible
+            // Render scrollbar
             let total_filtered = state.list.filtered.len();
-            render_vertical_scrollbar(
+            render_minimal_scrollbar(
                 Rect {
                     x: list_area.x + list_area.width - 1,
                     y: list_area.y,
@@ -405,7 +405,6 @@ impl ProjectPicker {
                 total_filtered,
                 visible_count,
                 state.list.scroll_offset,
-                ScrollbarSymbols::standard(),
             );
         }
 

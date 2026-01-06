@@ -2773,7 +2773,9 @@ impl App {
                         session.raw_events_view.scroll_up(*pending_up);
                     }
                     if *pending_down > 0 {
-                        session.raw_events_view.scroll_down(*pending_down, list_height);
+                        session
+                            .raw_events_view
+                            .scroll_down(*pending_down, list_height);
                     }
                 }
             }
@@ -3108,9 +3110,8 @@ impl App {
                             match click {
                                 RawEventsClick::SessionId => {
                                     if let Some(session_id) = session.raw_events_view.session_id() {
-                                        effects.push(Effect::CopyToClipboard(
-                                            session_id.to_string(),
-                                        ));
+                                        effects
+                                            .push(Effect::CopyToClipboard(session_id.to_string()));
                                     }
                                     self.state.last_raw_events_click = None;
                                 }
@@ -4148,29 +4149,29 @@ impl App {
             0
         };
 
-        // First, split vertically to reserve bottom row for footer (full width)
-        let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(5),    // Main content area (sidebar + chat + status bar + gap)
-                Constraint::Length(1), // Footer (full width)
-            ])
-            .split(size);
-
-        let main_area = main_chunks[0];
-        let footer_area = main_chunks[1];
-
-        // Split main area horizontally for sidebar
-        let (sidebar_area, content_area) = if sidebar_width > 0 {
+        // First, split horizontally for sidebar
+        let (sidebar_area, right_area) = if sidebar_width > 0 {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(sidebar_width), Constraint::Min(20)])
-                .split(main_area);
+                .split(size);
             (chunks[0], chunks[1])
         } else {
             // No sidebar - use full width
-            (Rect::default(), main_area)
+            (Rect::default(), size)
         };
+
+        // Split right area vertically to reserve bottom row for footer
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(5),    // Content area (chat + status bar + gap)
+                Constraint::Length(1), // Footer (only in content area)
+            ])
+            .split(right_area);
+
+        let content_area = right_chunks[0];
+        let footer_area = right_chunks[1];
 
         // Store sidebar area for mouse hit-testing
         self.state.sidebar_area = if self.state.sidebar_state.visible {
@@ -4215,9 +4216,9 @@ impl App {
                     .split(content_area);
 
                 // Create margin-adjusted areas for input, status bar, and gap rows
-                // These have 1 char margin on each side with BG_BASE background
-                let margin_left = 1u16;
-                let margin_right = 1u16;
+                // These have margins matching main content area
+                let margin_left = 2u16;
+                let margin_right = 2u16;
                 let total_margin = margin_left + margin_right;
 
                 let input_area_inner = Rect {
@@ -4342,12 +4343,16 @@ impl App {
                         self.state.metrics.scroll_events_per_sec,
                         self.state.metrics.scroll_active,
                     );
-                    session.status_bar.render(status_bar_area_inner, f.buffer_mut());
+                    session
+                        .status_bar
+                        .render(status_bar_area_inner, f.buffer_mut());
 
                     // Set cursor position (accounting for scroll)
                     if self.state.input_mode == InputMode::Normal {
                         let scroll_offset = session.input_box.scroll_offset();
-                        let (cx, cy) = session.input_box.cursor_position(input_area_inner, scroll_offset);
+                        let (cx, cy) = session
+                            .input_box
+                            .cursor_position(input_area_inner, scroll_offset);
                         f.set_cursor_position((cx, cy));
                     }
                 }
@@ -4355,8 +4360,8 @@ impl App {
                 // Render command prompt if in command mode (outside session borrow)
                 if is_command_mode {
                     self.render_command_prompt(input_area_inner, f.buffer_mut());
-                    // Cursor at end of command buffer (after ":" in padded area)
-                    let prompt = format!(":{}", self.state.command_buffer);
+                    // Cursor at end of command buffer (after prompt in padded area)
+                    let prompt = format!("  cmd › {}", self.state.command_buffer);
                     let prompt_width = prompt.width() as u16;
                     let max_x = input_area_inner.x + input_area_inner.width.saturating_sub(1);
                     let cx = (input_area_inner.x + prompt_width).min(max_x);
@@ -4536,6 +4541,7 @@ impl App {
     /// Render command mode prompt
     fn render_command_prompt(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
         use ratatui::style::{Color, Style};
+        use ratatui::text::{Line, Span};
         use ratatui::widgets::{Clear, Paragraph, Widget};
         use unicode_width::UnicodeWidthStr;
 
@@ -4557,30 +4563,46 @@ impl App {
             return;
         }
 
-        let prompt = format!(":{}", self.state.command_buffer);
-        let prompt_width = UnicodeWidthStr::width(prompt.as_str()) as u16;
+        let prefix = "  cmd › ";
+        let prefix_width = UnicodeWidthStr::width(prefix) as u16;
+        let buffer_width = UnicodeWidthStr::width(self.state.command_buffer.as_str()) as u16;
+        let total_width = prefix_width + buffer_width;
         let content_width = area.width;
-        let display = if prompt_width > content_width {
+
+        let line = if total_width > content_width {
+            // Truncate from the left, showing most recent input
             let mut truncated = String::new();
             let mut width = 0usize;
-            for ch in prompt.chars().rev() {
+            for ch in self.state.command_buffer.chars().rev() {
                 let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
-                if width + w > content_width.saturating_sub(1) as usize {
+                if width + w > content_width.saturating_sub(prefix_width + 1) as usize {
                     break;
                 }
                 width += w;
                 truncated.insert(0, ch);
             }
-            format!("…{}", truncated)
+            Line::from(vec![
+                Span::styled(
+                    prefix,
+                    Style::default().fg(crate::ui::components::TEXT_MUTED),
+                ),
+                Span::raw("…"),
+                Span::styled(truncated, Style::default().fg(Color::White)),
+            ])
         } else {
-            prompt
+            Line::from(vec![
+                Span::styled(
+                    prefix,
+                    Style::default().fg(crate::ui::components::TEXT_MUTED),
+                ),
+                Span::styled(
+                    &self.state.command_buffer,
+                    Style::default().fg(Color::White),
+                ),
+            ])
         };
 
-        let para = Paragraph::new(display).style(
-            Style::default()
-                .fg(Color::White)
-                .bg(crate::ui::components::INPUT_BG),
-        );
+        let para = Paragraph::new(line).style(Style::default().bg(crate::ui::components::INPUT_BG));
         para.render(
             Rect {
                 x: area.x,
