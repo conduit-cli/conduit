@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use crate::ui::components::{
     AddRepoDialogState, AgentSelectorState, BaseDirDialogState, ConfirmationDialogState,
     ErrorDialogState, HelpDialogState, ModelSelectorState, ProjectPickerState,
-    SessionImportPickerState, SidebarData, SidebarState, SplashScreen,
+    SessionImportPickerState, SidebarData, SidebarState,
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
@@ -153,7 +153,6 @@ pub struct AppState {
     pub input_mode: InputMode,
     pub view_mode: ViewMode,
     pub tick_count: u32,
-    pub splash_screen: SplashScreen,
     pub show_first_time_splash: bool,
     pub sidebar_state: SidebarState,
     pub sidebar_data: SidebarData,
@@ -201,7 +200,6 @@ impl AppState {
             input_mode: InputMode::Normal,
             view_mode: ViewMode::Chat,
             tick_count: 0,
-            splash_screen: SplashScreen::new(),
             show_first_time_splash: true,
             sidebar_state: SidebarState::new(),
             sidebar_data: SidebarData::new(),
