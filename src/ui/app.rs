@@ -633,7 +633,7 @@ impl App {
         }
 
         // Image paste: Ctrl+V (Linux/Windows) or Alt+V (macOS terminals report Cmd as Alt)
-        // Uses intersects() to match either modifier, not both simultaneously
+        // Match either modifier independently (Cmd often maps to Alt in terminal emulators)
         if self.state.input_mode == InputMode::Normal
             && (key.modifiers.contains(KeyModifiers::CONTROL)
                 || key.modifiers.contains(KeyModifiers::ALT))
@@ -4363,7 +4363,12 @@ impl App {
                         picker.render(size, f.buffer_mut(), &self.state.session_import_state);
                     } else if self.state.model_selector_state.is_visible() {
                         let selector = ModelSelector::new();
-                        selector.render(size, f.buffer_mut(), &self.state.model_selector_state, None);
+                        selector.render(
+                            size,
+                            f.buffer_mut(),
+                            &self.state.model_selector_state,
+                            None,
+                        );
                     }
 
                     // Draw agent selector dialog if needed
@@ -4388,7 +4393,11 @@ impl App {
 
                     // Draw help dialog if open
                     if self.state.help_dialog_state.is_visible() {
-                        HelpDialog::new().render(size, f.buffer_mut(), &mut self.state.help_dialog_state);
+                        HelpDialog::new().render(
+                            size,
+                            f.buffer_mut(),
+                            &mut self.state.help_dialog_state,
+                        );
                     }
 
                     // Draw footer for empty state (sidebar-aware)
