@@ -149,15 +149,16 @@ pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let mut path = if let Some(stripped) = trimmed.strip_prefix("file://") {
+    // Handle file:// URLs with optional localhost
+    // file:///path -> /path
+    // file://localhost/path -> /path
+    let path = if let Some(stripped) = trimmed.strip_prefix("file://localhost") {
+        stripped
+    } else if let Some(stripped) = trimmed.strip_prefix("file://") {
         stripped
     } else {
         trimmed
     };
-
-    if let Some(stripped) = path.strip_prefix("localhost/") {
-        path = stripped;
-    }
 
     Some(PathBuf::from(percent_decode(path)))
 }

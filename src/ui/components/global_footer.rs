@@ -113,19 +113,6 @@ impl GlobalFooter {
         ]
     }
 
-    // Keep the old API for backwards compatibility
-    pub fn with_view_mode(self, view_mode: ViewMode) -> Self {
-        let context = match view_mode {
-            ViewMode::Chat => FooterContext::Chat,
-            ViewMode::RawEvents => FooterContext::RawEvents,
-        };
-        Self::for_context(context)
-    }
-
-    pub fn with_hints(hints: Vec<(&'static str, &'static str)>) -> Self {
-        Self { hints }
-    }
-
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         render_key_hints(area, buf, &self.hints, KeyHintBarStyle::minimal_footer());
     }

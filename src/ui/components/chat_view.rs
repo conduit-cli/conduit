@@ -17,6 +17,61 @@ mod chat_view_cache;
 
 use self::chat_view_cache::LineCache;
 
+/// Truncate a string to fit within a maximum display width, adding "..." if truncated.
+/// Uses unicode display width to handle multi-byte and wide characters correctly.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+
+    if max_width <= ellipsis_width {
+        return s.chars().take(max_width).collect();
+    }
+
+    let current_width = UnicodeWidthStr::width(s);
+    if current_width <= max_width {
+        return s.to_string();
+    }
+
+    let target_width = max_width - ellipsis_width;
+    let mut width = 0;
+    let mut result = String::new();
+
+    for c in s.chars() {
+        let char_width = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + char_width > target_width {
+            break;
+        }
+        result.push(c);
+        width += char_width;
+    }
+
+    result.push_str(ellipsis);
+    result
+}
+
+/// Truncate a string to fit within a maximum display width (no ellipsis).
+/// Uses unicode display width to handle multi-byte and wide characters correctly.
+fn truncate_to_width_exact(s: &str, max_width: usize) -> String {
+    let current_width = UnicodeWidthStr::width(s);
+    if current_width <= max_width {
+        return s.to_string();
+    }
+
+    let mut width = 0;
+    let mut result = String::new();
+
+    for c in s.chars() {
+        let char_width = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + char_width > max_width {
+            break;
+        }
+        result.push(c);
+        width += char_width;
+    }
+
+    result
+}
+
 /// Chat view component displaying message history
 pub struct ChatView {
     /// All messages in the chat
@@ -610,12 +665,8 @@ impl ChatView {
                     _ => Color::White,
                 };
 
-                // Truncate long content
-                let display_content = if content.len() > 70 {
-                    format!("{}...", &content[..67])
-                } else {
-                    content.clone()
-                };
+                // Truncate long content (use display width for proper UTF-8 handling)
+                let display_content = truncate_to_width(&content, 70);
 
                 lines.push(Line::from(vec![
                     Span::styled("│  ", Style::default().fg(Color::Cyan)),
@@ -694,12 +745,8 @@ impl ChatView {
             (false, "✓", Color::Green)
         };
 
-        // Truncate args if too long
-        let args_display = if tool_args.len() > 60 {
-            format!("{}...", &tool_args[..57])
-        } else {
-            tool_args.to_string()
-        };
+        // Truncate args if too long (use display width for proper UTF-8 handling)
+        let args_display = truncate_to_width(tool_args, 60);
 
         // Header: ┌─ 🔧 ToolName ─────────────────
         let header_text = format!("┌─ {} {} ", icon, tool_name);
@@ -736,11 +783,8 @@ impl ChatView {
         if msg.is_collapsed {
             let summary = if line_count > 0 {
                 let first_line = content_lines[0];
-                let preview = if first_line.len() > 50 {
-                    format!("{}...", &first_line[..47])
-                } else {
-                    first_line.to_string()
-                };
+                // Use display width for proper UTF-8 handling
+                let preview = truncate_to_width(first_line, 50);
                 format!("{} ({} lines)", preview, line_count)
             } else {
                 "No output".to_string()
@@ -847,7 +891,8 @@ impl ChatView {
         if current_width < target_width {
             text.push_str(&"─".repeat(target_width - current_width));
         } else if current_width > target_width {
-            text = text.chars().take(target_width).collect();
+            // Use display-width-aware truncation for proper UTF-8/wide char handling
+            text = truncate_to_width_exact(&text, target_width);
         }
         Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))
     }

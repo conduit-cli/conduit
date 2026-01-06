@@ -2022,7 +2022,8 @@ impl App {
     }
 
     fn handle_paste_input(&mut self, pasted: String) {
-        let pasted = pasted.replace('\r', "\n");
+        // Normalize line endings: CRLF → LF, then lone CR → LF
+        let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
         match self.state.input_mode {
             InputMode::Normal => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
