@@ -117,6 +117,8 @@ impl ClaudeTurnTracker {
             self.last_assistant_at = Some(ts);
         }
         if let Some(request_id) = request_id {
+            // Same request_id may appear multiple times with cumulative counts;
+            // keep the maximum (most complete) value for each request
             let entry = self
                 .usage_by_request
                 .entry(request_id.to_string())
@@ -124,6 +126,7 @@ impl ClaudeTurnTracker {
             entry.0 = entry.0.max(usage.0);
             entry.1 = entry.1.max(usage.1);
         } else {
+            // Fallback entries are distinct unidentified requests; sum them
             self.fallback_usage.0 = self.fallback_usage.0.saturating_add(usage.0);
             self.fallback_usage.1 = self.fallback_usage.1.saturating_add(usage.1);
         }

@@ -52,7 +52,7 @@ impl TurnSummary {
     }
 
     /// Format duration as human-readable string
-    fn format_duration(&self) -> String {
+    pub fn format_duration(&self) -> String {
         let secs = self.duration_secs;
         if secs >= 60 {
             format!("{}m {}s", secs / 60, secs % 60)
@@ -62,7 +62,7 @@ impl TurnSummary {
     }
 
     /// Format token count (abbreviate if large)
-    fn format_tokens(count: u64) -> String {
+    pub fn format_tokens(count: u64) -> String {
         if count >= 1000 {
             format!("{:.1}k", count as f64 / 1000.0)
         } else {
