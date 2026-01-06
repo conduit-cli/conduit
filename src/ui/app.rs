@@ -948,9 +948,10 @@ impl App {
 
             // ========== Input Box Editing ==========
             Action::InsertNewline => {
-                // Don't insert newlines in help dialog or command mode
+                // Don't insert newlines in help dialog, command mode, or sidebar navigation
                 if self.state.input_mode != InputMode::ShowingHelp
                     && self.state.input_mode != InputMode::Command
+                    && self.state.input_mode != InputMode::SidebarNavigation
                 {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session.input_box.insert_newline();
