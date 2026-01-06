@@ -854,16 +854,15 @@ impl ChatView {
 
     /// Render the chat view
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        self.render_with_indicator(area, buf, None, None);
+        self.render_with_indicator(area, buf, None);
     }
 
-    /// Render the chat view with an optional thinking indicator and PR badge
+    /// Render the chat view with an optional thinking indicator
     pub fn render_with_indicator(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
         thinking_line: Option<Line<'static>>,
-        _pr_number: Option<u32>,
     ) {
         let Some(content) = Self::content_area(area) else {
             return;

@@ -3512,21 +3512,8 @@ impl App {
     fn handle_footer_click(&mut self, x: u16, _y: u16, footer_area: Rect) -> Option<Action> {
         // Use the same hints as GlobalFooter to stay in sync
         let hints: Vec<(&str, &str)> = match self.state.view_mode {
-            ViewMode::Chat => vec![
-                ("Tab", "Switch"),
-                ("C-t", "Sidebar"),
-                ("C-n", "Project"),
-                ("M-S-w", "Close"),
-                ("C-c", "Stop"),
-                ("C-q", "Quit"),
-            ],
-            ViewMode::RawEvents => vec![
-                ("j/k", "Nav"),
-                ("l/CR", "Expand"),
-                ("h/Esc", "Collapse"),
-                ("C-g", "Chat"),
-                ("C-q", "Quit"),
-            ],
+            ViewMode::Chat => GlobalFooter::chat_hints(),
+            ViewMode::RawEvents => GlobalFooter::raw_events_hints(),
         };
 
         // Calculate click position relative to footer
@@ -4523,7 +4510,6 @@ impl App {
                         chunks[1],
                         f.buffer_mut(),
                         thinking_line,
-                        session.pr_number,
                     );
 
                     // Render input box (not in command mode)

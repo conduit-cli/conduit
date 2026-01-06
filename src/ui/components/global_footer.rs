@@ -67,7 +67,8 @@ impl GlobalFooter {
         Self::for_context(context)
     }
 
-    fn empty_hints() -> Vec<(&'static str, &'static str)> {
+    /// Get hints for empty state (no tabs open)
+    pub fn empty_hints() -> Vec<(&'static str, &'static str)> {
         vec![
             ("C-n", "new project"),
             ("C-t", "sidebar"),
@@ -76,7 +77,8 @@ impl GlobalFooter {
         ]
     }
 
-    fn chat_hints() -> Vec<(&'static str, &'static str)> {
+    /// Get hints for chat mode
+    pub fn chat_hints() -> Vec<(&'static str, &'static str)> {
         vec![
             ("tab", "next tab"),
             ("C-o", "model"),
@@ -88,7 +90,8 @@ impl GlobalFooter {
         ]
     }
 
-    fn sidebar_hints() -> Vec<(&'static str, &'static str)> {
+    /// Get hints for sidebar navigation mode
+    pub fn sidebar_hints() -> Vec<(&'static str, &'static str)> {
         vec![
             ("↑↓", "navigate"),
             ("enter", "select"),
@@ -99,7 +102,8 @@ impl GlobalFooter {
         ]
     }
 
-    fn raw_events_hints() -> Vec<(&'static str, &'static str)> {
+    /// Get hints for raw events view mode
+    pub fn raw_events_hints() -> Vec<(&'static str, &'static str)> {
         vec![
             ("j/k", "nav"),
             ("e", "detail"),

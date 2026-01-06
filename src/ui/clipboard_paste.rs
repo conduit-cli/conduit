@@ -85,11 +85,11 @@ pub fn paste_image_to_temp_png() -> Result<(PathBuf, PastedImageInfo), PasteImag
         .suffix(".png")
         .tempfile()
         .map_err(|e| PasteImageError::IoError(e.to_string()))?;
-    let (_file, path) = tmp
-        .keep()
-        .map_err(|e| PasteImageError::IoError(e.error.to_string()))?;
 
+    // Get the path but don't persist yet - we'll keep the file only on success
+    let path = tmp.path().to_path_buf();
     let path_str = path.to_string_lossy().replace('"', "\\\"");
+
     let script = format!(
         r#"set theFile to POSIX file "{path_str}"
 try
@@ -112,6 +112,7 @@ end try"#
         .map_err(|e| PasteImageError::ClipboardUnavailable(e.to_string()))?;
 
     if !output.status.success() {
+        // tmp will be auto-deleted when dropped since we haven't called keep()
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Distinguish "no image" from actual script errors for better debugging
         if stderr.is_empty() || stderr.to_lowercase().contains("no image") {
@@ -123,6 +124,11 @@ end try"#
             )));
         }
     }
+
+    // Success - now persist the file
+    let (_file, path) = tmp
+        .keep()
+        .map_err(|e| PasteImageError::IoError(e.error.to_string()))?;
 
     let (width, height) =
         image::image_dimensions(&path).map_err(|e| PasteImageError::EncodeFailed(e.to_string()))?;
@@ -158,20 +164,21 @@ pub fn normalize_pasted_path(pasted: &str) -> Option<PathBuf> {
 
 fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
-    let mut out = String::new();
+    let mut decoded_bytes = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
-                out.push(char::from(h * 16 + l));
+                decoded_bytes.push(h * 16 + l);
                 i += 3;
                 continue;
             }
         }
-        out.push(bytes[i] as char);
+        decoded_bytes.push(bytes[i]);
         i += 1;
     }
-    out
+    // Use from_utf8_lossy to handle multi-byte UTF-8 sequences correctly
+    String::from_utf8_lossy(&decoded_bytes).into_owned()
 }
 
 fn from_hex(b: u8) -> Option<u8> {
