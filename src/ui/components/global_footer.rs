@@ -13,9 +13,10 @@ impl GlobalFooter {
     pub fn new() -> Self {
         Self {
             hints: vec![
-                ("tab", "switch agent"),
+                ("tab", "next tab"),
+                ("C-o", "model"),
                 ("C-t", "sidebar"),
-                ("C-n", "project"),
+                ("C-n", "new project"),
                 ("M-S-w", "close"),
                 ("C-c", "stop"),
                 ("C-q", "quit"),
@@ -33,9 +34,10 @@ impl GlobalFooter {
     fn update_hints(&mut self) {
         self.hints = match self.view_mode {
             ViewMode::Chat => vec![
-                ("tab", "switch agent"),
+                ("tab", "next tab"),
+                ("C-o", "model"),
                 ("C-t", "sidebar"),
-                ("C-n", "project"),
+                ("C-n", "new project"),
                 ("M-S-w", "close"),
                 ("C-c", "stop"),
                 ("C-q", "quit"),

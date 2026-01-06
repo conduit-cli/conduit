@@ -53,27 +53,14 @@ pub fn generate_branch_name(username: &str, workspace_name: &str) -> String {
     format!("{}/{}", sanitized_username, workspace_name)
 }
 
-/// Get the git username for branch naming
+/// Get the username for branch naming
 ///
 /// Priority:
-/// 1. git config user.name
-/// 2. Environment variable USER or USERNAME
+/// 1. OS username (USER or USERNAME environment variable)
+/// 2. git config user.name
 /// 3. Fallback to "user"
 pub fn get_git_username() -> String {
-    // Try git config
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["config", "user.name"])
-        .output()
-    {
-        if output.status.success() {
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !name.is_empty() {
-                return sanitize_git_ref(&name);
-            }
-        }
-    }
-
-    // Try environment variables
+    // Try OS username first (USER on Unix, USERNAME on Windows)
     if let Ok(user) = std::env::var("USER") {
         if !user.is_empty() {
             return sanitize_git_ref(&user);
@@ -83,6 +70,19 @@ pub fn get_git_username() -> String {
     if let Ok(user) = std::env::var("USERNAME") {
         if !user.is_empty() {
             return sanitize_git_ref(&user);
+        }
+    }
+
+    // Fall back to git config
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["config", "user.name"])
+        .output()
+    {
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return sanitize_git_ref(&name);
+            }
         }
     }
 
