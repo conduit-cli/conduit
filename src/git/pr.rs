@@ -418,6 +418,20 @@ impl PrManager {
             let review_decision = ReviewDecision::from_gh_json(&pr.review_decision);
             let merge_readiness = MergeReadiness::compute(&checks, mergeable, review_decision);
 
+            tracing::debug!(
+                pr_number = pr.number,
+                pr_state = ?state,
+                checks_total = checks.total,
+                checks_passed = checks.passed,
+                checks_pending = checks.pending,
+                checks_failed = checks.failed,
+                check_state = ?checks.state(),
+                mergeable = ?mergeable,
+                review_decision = ?review_decision,
+                merge_readiness = ?merge_readiness,
+                "PR status fetched"
+            );
+
             Some(PrStatus {
                 exists: true,
                 number: Some(pr.number),

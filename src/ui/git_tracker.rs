@@ -250,7 +250,7 @@ impl GitTracker {
                         .ok()
                         .flatten();
 
-                // Compare with current state
+                // Compare with current state - include check status and merge readiness
                 let pr_changed = match (&state.pr_status, &new_pr_status) {
                     (None, Some(_)) => true,
                     (Some(_), None) => true,
@@ -258,6 +258,9 @@ impl GitTracker {
                         old.number != new.number
                             || old.state != new.state
                             || old.exists != new.exists
+                            || old.checks.state() != new.checks.state()
+                            || old.merge_readiness != new.merge_readiness
+                            || old.mergeable != new.mergeable
                     }
                     (None, None) => false,
                 };
@@ -326,6 +329,12 @@ impl GitTracker {
 
         // Send PR update: None means status unavailable (gh failed),
         // Some with exists=false means no PR, Some with exists=true means PR exists
+        tracing::debug!(
+            workspace_id = %workspace_id,
+            pr_exists = new_pr_status.as_ref().map(|s| s.exists),
+            pr_number = new_pr_status.as_ref().and_then(|s| s.number),
+            "Sending PR status update from check_workspace"
+        );
         let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
             workspace_id,
             status: new_pr_status,

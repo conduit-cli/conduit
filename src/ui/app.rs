@@ -4254,6 +4254,14 @@ impl App {
                 workspace_id,
                 status,
             } => {
+                tracing::debug!(
+                    workspace_id = %workspace_id,
+                    pr_exists = status.as_ref().map(|s| s.exists),
+                    pr_number = status.as_ref().and_then(|s| s.number),
+                    check_state = ?status.as_ref().map(|s| s.checks.state()),
+                    merge_readiness = ?status.as_ref().map(|s| s.merge_readiness),
+                    "Received PR status update"
+                );
                 // Update all sessions with this workspace
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
