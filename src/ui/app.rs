@@ -1025,6 +1025,7 @@ impl App {
                     | InputMode::SelectingAgent
                     | InputMode::Confirming
                     | InputMode::ImportingSession
+                    | InputMode::CommandPalette
             )
         {
             // Only enter command mode if the input box is empty

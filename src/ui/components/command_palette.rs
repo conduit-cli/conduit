@@ -9,12 +9,13 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
     render_minimal_scrollbar, DialogFrame, InstructionBar, SearchableListState, ACCENT_PRIMARY,
     BG_HIGHLIGHT, TEXT_MUTED, TEXT_PRIMARY,
 };
-use crate::config::keys::KeybindingConfig;
+use crate::config::keys::{KeyCombo, KeybindingConfig};
 use crate::ui::action::Action;
 
 /// A command entry in the palette
@@ -70,20 +71,30 @@ impl CommandPaletteState {
     /// Build command list with keybinding lookup
     fn build_commands(keybindings: &KeybindingConfig) -> Vec<CommandPaletteEntry> {
         // Build reverse lookup: Action discriminant -> key display string
-        let mut keybinding_cache: HashMap<String, String> = HashMap::new();
-
-        for (combo, action) in &keybindings.global {
-            let key = Self::action_discriminant_key(action);
+        let mut keybinding_cache: HashMap<std::mem::Discriminant<Action>, String> = HashMap::new();
+        let mut cache_binding = |combo: &KeyCombo, action: &Action| {
+            let key = std::mem::discriminant(action);
             let display = combo.to_string();
+            let display_width = UnicodeWidthStr::width(display.as_str());
             // Prefer shorter keybindings when multiple exist
             keybinding_cache
                 .entry(key)
                 .and_modify(|existing| {
-                    if display.len() < existing.len() {
+                    if display_width < UnicodeWidthStr::width(existing.as_str()) {
                         *existing = display.clone();
                     }
                 })
                 .or_insert(display);
+        };
+
+        for (combo, action) in &keybindings.global {
+            cache_binding(combo, action);
+        }
+
+        for context_bindings in keybindings.context.values() {
+            for (combo, action) in context_bindings {
+                cache_binding(combo, action);
+            }
         }
 
         // Collect all actions that should appear in palette
@@ -117,7 +128,7 @@ impl CommandPaletteState {
             .into_iter()
             .filter(|a| a.show_in_palette())
             .map(|action| {
-                let key = Self::action_discriminant_key(&action);
+                let key = std::mem::discriminant(&action);
                 let keybinding = keybinding_cache.get(&key).cloned();
                 CommandPaletteEntry {
                     description: action.palette_description(),
@@ -135,14 +146,6 @@ impl CommandPaletteState {
         });
 
         entries
-    }
-
-    /// Generate a string key for an action (handles parameterized variants)
-    fn action_discriminant_key(action: &Action) -> String {
-        // Use debug format but strip parameters for matching
-        // e.g., "ScrollUp(5)" -> "ScrollUp"
-        let debug = format!("{:?}", action);
-        debug.split('(').next().unwrap_or(&debug).to_string()
     }
 
     /// Filter commands based on search query
@@ -194,6 +197,39 @@ impl CommandPaletteState {
         let idx = self.list.filtered.get(self.list.selected)?;
         self.commands.get(*idx)
     }
+}
+
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let current_width = UnicodeWidthStr::width(s);
+    if current_width <= max_width {
+        return s.to_string();
+    }
+
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width <= ellipsis_width {
+        return ellipsis.chars().take(max_width).collect();
+    }
+
+    let target_width = max_width - ellipsis_width;
+    let mut result = String::new();
+    let mut width = 0;
+
+    for ch in s.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        if width + ch_width > target_width {
+            break;
+        }
+        result.push(ch);
+        width += ch_width;
+    }
+
+    result.push_str(ellipsis);
+    result
 }
 
 impl Default for CommandPaletteState {
@@ -320,29 +356,23 @@ impl CommandPalette {
 
             // Calculate available width (use content_width to account for scrollbar)
             let key_str = cmd.keybinding.as_deref().unwrap_or("");
-            let key_width = key_str.len();
-            let prefix_width = 2; // "> " or "  "
+            let key_width = UnicodeWidthStr::width(key_str);
+            let prefix_width = UnicodeWidthStr::width("> "); // "> " or "  "
             let gap = 2; // Gap between description and keybinding
             let trailing_gap = 2; // Gap after keybinding before scrollbar
             let available_desc_width = (content_width as usize)
                 .saturating_sub(prefix_width + key_width + gap + trailing_gap);
 
             // Truncate description if needed
-            let desc = if cmd.description.len() > available_desc_width {
-                format!(
-                    "{}...",
-                    &cmd.description[..available_desc_width.saturating_sub(3)]
-                )
-            } else {
-                cmd.description.clone()
-            };
+            let desc = truncate_to_width(&cmd.description, available_desc_width);
+            let desc_width = UnicodeWidthStr::width(desc.as_str());
 
             // Build the line with proper alignment
             let prefix = if is_selected { "> " } else { "  " };
 
             // Calculate padding between description and keybinding (use content_width, reserve trailing_gap)
             let padding_width = (content_width as usize)
-                .saturating_sub(prefix_width + desc.len() + key_width + trailing_gap);
+                .saturating_sub(prefix_width + desc_width + key_width + trailing_gap);
             let padding = " ".repeat(padding_width);
             let trailing = " ".repeat(trailing_gap);
 
