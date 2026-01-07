@@ -3747,16 +3747,15 @@ impl App {
     /// Check if click is on the PR badge and open PR in browser if so
     fn check_pr_badge_click(&mut self, x: u16, status_bar_area: Rect) {
         // Get PR info and calculate right content width from current session
-        let (pr_number, working_dir, right_content_width, pr_badge_width) = {
+        let (working_dir, right_content_width, pr_badge_width) = {
             let Some(session) = self.state.tab_manager.active_session() else {
                 return;
             };
 
-            let pr_num = session.pr_number;
             let wd = session.working_dir.clone();
 
             // If no PR, nothing to click
-            let Some(num) = pr_num else {
+            let Some(num) = session.pr_number else {
                 return;
             };
 
@@ -3791,11 +3790,7 @@ impl App {
             // Trailing padding
             total_width += 2;
 
-            (Some(num), wd, total_width, badge_width)
-        };
-
-        let Some(_pr_num) = pr_number else {
-            return;
+            (wd, total_width, badge_width)
         };
 
         // Calculate where right content starts
@@ -3810,31 +3805,26 @@ impl App {
         // Check if click is within PR badge
         if x >= right_start_x && x < pr_badge_end_x {
             if let Some(wd) = working_dir {
-                let _ = self.open_pr_in_browser(&wd);
+                self.open_pr_in_browser(&wd);
             }
         }
     }
 
-    /// Open PR in browser for the given working directory
-    fn open_pr_in_browser(&self, working_dir: &std::path::Path) -> anyhow::Result<()> {
+    /// Open PR in browser for the given working directory (fire-and-forget)
+    fn open_pr_in_browser(&self, working_dir: &std::path::Path) {
         use std::process::Command;
 
         // Use gh pr view --web to open PR in browser
-        let output = Command::new("gh")
+        // Fire-and-forget: spawn without waiting to avoid blocking UI
+        let _ = Command::new("gh")
             .arg("pr")
             .arg("view")
             .arg("--web")
             .current_dir(working_dir)
-            .output();
-
-        match output {
-            Ok(o) if o.status.success() => Ok(()),
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                anyhow::bail!("Failed to open PR: {}", stderr)
-            }
-            Err(e) => anyhow::bail!("Failed to run gh: {}", e),
-        }
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 
     /// Handle click in model selector dialog

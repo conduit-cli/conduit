@@ -20,6 +20,8 @@ pub struct TabBar {
     can_add: bool,
     focused: bool,
     /// PR numbers for each tab (None = no PR)
+    /// TODO: Remove if sidebar PR display is not implemented, or use for future tab tooltip
+    #[allow(dead_code)]
     pr_numbers: Vec<Option<u32>>,
     /// Whether each tab is currently processing (agent working)
     processing_flags: Vec<bool>,
@@ -82,8 +84,6 @@ impl TabBar {
             let is_active = i == self.active;
             let is_processing = self.processing_flags.get(i).copied().unwrap_or(false);
             let needs_attention = self.attention_flags.get(i).copied().unwrap_or(false);
-            // PR number kept for future use (e.g., sidebar), but display moved to status bar
-            let _pr_number = self.pr_numbers.get(i).copied().flatten();
 
             // Base style for active tabs (with background)
             let active_bg_style = if is_active {

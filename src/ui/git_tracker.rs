@@ -186,6 +186,8 @@ impl GitTracker {
     }
 
     /// Check git status for all tracked workspaces
+    ///
+    /// TODO: Consider parallel polling with join_all for many workspaces
     async fn poll_git_status(&mut self) {
         let workspace_ids: Vec<_> = self.workspaces.keys().copied().collect();
 

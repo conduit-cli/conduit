@@ -26,6 +26,7 @@ pub enum SidebarGitDisplay {
 }
 
 /// Current sidebar git display mode (toggle via constant for now)
+/// TODO: Make configurable at runtime via TreeViewState if user-toggle is desired
 pub const SIDEBAR_GIT_DISPLAY: SidebarGitDisplay = SidebarGitDisplay::InlineStats;
 
 /// Type of action for action nodes

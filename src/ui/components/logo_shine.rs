@@ -200,6 +200,9 @@ impl LogoShineAnimation {
     }
 
     /// Render a single line with shine effect
+    ///
+    /// Note: Creates a Span per character for gradient coloring. This allocates
+    /// frequently but is acceptable for the small logo (~70 chars × 7 lines).
     fn render_line(&self, y: usize, line: &str) -> Line<'static> {
         let spans: Vec<Span> = line
             .chars()
