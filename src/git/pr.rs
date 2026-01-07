@@ -57,17 +57,17 @@ impl CheckStatus {
 
     /// Parse from gh pr view statusCheckRollup
     /// Handles both CheckRun (status/conclusion) and StatusContext (state) entries
-    fn from_check_runs(runs: &[GhCheckRun]) -> Self {
+    fn from_status_checks(checks: &[GhStatusCheck]) -> Self {
         let mut passed = 0;
         let mut failed = 0;
         let mut pending = 0;
         let mut skipped = 0;
 
-        for run in runs {
+        for check in checks {
             // Check if this is a StatusContext (uses state field) vs CheckRun (uses status/conclusion)
-            if !run.state.is_empty() {
+            if !check.state.is_empty() {
                 // StatusContext: uses state field directly
-                match run.state.to_uppercase().as_str() {
+                match check.state.to_uppercase().as_str() {
                     "SUCCESS" => passed += 1,
                     "PENDING" | "EXPECTED" => pending += 1,
                     "FAILURE" | "ERROR" => failed += 1,
@@ -75,8 +75,8 @@ impl CheckStatus {
                 }
             } else {
                 // CheckRun: uses status/conclusion fields
-                match run.status.to_uppercase().as_str() {
-                    "COMPLETED" => match run.conclusion.to_uppercase().as_str() {
+                match check.status.to_uppercase().as_str() {
+                    "COMPLETED" => match check.conclusion.to_uppercase().as_str() {
                         "SUCCESS" => passed += 1,
                         "FAILURE" => failed += 1,
                         "SKIPPED" => skipped += 1,
@@ -88,7 +88,7 @@ impl CheckStatus {
         }
 
         Self {
-            total: runs.len(),
+            total: checks.len(),
             passed,
             failed,
             pending,
@@ -216,16 +216,19 @@ pub struct PrPreflightResult {
     pub existing_pr: Option<PrStatus>,
 }
 
-/// JSON structure for a single check run from statusCheckRollup
+/// JSON structure for a single status check from statusCheckRollup
 /// Can be either a CheckRun (uses status/conclusion) or a StatusContext (uses state)
+///
+/// Type discrimination: StatusContext entries have a non-empty `state` field,
+/// while CheckRun entries use `status`/`conclusion` with an empty `state`.
 #[derive(Debug, Deserialize)]
-struct GhCheckRun {
+struct GhStatusCheck {
     #[serde(default)]
     status: String, // "COMPLETED", "IN_PROGRESS", "QUEUED" (for CheckRun)
     #[serde(default)]
     conclusion: String, // "SUCCESS", "FAILURE", "SKIPPED", "" (for CheckRun)
     #[serde(default)]
-    state: String, // "SUCCESS", "PENDING", "FAILURE", "ERROR" (for StatusContext)
+    state: String, // "SUCCESS", "PENDING", "EXPECTED", "FAILURE", "ERROR" (for StatusContext)
 }
 
 /// JSON structure returned by `gh pr view --json`
@@ -239,9 +242,9 @@ struct GhPrView {
     #[serde(rename = "mergedAt")]
     merged_at: Option<String>,
     title: String,
-    /// CI check runs
+    /// CI status checks (can be CheckRun or StatusContext entries)
     #[serde(rename = "statusCheckRollup", default)]
-    status_check_rollup: Vec<GhCheckRun>,
+    status_check_rollup: Vec<GhStatusCheck>,
     /// Merge conflict status: "MERGEABLE", "CONFLICTING", "UNKNOWN"
     #[serde(default)]
     mergeable: String,
@@ -429,7 +432,7 @@ impl PrManager {
         let json_str = String::from_utf8_lossy(&output.stdout);
         if let Ok(pr) = serde_json::from_str::<GhPrView>(&json_str) {
             let state = PrState::from_gh_json(&pr.state, pr.is_draft, pr.merged_at.as_deref());
-            let checks = CheckStatus::from_check_runs(&pr.status_check_rollup);
+            let checks = CheckStatus::from_status_checks(&pr.status_check_rollup);
             let mergeable = MergeableStatus::from_gh_json(&pr.mergeable);
             let review_decision = ReviewDecision::from_gh_json(&pr.review_decision);
             let merge_readiness = MergeReadiness::compute(&checks, mergeable, review_decision);
