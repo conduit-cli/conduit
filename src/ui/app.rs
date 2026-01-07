@@ -640,8 +640,17 @@ impl App {
         }
 
         // Tick logo shine animation every 3 frames (~50ms for smooth diagonal sweep)
+        // Only tick when splash screen is visible (no sessions open)
+        let splash_visible = self.state.tab_manager.is_empty();
         if self.state.tick_count.is_multiple_of(3) {
-            self.state.logo_shine.tick();
+            if splash_visible {
+                // Reset animation when transitioning back to splash screen
+                if !self.state.was_splash_visible {
+                    self.state.logo_shine.reset();
+                }
+                self.state.logo_shine.tick();
+            }
+            self.state.was_splash_visible = splash_visible;
         }
 
         // Clear stale double-press state and messages

@@ -189,6 +189,8 @@ pub struct AppState {
     pub last_esc_press: Option<Instant>,
     /// Logo shine animation for splash screen
     pub logo_shine: LogoShineAnimation,
+    /// Track if splash screen was visible (for resetting shine animation)
+    pub was_splash_visible: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +243,7 @@ impl AppState {
             last_ctrl_c_press: None,
             last_esc_press: None,
             logo_shine: LogoShineAnimation::new(),
+            was_splash_visible: true, // Start on splash screen
         }
     }
 

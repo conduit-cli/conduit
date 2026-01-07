@@ -109,6 +109,14 @@ impl LogoShineAnimation {
         self
     }
 
+    /// Reset the animation to show shine after ~1 second delay
+    /// Call this when transitioning back to the splash screen
+    pub fn reset(&mut self) {
+        let initial_delay = 20; // ~1 second at 50ms per tick
+        self.interval_frames = rand::rng().random_range(self.min_interval..=self.max_interval);
+        self.frame = self.sweep_frames + self.interval_frames - initial_delay;
+    }
+
     /// Advance the animation by one tick
     pub fn tick(&mut self) {
         let total_frames = self.sweep_frames + self.interval_frames;
