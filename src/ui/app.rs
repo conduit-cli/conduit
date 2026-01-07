@@ -1109,6 +1109,7 @@ impl App {
                     self.state.input_mode = InputMode::SidebarNavigation;
                 } else {
                     self.sync_sidebar_to_active_tab();
+                    self.sync_footer_spinner();
                 }
             }
             Action::NextTab => {
@@ -2459,6 +2460,7 @@ impl App {
         // Check if there's already a tab with this workspace - switch to it
         if let Some(existing_index) = self.find_tab_for_workspace(workspace_id) {
             self.state.tab_manager.switch_to(existing_index);
+            self.sync_footer_spinner();
             if close_sidebar {
                 self.state.sidebar_state.hide();
                 self.state.input_mode = InputMode::Normal;
@@ -2709,8 +2711,8 @@ impl App {
             if self.state.footer_spinner.is_none() {
                 self.state.start_footer_spinner(None);
             }
-        } else {
-            // Stop spinner if active tab is not processing
+        } else if self.state.footer_spinner.is_some() {
+            // Stop spinner if active tab is not processing and spinner is running
             self.state.stop_footer_spinner();
         }
     }
@@ -3066,6 +3068,7 @@ impl App {
         self.state
             .tab_manager
             .switch_to(tab_count.saturating_sub(1));
+        self.sync_footer_spinner();
 
         Ok(())
     }
@@ -3657,6 +3660,7 @@ impl App {
                 // Clicked on this tab
                 self.state.tab_manager.switch_to(i);
                 self.sync_sidebar_to_active_tab();
+                self.sync_footer_spinner();
                 return;
             }
             current_x += tab_width;
