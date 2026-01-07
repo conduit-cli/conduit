@@ -56,11 +56,15 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-p", Action::ToggleMetrics);
     bind(&mut config.global, "M-g", Action::DumpDebugState);
 
-    // Agent mode toggle (Build/Plan) - Ctrl+Backspace
-    config.global.insert(
-        KeyCombo::new(KeyCode::Backspace, KeyModifiers::CONTROL),
-        Action::ToggleAgentMode,
-    );
+    // Agent mode toggle (Build/Plan) - Ctrl+\
+    //
+    // Terminal compatibility notes:
+    // - Most terminals send Ctrl+\ as Ctrl+4 (ASCII 0x1C, the file separator character)
+    // - Ctrl+Backspace is often sent as Ctrl+H (same as regular backspace)
+    // - Use `conduit debug-keys` to verify how your terminal reports key combinations
+    // - Tested terminals: iTerm2 (macOS), Terminal.app (macOS), Ghostty (macOS)
+    // - Users can override this binding in their config if their terminal differs
+    bind(&mut config.global, "C-4", Action::ToggleAgentMode);
 
     // Alt+Shift for scrolling (M-S-j = Alt+Shift+J)
     bind(&mut config.global, "M-S-j", Action::ScrollDown(1));
@@ -548,4 +552,29 @@ pub fn default_keybindings() -> KeybindingConfig {
     );
 
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ctrl_4_bound_to_toggle_agent_mode() {
+        let config = default_keybindings();
+
+        // Ctrl+\ shows as Ctrl+4 in terminals
+        let key_combo: KeyCombo = "C-4".parse().expect("Should parse C-4");
+
+        // Should be in global bindings
+        let action = config.global.get(&key_combo);
+        assert!(
+            action.is_some(),
+            "Ctrl+4 should be bound in global keybindings"
+        );
+        assert!(
+            matches!(action, Some(Action::ToggleAgentMode)),
+            "Ctrl+4 should be bound to ToggleAgentMode, got {:?}",
+            action
+        );
+    }
 }

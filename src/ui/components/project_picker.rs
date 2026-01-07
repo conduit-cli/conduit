@@ -457,4 +457,88 @@ mod tests {
         state.delete_char();
         assert_eq!(state.list.search.input, "");
     }
+
+    #[test]
+    fn test_project_picker_cursor_position_after_delete() {
+        let mut state = ProjectPickerState::new();
+
+        // Type "abc"
+        state.insert_char('a');
+        state.insert_char('b');
+        state.insert_char('c');
+        assert_eq!(state.list.search.cursor, 3);
+
+        // Delete should move cursor back
+        state.delete_char();
+        assert_eq!(state.list.search.input, "ab");
+        assert_eq!(state.list.search.cursor, 2);
+
+        state.delete_char();
+        assert_eq!(state.list.search.input, "a");
+        assert_eq!(state.list.search.cursor, 1);
+
+        state.delete_char();
+        assert_eq!(state.list.search.input, "");
+        assert_eq!(state.list.search.cursor, 0);
+
+        // Delete on empty should keep cursor at 0
+        state.delete_char();
+        assert_eq!(state.list.search.cursor, 0);
+    }
+
+    #[test]
+    fn test_project_picker_mid_string_deletion() {
+        let mut state = ProjectPickerState::new();
+
+        // Type "abc"
+        state.insert_char('a');
+        state.insert_char('b');
+        state.insert_char('c');
+        assert_eq!(state.list.search.input, "abc");
+        assert_eq!(state.list.search.cursor, 3);
+
+        // Move cursor to middle (after 'a')
+        state.move_cursor_start();
+        assert_eq!(state.list.search.cursor, 0);
+
+        state.move_cursor_right();
+        assert_eq!(state.list.search.cursor, 1);
+
+        // Delete should remove 'a' (char before cursor), leaving "bc"
+        state.delete_char();
+        assert_eq!(state.list.search.input, "bc");
+        assert_eq!(state.list.search.cursor, 0);
+    }
+
+    #[test]
+    fn test_project_picker_ascii_only() {
+        // Note: The TextInputState uses byte-based cursor positioning, which means
+        // multi-byte UTF-8 characters (like 'é' or emoji) are not fully supported.
+        // This test verifies ASCII characters work correctly.
+        let mut state = ProjectPickerState::new();
+
+        // Type ASCII characters
+        state.insert_char('h');
+        state.insert_char('e');
+        state.insert_char('l');
+        state.insert_char('l');
+        state.insert_char('o');
+        assert_eq!(state.list.search.input, "hello");
+        assert_eq!(state.list.search.cursor, 5);
+
+        // Delete 'o'
+        state.delete_char();
+        assert_eq!(state.list.search.input, "hell");
+        assert_eq!(state.list.search.cursor, 4);
+
+        // Delete back to 'e'
+        state.delete_char();
+        state.delete_char();
+        assert_eq!(state.list.search.input, "he");
+        assert_eq!(state.list.search.cursor, 2);
+
+        state.delete_char();
+        assert_eq!(state.list.search.input, "h");
+        assert_eq!(state.list.search.cursor, 1);
+    }
 }

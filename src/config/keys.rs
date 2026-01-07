@@ -670,4 +670,25 @@ mod tests {
             "Normal mode with RawEvents view should use RawEvents context"
         );
     }
+
+    #[test]
+    fn test_ctrl_4_from_key_event() {
+        use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
+
+        // Simulate Ctrl+4 key event (Ctrl+\ in terminals)
+        let event = KeyEvent {
+            code: KeyCode::Char('4'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        let combo = KeyCombo::from_key_event(&event);
+
+        // Should match the parsed "C-4" notation
+        let parsed = parse_key_notation("C-4").unwrap();
+        assert_eq!(
+            combo, parsed,
+            "Ctrl+4 from key event should match parsed C-4"
+        );
+    }
 }

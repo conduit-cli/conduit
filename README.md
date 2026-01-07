@@ -55,8 +55,11 @@ conduit debug-keys
 | `Ctrl+T` | Toggle sidebar |
 | `Ctrl+G` | Toggle view mode (Chat/Raw Events) |
 | `Ctrl+O` | Show model selector |
+| `Ctrl+\` | Toggle Build/Plan mode (Claude only)* |
 | `Alt+I` | Import session |
 | `?` or `:help` | Show help |
+
+\* **Note on `Ctrl+\`**: Terminal emulators vary in how they report this key combination. Some terminals send it as `Ctrl+4`. Use `conduit debug-keys` to verify how your terminal reports this shortcut. If it doesn't work, you can customize the keybinding in your config.
 
 ## Architecture
 

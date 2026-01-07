@@ -3609,15 +3609,79 @@ impl App {
 
     /// Handle click in status bar area
     fn handle_status_bar_click(&mut self, x: u16, _y: u16, status_bar_area: Rect) {
-        // Status bar format: "agent │ model │ status"
-        // Click on agent or model portion to open model selector
+        // Status bar format (Claude): "  Build  ModelName Agent"
+        // Status bar format (Codex):  "  ModelName Agent"
+        //
+        // Layout with positions:
+        // - 2 chars: leading spaces
+        // - For Claude: 5 chars ("Build") or 4 chars ("Plan") + 2 chars separator
+        // - Model name (variable length)
+        // - 1 char space + Agent name
+
         let relative_x = x.saturating_sub(status_bar_area.x) as usize;
 
-        // Approximate positions - agent type is ~6 chars, separator is 3, model starts around 9
-        // Click on either agent tag (0-8) or model area (9-25) opens the model selector
-        if relative_x < 25 {
-            if let Some(session) = self.state.tab_manager.active_session() {
-                self.state.model_selector_state.show(session.model.clone());
+        // Extract info from session in a limited scope
+        let (is_claude, mode_width, model_width, agent_width, model) = {
+            let Some(session) = self.state.tab_manager.active_session() else {
+                return;
+            };
+
+            let is_claude = session.agent_type == AgentType::Claude;
+            let mode_width = if is_claude {
+                session.agent_mode.display_name().len()
+            } else {
+                0
+            };
+
+            // Calculate model display name
+            let model_id = session
+                .model
+                .clone()
+                .unwrap_or_else(|| crate::agent::ModelRegistry::default_model(session.agent_type));
+            let model_display =
+                crate::agent::ModelRegistry::find_model(session.agent_type, &model_id)
+                    .map(|m| m.display_name.to_string())
+                    .unwrap_or(model_id);
+            let model_width = model_display.len();
+
+            let agent_display = session.agent_type.display_name();
+            let agent_width = agent_display.len();
+            let model = session.model.clone();
+
+            (is_claude, mode_width, model_width, agent_width, model)
+        };
+
+        // Calculate positions with 1 char padding on each side
+        // Leading spaces: 2 chars
+        let leading: usize = 2;
+
+        if is_claude {
+            // Mode area: leading + mode_width (with 1 char padding each side)
+            let mode_start = leading.saturating_sub(1); // 1 char before
+            let mode_end = leading + mode_width + 1; // 1 char after
+
+            // Model/Agent area starts after mode + 2 char separator
+            let model_start = leading + mode_width + 2 - 1; // 1 char before model
+            let model_end = leading + mode_width + 2 + model_width + 1 + agent_width + 1; // 1 char after agent
+
+            if relative_x >= mode_start && relative_x < mode_end {
+                // Click on mode area - toggle mode
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session.agent_mode = session.agent_mode.toggle();
+                    session.update_status();
+                }
+            } else if relative_x >= model_start && relative_x < model_end {
+                // Click on model/agent area - open model selector
+                self.state.model_selector_state.show(model);
+                self.state.input_mode = InputMode::SelectingModel;
+            }
+        } else {
+            // Codex: no mode area, just model/agent
+            let model_start = leading.saturating_sub(1); // 1 char before model
+            let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
+
+            if relative_x >= model_start && relative_x < model_end {
+                self.state.model_selector_state.show(model);
                 self.state.input_mode = InputMode::SelectingModel;
             }
         }
