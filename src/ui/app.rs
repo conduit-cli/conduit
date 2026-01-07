@@ -865,6 +865,7 @@ impl App {
 
         // First-time splash screen handling (only when no dialogs are visible)
         if self.state.show_first_time_splash
+            && !self.state.command_palette_state.is_visible()
             && !self.state.base_dir_dialog_state.is_visible()
             && !self.state.project_picker_state.is_visible()
             && !self.state.add_repo_dialog_state.is_visible()
@@ -896,7 +897,7 @@ impl App {
         }
 
         // Handle Ctrl+N and Ctrl+P when tabs are empty (works from any input mode)
-        if self.state.tab_manager.is_empty() {
+        if self.state.tab_manager.is_empty() && !self.state.command_palette_state.is_visible() {
             let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
                 || matches!(key.code, KeyCode::Char('\x0e')); // ASCII 14 = Ctrl+N
