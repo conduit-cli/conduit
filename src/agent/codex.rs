@@ -78,15 +78,17 @@ impl CodexCliRunner {
         }
 
         // Now add positional arguments: resume/prompt
+        // Use "--" to signal end of flags, so prompts starting with "-" (like "- [ ] task")
+        // are not interpreted as CLI arguments
         if let Some(session_id) = &config.resume_session {
-            // Resume existing session: exec [flags] resume <session_id> [prompt]
+            // Resume existing session: exec [flags] resume <session_id> -- [prompt]
             cmd.arg("resume").arg(session_id.as_str());
             if !config.prompt.is_empty() {
-                cmd.arg(&config.prompt);
+                cmd.arg("--").arg(&config.prompt);
             }
         } else {
-            // New session: exec [flags] <prompt>
-            cmd.arg(&config.prompt);
+            // New session: exec [flags] -- <prompt>
+            cmd.arg("--").arg(&config.prompt);
         }
 
         // Working directory
@@ -578,5 +580,130 @@ impl AgentRunner for CodexCliRunner {
         } else {
             Self::find_binary()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_command_args(cmd: &Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_prompt_starting_with_dash_is_escaped() {
+        let runner = CodexCliRunner {
+            binary_path: PathBuf::from("/usr/bin/codex"),
+        };
+        let config = AgentStartConfig::new(
+            "- [ ] Try to understand the source of this error",
+            PathBuf::from("/tmp"),
+        );
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Find the position of "--" and verify the prompt comes after it
+        let double_dash_pos = args.iter().position(|a| a == "--");
+        assert!(
+            double_dash_pos.is_some(),
+            "Command should contain '--' separator. Args: {:?}",
+            args
+        );
+
+        let prompt_pos = args
+            .iter()
+            .position(|a| a == "- [ ] Try to understand the source of this error");
+        assert!(
+            prompt_pos.is_some(),
+            "Command should contain the prompt. Args: {:?}",
+            args
+        );
+
+        assert!(
+            prompt_pos.unwrap() > double_dash_pos.unwrap(),
+            "Prompt should come after '--' separator. Args: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn test_prompt_without_dash_still_works() {
+        let runner = CodexCliRunner {
+            binary_path: PathBuf::from("/usr/bin/codex"),
+        };
+        let config = AgentStartConfig::new("Hello, can you help me?", PathBuf::from("/tmp"));
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Should still contain "--" for consistency
+        assert!(
+            args.contains(&"--".to_string()),
+            "Command should contain '--' separator. Args: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"Hello, can you help me?".to_string()),
+            "Command should contain the prompt. Args: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn test_resume_session_with_dash_prompt() {
+        let runner = CodexCliRunner {
+            binary_path: PathBuf::from("/usr/bin/codex"),
+        };
+        let config = AgentStartConfig::new("- continue with this task", PathBuf::from("/tmp"))
+            .with_resume(SessionId::from_string("session-123".to_string()));
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Check command structure: ... resume session-123 -- "- continue..."
+        let resume_pos = args.iter().position(|a| a == "resume");
+        let session_pos = args.iter().position(|a| a == "session-123");
+        let double_dash_pos = args.iter().position(|a| a == "--");
+        let prompt_pos = args.iter().position(|a| a == "- continue with this task");
+
+        assert!(
+            resume_pos.is_some(),
+            "Should contain 'resume'. Args: {:?}",
+            args
+        );
+        assert!(
+            session_pos.is_some(),
+            "Should contain session ID. Args: {:?}",
+            args
+        );
+        assert!(
+            double_dash_pos.is_some(),
+            "Should contain '--'. Args: {:?}",
+            args
+        );
+        assert!(
+            prompt_pos.is_some(),
+            "Should contain prompt. Args: {:?}",
+            args
+        );
+
+        // Verify order: resume < session_id < -- < prompt
+        assert!(
+            resume_pos.unwrap() < session_pos.unwrap(),
+            "'resume' should come before session ID"
+        );
+        assert!(
+            session_pos.unwrap() < double_dash_pos.unwrap(),
+            "session ID should come before '--'"
+        );
+        assert!(
+            double_dash_pos.unwrap() < prompt_pos.unwrap(),
+            "'--' should come before prompt"
+        );
     }
 }
