@@ -695,12 +695,14 @@ impl SidebarData {
     }
 
     /// Update branch name for a workspace by its ID
-    pub fn update_workspace_branch(&mut self, workspace_id: Uuid, branch: String) {
+    ///
+    /// Pass `None` to clear the branch (e.g., for detached HEAD state)
+    pub fn update_workspace_branch(&mut self, workspace_id: Uuid, branch: Option<String>) {
         for node in &mut self.nodes {
             if node.node_type == NodeType::Repository {
                 for child in &mut node.children {
                     if child.id == workspace_id && child.node_type == NodeType::Workspace {
-                        child.suffix = Some(branch);
+                        child.suffix = branch;
                         return;
                     }
                 }

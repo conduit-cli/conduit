@@ -43,7 +43,11 @@ struct WorkspaceGitState {
 /// Updates sent from background tracker to UI
 #[derive(Debug, Clone)]
 pub enum GitTrackerUpdate {
-    /// PR status changed for a workspace (None means PR was removed/closed)
+    /// PR status changed for a workspace.
+    ///
+    /// `None` indicates PR status is unavailable (e.g., `gh` command failed or
+    /// network error). To distinguish between "no PR exists" and "status unavailable",
+    /// consumers should check `PrStatus.exists` when status is `Some`.
     PrStatusChanged {
         workspace_id: Uuid,
         status: Option<PrStatus>,
@@ -261,7 +265,8 @@ impl GitTracker {
                 if pr_changed {
                     state.pr_status = new_pr_status.clone();
                     state.last_pr_check = Some(Instant::now());
-                    // Always send update (including None to clear PR badge)
+                    // Send update: None means status unavailable (gh failed),
+                    // Some with exists=false means no PR, Some with exists=true means PR exists
                     let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
                         workspace_id,
                         status: new_pr_status,
@@ -319,7 +324,8 @@ impl GitTracker {
             branch: new_branch,
         });
 
-        // Always send PR update (including None to clear)
+        // Send PR update: None means status unavailable (gh failed),
+        // Some with exists=false means no PR, Some with exists=true means PR exists
         let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
             workspace_id,
             status: new_pr_status,

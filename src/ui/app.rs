@@ -4256,12 +4256,10 @@ impl App {
                         session.status_bar.set_branch_name(branch.clone());
                     }
                 }
-                // Also update sidebar data if branch is Some
-                if let Some(ref b) = branch {
-                    self.state
-                        .sidebar_data
-                        .update_workspace_branch(workspace_id, b.clone());
-                }
+                // Always update sidebar data (including None for detached HEAD)
+                self.state
+                    .sidebar_data
+                    .update_workspace_branch(workspace_id, branch);
             }
         }
     }
