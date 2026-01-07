@@ -85,8 +85,11 @@ impl LogoShineAnimation {
         let max_interval = 300; // ~5 seconds
         let interval_frames = rand::rng().random_range(min_interval..=max_interval);
 
+        // Start with a short delay (~1 second) before first shine so users see it quickly
+        let initial_delay = 20; // ~1 second at 50ms per tick
+
         Self {
-            frame: sweep_frames, // Start in interval phase (not shining)
+            frame: sweep_frames + interval_frames - initial_delay, // Start near end of interval
             sweep_frames,
             interval_frames,
             min_interval,
