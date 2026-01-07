@@ -3460,7 +3460,9 @@ impl App {
         // Check status bar
         if let Some(status_bar_area) = self.state.status_bar_area {
             if Self::point_in_rect(x, y, status_bar_area) {
-                self.handle_status_bar_click(x, y, status_bar_area);
+                if let Some(effect) = self.handle_status_bar_click(x, y, status_bar_area) {
+                    effects.push(effect);
+                }
                 return Ok(effects);
             }
         }
@@ -3662,7 +3664,12 @@ impl App {
     }
 
     /// Handle click in status bar area
-    fn handle_status_bar_click(&mut self, x: u16, _y: u16, status_bar_area: Rect) {
+    fn handle_status_bar_click(
+        &mut self,
+        x: u16,
+        _y: u16,
+        status_bar_area: Rect,
+    ) -> Option<Effect> {
         // Status bar format (Claude): "  Build  ModelName Agent"
         // Status bar format (Codex):  "  ModelName Agent"
         //
@@ -3676,9 +3683,7 @@ impl App {
 
         // Extract info from session in a limited scope
         let (is_claude, mode_width, model_width, agent_width, model) = {
-            let Some(session) = self.state.tab_manager.active_session() else {
-                return;
-            };
+            let session = self.state.tab_manager.active_session()?;
 
             let is_claude = session.agent_type == AgentType::Claude;
             let mode_width = if is_claude {
@@ -3741,62 +3746,54 @@ impl App {
         }
 
         // Check for PR badge click on the right side
-        self.check_pr_badge_click(x, status_bar_area);
+        self.check_pr_badge_click(x, status_bar_area)
     }
 
-    /// Check if click is on the PR badge and open PR in browser if so
-    fn check_pr_badge_click(&mut self, x: u16, status_bar_area: Rect) {
+    /// Check if click is on the PR badge and return an effect to open PR in browser
+    fn check_pr_badge_click(&self, x: u16, status_bar_area: Rect) -> Option<Effect> {
         // Get PR info and calculate right content width from current session
-        let (working_dir, right_content_width, pr_badge_width) = {
-            let Some(session) = self.state.tab_manager.active_session() else {
-                return;
-            };
+        let session = self.state.tab_manager.active_session()?;
 
-            let wd = session.working_dir.clone();
+        let working_dir = session.working_dir.clone()?;
 
-            // If no PR, nothing to click
-            let Some(num) = session.pr_number else {
-                return;
-            };
+        // If no PR, nothing to click
+        let num = session.pr_number?;
 
-            // Calculate PR badge width: " PR #N " = 5 + digits + 1
-            let badge_width = 5 + num.to_string().len() + 1;
+        // Calculate PR badge width: " PR #N " = 5 + digits + 1
+        let pr_badge_width = 5 + num.to_string().len() + 1;
 
-            // Calculate total right content width to find where it starts
-            // Format: [PR badge] [· +N -M] [· branch] [  ]
-            let mut total_width = badge_width;
+        // Calculate total right content width to find where it starts
+        // Format: [PR badge] [· +N -M] [· branch] [  ]
+        let mut right_content_width = pr_badge_width;
 
-            // Git stats (if any)
-            let stats = session.status_bar.git_diff_stats();
-            if stats.has_changes() {
-                total_width += 3; // " · "
-                if stats.additions > 0 {
-                    total_width += 1 + stats.additions.to_string().len(); // "+N"
-                }
-                if stats.additions > 0 && stats.deletions > 0 {
-                    total_width += 1; // " "
-                }
-                if stats.deletions > 0 {
-                    total_width += 1 + stats.deletions.to_string().len(); // "-N"
-                }
+        // Git stats (if any)
+        let stats = session.status_bar.git_diff_stats();
+        if stats.has_changes() {
+            right_content_width += 3; // " · "
+            if stats.additions > 0 {
+                right_content_width += 1 + stats.additions.to_string().len(); // "+N"
             }
-
-            // Branch name
-            if let Some(branch) = session.status_bar.branch_name() {
-                total_width += 3; // " · "
-                total_width += branch.len();
+            if stats.additions > 0 && stats.deletions > 0 {
+                right_content_width += 1; // " "
             }
+            if stats.deletions > 0 {
+                right_content_width += 1 + stats.deletions.to_string().len(); // "-N"
+            }
+        }
 
-            // Trailing padding
-            total_width += 2;
+        // Branch name
+        if let Some(branch) = session.status_bar.branch_name() {
+            right_content_width += 3; // " · "
+            right_content_width += branch.len();
+        }
 
-            (wd, total_width, badge_width)
-        };
+        // Trailing padding
+        right_content_width += 2;
 
         // Calculate where right content starts
         let status_width = status_bar_area.width as usize;
         if right_content_width > status_width {
-            return; // Content doesn't fit
+            return None; // Content doesn't fit
         }
 
         let right_start_x = status_bar_area.x + (status_width - right_content_width) as u16;
@@ -3804,27 +3801,10 @@ impl App {
 
         // Check if click is within PR badge
         if x >= right_start_x && x < pr_badge_end_x {
-            if let Some(wd) = working_dir {
-                self.open_pr_in_browser(&wd);
-            }
+            Some(Effect::OpenPrInBrowser { working_dir })
+        } else {
+            None
         }
-    }
-
-    /// Open PR in browser for the given working directory (fire-and-forget)
-    fn open_pr_in_browser(&self, working_dir: &std::path::Path) {
-        use std::process::Command;
-
-        // Use gh pr view --web to open PR in browser
-        // Fire-and-forget: spawn without waiting to avoid blocking UI
-        let _ = Command::new("gh")
-            .arg("pr")
-            .arg("view")
-            .arg("--web")
-            .current_dir(working_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
     }
 
     /// Handle click in model selector dialog
