@@ -56,6 +56,7 @@ impl CheckStatus {
     }
 
     /// Parse from gh pr view statusCheckRollup
+    /// Handles both CheckRun (status/conclusion) and StatusContext (state) entries
     fn from_check_runs(runs: &[GhCheckRun]) -> Self {
         let mut passed = 0;
         let mut failed = 0;
@@ -63,14 +64,26 @@ impl CheckStatus {
         let mut skipped = 0;
 
         for run in runs {
-            match run.status.to_uppercase().as_str() {
-                "COMPLETED" => match run.conclusion.to_uppercase().as_str() {
+            // Check if this is a StatusContext (uses state field) vs CheckRun (uses status/conclusion)
+            if !run.state.is_empty() {
+                // StatusContext: uses state field directly
+                match run.state.to_uppercase().as_str() {
                     "SUCCESS" => passed += 1,
-                    "FAILURE" => failed += 1,
-                    "SKIPPED" => skipped += 1,
+                    "PENDING" | "EXPECTED" => pending += 1,
+                    "FAILURE" | "ERROR" => failed += 1,
                     _ => pending += 1,
-                },
-                _ => pending += 1,
+                }
+            } else {
+                // CheckRun: uses status/conclusion fields
+                match run.status.to_uppercase().as_str() {
+                    "COMPLETED" => match run.conclusion.to_uppercase().as_str() {
+                        "SUCCESS" => passed += 1,
+                        "FAILURE" => failed += 1,
+                        "SKIPPED" => skipped += 1,
+                        _ => pending += 1,
+                    },
+                    _ => pending += 1,
+                }
             }
         }
 
@@ -204,12 +217,15 @@ pub struct PrPreflightResult {
 }
 
 /// JSON structure for a single check run from statusCheckRollup
+/// Can be either a CheckRun (uses status/conclusion) or a StatusContext (uses state)
 #[derive(Debug, Deserialize)]
 struct GhCheckRun {
     #[serde(default)]
-    status: String, // "COMPLETED", "IN_PROGRESS", "QUEUED"
+    status: String, // "COMPLETED", "IN_PROGRESS", "QUEUED" (for CheckRun)
     #[serde(default)]
-    conclusion: String, // "SUCCESS", "FAILURE", "SKIPPED", ""
+    conclusion: String, // "SUCCESS", "FAILURE", "SKIPPED", "" (for CheckRun)
+    #[serde(default)]
+    state: String, // "SUCCESS", "PENDING", "FAILURE", "ERROR" (for StatusContext)
 }
 
 /// JSON structure returned by `gh pr view --json`
