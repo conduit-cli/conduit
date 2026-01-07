@@ -19,6 +19,141 @@ pub enum PrState {
     Draft,
 }
 
+/// CI check state summary
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CheckState {
+    #[default]
+    None, // No checks configured
+    Pending, // Checks in progress
+    Passing, // All checks passed
+    Failing, // One or more checks failed
+}
+
+/// CI check status with counts
+#[derive(Debug, Clone, Default)]
+pub struct CheckStatus {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub pending: usize,
+    pub skipped: usize,
+}
+
+impl CheckStatus {
+    /// Get the overall check state
+    pub fn state(&self) -> CheckState {
+        if self.total == 0 {
+            CheckState::None
+        } else if self.failed > 0 {
+            CheckState::Failing
+        } else if self.pending > 0 {
+            CheckState::Pending
+        } else if self.passed > 0 {
+            CheckState::Passing
+        } else {
+            CheckState::None
+        }
+    }
+
+    /// Parse from gh pr view statusCheckRollup
+    fn from_check_runs(runs: &[GhCheckRun]) -> Self {
+        let mut passed = 0;
+        let mut failed = 0;
+        let mut pending = 0;
+        let mut skipped = 0;
+
+        for run in runs {
+            match run.status.to_uppercase().as_str() {
+                "COMPLETED" => match run.conclusion.to_uppercase().as_str() {
+                    "SUCCESS" => passed += 1,
+                    "FAILURE" => failed += 1,
+                    "SKIPPED" => skipped += 1,
+                    _ => pending += 1,
+                },
+                _ => pending += 1,
+            }
+        }
+
+        Self {
+            total: runs.len(),
+            passed,
+            failed,
+            pending,
+            skipped,
+        }
+    }
+}
+
+/// Merge conflict status from GitHub
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeableStatus {
+    #[default]
+    Unknown,
+    Mergeable,
+    Conflicting,
+}
+
+impl MergeableStatus {
+    fn from_gh_json(s: &str) -> Self {
+        match s.to_uppercase().as_str() {
+            "MERGEABLE" => Self::Mergeable,
+            "CONFLICTING" => Self::Conflicting,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Review decision status from GitHub
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReviewDecision {
+    #[default]
+    None,
+    Approved,
+    ReviewRequired,
+    ChangesRequested,
+}
+
+impl ReviewDecision {
+    fn from_gh_json(s: &str) -> Self {
+        match s.to_uppercase().as_str() {
+            "APPROVED" => Self::Approved,
+            "REVIEW_REQUIRED" => Self::ReviewRequired,
+            "CHANGES_REQUESTED" => Self::ChangesRequested,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Overall merge readiness
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeReadiness {
+    #[default]
+    Unknown,
+    Ready,        // Checks pass + no conflicts + approved
+    Blocked,      // Failing checks or missing approval
+    HasConflicts, // Merge conflicts present
+}
+
+impl MergeReadiness {
+    fn compute(checks: &CheckStatus, mergeable: MergeableStatus, review: ReviewDecision) -> Self {
+        // Conflicts take priority
+        if mergeable == MergeableStatus::Conflicting {
+            return Self::HasConflicts;
+        }
+
+        let checks_ok = matches!(checks.state(), CheckState::Passing | CheckState::None);
+        let review_ok = matches!(review, ReviewDecision::Approved | ReviewDecision::None);
+
+        if checks_ok && review_ok && mergeable == MergeableStatus::Mergeable {
+            Self::Ready
+        } else if mergeable == MergeableStatus::Unknown {
+            Self::Unknown
+        } else {
+            Self::Blocked
+        }
+    }
+}
+
 impl PrState {
     /// Parse from gh pr view JSON output
     pub fn from_gh_json(state: &str, is_draft: bool, merged_at: Option<&str>) -> Self {
@@ -45,6 +180,14 @@ pub struct PrStatus {
     pub url: Option<String>,
     pub state: PrState,
     pub title: Option<String>,
+    /// CI check status
+    pub checks: CheckStatus,
+    /// Merge conflict status
+    pub mergeable: MergeableStatus,
+    /// Review decision
+    pub review_decision: ReviewDecision,
+    /// Overall merge readiness
+    pub merge_readiness: MergeReadiness,
 }
 
 /// Result of preflight checks before PR creation
@@ -60,6 +203,15 @@ pub struct PrPreflightResult {
     pub existing_pr: Option<PrStatus>,
 }
 
+/// JSON structure for a single check run from statusCheckRollup
+#[derive(Debug, Deserialize)]
+struct GhCheckRun {
+    #[serde(default)]
+    status: String, // "COMPLETED", "IN_PROGRESS", "QUEUED"
+    #[serde(default)]
+    conclusion: String, // "SUCCESS", "FAILURE", "SKIPPED", ""
+}
+
 /// JSON structure returned by `gh pr view --json`
 #[derive(Debug, Deserialize)]
 struct GhPrView {
@@ -71,6 +223,15 @@ struct GhPrView {
     #[serde(rename = "mergedAt")]
     merged_at: Option<String>,
     title: String,
+    /// CI check runs
+    #[serde(rename = "statusCheckRollup", default)]
+    status_check_rollup: Vec<GhCheckRun>,
+    /// Merge conflict status: "MERGEABLE", "CONFLICTING", "UNKNOWN"
+    #[serde(default)]
+    mergeable: String,
+    /// Review decision: "APPROVED", "REVIEW_REQUIRED", "CHANGES_REQUESTED", ""
+    #[serde(rename = "reviewDecision", default)]
+    review_decision: String,
 }
 
 /// PR Manager for preflight checks and utilities
@@ -228,7 +389,7 @@ impl PrManager {
                 "pr",
                 "view",
                 "--json",
-                "number,url,state,isDraft,mergedAt,title",
+                "number,url,state,isDraft,mergedAt,title,statusCheckRollup,mergeable,reviewDecision",
             ])
             .current_dir(working_dir)
             .output()
@@ -242,18 +403,31 @@ impl PrManager {
                 url: None,
                 state: PrState::Unknown,
                 title: None,
+                checks: CheckStatus::default(),
+                mergeable: MergeableStatus::Unknown,
+                review_decision: ReviewDecision::None,
+                merge_readiness: MergeReadiness::Unknown,
             });
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
         if let Ok(pr) = serde_json::from_str::<GhPrView>(&json_str) {
             let state = PrState::from_gh_json(&pr.state, pr.is_draft, pr.merged_at.as_deref());
+            let checks = CheckStatus::from_check_runs(&pr.status_check_rollup);
+            let mergeable = MergeableStatus::from_gh_json(&pr.mergeable);
+            let review_decision = ReviewDecision::from_gh_json(&pr.review_decision);
+            let merge_readiness = MergeReadiness::compute(&checks, mergeable, review_decision);
+
             Some(PrStatus {
                 exists: true,
                 number: Some(pr.number),
                 url: Some(pr.url),
                 state,
                 title: Some(pr.title),
+                checks,
+                mergeable,
+                review_decision,
+                merge_readiness,
             })
         } else {
             Some(PrStatus {
@@ -262,6 +436,10 @@ impl PrManager {
                 url: None,
                 state: PrState::Unknown,
                 title: None,
+                checks: CheckStatus::default(),
+                mergeable: MergeableStatus::Unknown,
+                review_decision: ReviewDecision::None,
+                merge_readiness: MergeReadiness::Unknown,
             })
         }
     }

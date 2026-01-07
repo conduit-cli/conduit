@@ -11,7 +11,7 @@ use crate::agent::{
     events::{ContextWarningLevel, ContextWindowState},
     AgentMode, AgentType, ModelRegistry, SessionId, TokenUsage,
 };
-use crate::git::{GitDiffStats, PrState, PrStatus};
+use crate::git::{CheckState, GitDiffStats, MergeReadiness, MergeableStatus, PrState, PrStatus};
 use crate::ui::components::{
     ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, PR_CLOSED_BG, PR_DRAFT_BG,
     PR_MERGED_BG, PR_OPEN_BG, PR_UNKNOWN_BG, STATUS_BAR_BG, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED,
@@ -334,7 +334,7 @@ impl StatusBar {
     }
 
     /// Build project info spans for right side of status bar
-    /// New format: PR #123 · +44 -10 · feature-branch (or without PR if none)
+    /// New format: PR #123 ✓ · +44 -10 · feature-branch (or without PR if none)
     fn build_project_info_spans(&self) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
         let mut has_content = false;
@@ -343,19 +343,57 @@ impl StatusBar {
         if let Some(ref pr) = self.pr_status {
             if pr.exists {
                 if let Some(number) = pr.number {
+                    // For merged/closed PRs, use state-based coloring
+                    // For open PRs, use merge readiness-based coloring
                     let (bg_color, fg_color) = match pr.state {
-                        PrState::Open => (PR_OPEN_BG, Color::White),
                         PrState::Merged => (PR_MERGED_BG, Color::White),
                         PrState::Closed => (PR_CLOSED_BG, Color::White),
-                        PrState::Draft => (PR_DRAFT_BG, Color::White),
                         PrState::Unknown => (PR_UNKNOWN_BG, Color::White),
+                        _ => match pr.merge_readiness {
+                            MergeReadiness::Ready => (PR_OPEN_BG, Color::White),
+                            MergeReadiness::HasConflicts => (PR_CLOSED_BG, Color::White),
+                            MergeReadiness::Blocked => (PR_DRAFT_BG, Color::White),
+                            MergeReadiness::Unknown => match pr.state {
+                                PrState::Open => (PR_OPEN_BG, Color::White),
+                                PrState::Draft => (PR_DRAFT_BG, Color::White),
+                                _ => (PR_UNKNOWN_BG, Color::White),
+                            },
+                        },
                     };
 
-                    let badge = format!(" PR #{} ", number);
+                    // Build badge text with optional check indicator inside
+                    let check_indicator = if matches!(pr.state, PrState::Open | PrState::Draft) {
+                        match pr.checks.state() {
+                            CheckState::Passing => Some("✓"),
+                            CheckState::Pending => Some("⋯"),
+                            CheckState::Failing => Some("✗"),
+                            CheckState::None => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    let badge = if let Some(indicator) = check_indicator {
+                        format!(" PR #{} {} ", number, indicator)
+                    } else {
+                        format!(" PR #{} ", number)
+                    };
+
                     spans.push(Span::styled(
                         badge,
                         Style::default().bg(bg_color).fg(fg_color),
                     ));
+
+                    // Conflict indicator (shown outside badge)
+                    if matches!(pr.state, PrState::Open | PrState::Draft)
+                        && pr.mergeable == MergeableStatus::Conflicting
+                    {
+                        spans.push(Span::styled(
+                            " conflicts",
+                            Style::default().fg(ACCENT_ERROR),
+                        ));
+                    }
+
                     has_content = true;
                 }
             }
