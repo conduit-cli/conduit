@@ -270,6 +270,9 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "execute_command" => Some(Action::ExecuteCommand),
         "complete_command" => Some(Action::CompleteCommand),
 
+        // Command palette
+        "open_command_palette" => Some(Action::OpenCommandPalette),
+
         _ => None,
     }
 }
@@ -350,6 +353,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "cycle_import_filter",
     // Command mode
     "show_help",
+    // Command palette
+    "open_command_palette",
     // Aliases
     "help",
     "h",

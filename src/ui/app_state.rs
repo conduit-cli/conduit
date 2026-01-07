@@ -4,9 +4,10 @@ use std::time::{Duration, Instant};
 use ratatui::layout::Rect;
 
 use crate::ui::components::{
-    AddRepoDialogState, AgentSelectorState, BaseDirDialogState, ConfirmationDialogState,
-    ErrorDialogState, HelpDialogState, KnightRiderSpinner, LogoShineAnimation, ModelSelectorState,
-    ProjectPickerState, SessionImportPickerState, SidebarData, SidebarState,
+    AddRepoDialogState, AgentSelectorState, BaseDirDialogState, CommandPaletteState,
+    ConfirmationDialogState, ErrorDialogState, HelpDialogState, KnightRiderSpinner,
+    LogoShineAnimation, ModelSelectorState, ProjectPickerState, SessionImportPickerState,
+    SidebarData, SidebarState,
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
@@ -165,6 +166,7 @@ pub struct AppState {
     pub confirmation_dialog_state: ConfirmationDialogState,
     pub error_dialog_state: ErrorDialogState,
     pub help_dialog_state: HelpDialogState,
+    pub command_palette_state: CommandPaletteState,
     pub command_buffer: String,
     pub sidebar_area: Option<Rect>,
     pub tab_bar_area: Option<Rect>,
@@ -224,6 +226,7 @@ impl AppState {
             confirmation_dialog_state: ConfirmationDialogState::new(),
             error_dialog_state: ErrorDialogState::new(),
             help_dialog_state: HelpDialogState::new(),
+            command_palette_state: CommandPaletteState::new(),
             command_buffer: String::new(),
             sidebar_area: None,
             tab_bar_area: None,

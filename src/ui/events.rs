@@ -156,6 +156,8 @@ pub enum InputMode {
     ShowingHelp,
     /// Importing a session from external agent
     ImportingSession,
+    /// Command palette is open
+    CommandPalette,
 }
 
 /// View mode for the main content area

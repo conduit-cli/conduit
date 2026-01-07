@@ -180,6 +180,10 @@ pub enum Action {
     ExecuteCommand,
     /// Autocomplete command in command mode
     CompleteCommand,
+
+    // ========== Command Palette ==========
+    /// Open command palette
+    OpenCommandPalette,
 }
 
 impl Action {
@@ -283,6 +287,68 @@ impl Action {
             Action::ShowHelp => "Show help",
             Action::ExecuteCommand => "Execute command",
             Action::CompleteCommand => "Autocomplete command",
+
+            // Command palette
+            Action::OpenCommandPalette => "Command palette",
+        }
+    }
+
+    /// Returns true if this action opens a dialog/modal
+    pub fn opens_dialog(&self) -> bool {
+        matches!(
+            self,
+            Action::NewProject
+                | Action::ShowModelSelector
+                | Action::OpenSessionImport
+                | Action::ShowHelp
+                | Action::AddRepository
+                | Action::OpenSettings
+                | Action::OpenCommandPalette
+        )
+    }
+
+    /// Returns true if this action should appear in the command palette
+    pub fn show_in_palette(&self) -> bool {
+        matches!(
+            self,
+            // Global
+            Action::Quit
+                | Action::ToggleSidebar
+                | Action::NewProject
+                | Action::OpenPr
+                | Action::InterruptAgent
+                | Action::ToggleViewMode
+                | Action::ShowModelSelector
+                | Action::ToggleMetrics
+                | Action::DumpDebugState
+                // Tab management
+                | Action::CloseTab
+                | Action::NextTab
+                | Action::PrevTab
+                // Scrolling (page-level)
+                | Action::ScrollPageUp
+                | Action::ScrollPageDown
+                | Action::ScrollToTop
+                | Action::ScrollToBottom
+                // Sidebar
+                | Action::EnterSidebarMode
+                | Action::AddRepository
+                | Action::OpenSettings
+                | Action::ArchiveOrRemove
+                // Agent/Session
+                | Action::ToggleAgentMode
+                | Action::OpenSessionImport
+                | Action::ShowHelp
+        )
+    }
+
+    /// Get palette description (with "..." suffix for dialogs)
+    pub fn palette_description(&self) -> String {
+        let desc = self.description();
+        if self.opens_dialog() {
+            format!("{}...", desc)
+        } else {
+            desc.to_string()
         }
     }
 }

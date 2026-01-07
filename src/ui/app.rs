@@ -38,10 +38,10 @@ use crate::ui::app_state::{AppState, ScrollDragTarget};
 use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
     scrollbar_offset_from_point, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage,
-    ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection,
-    GlobalFooter, HelpDialog, MessageRole, ModelSelector, ProcessingState, ProjectPicker,
-    RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics, SessionImportPicker, Sidebar,
-    SidebarData, TabBar,
+    CommandPalette, ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog,
+    EventDirection, GlobalFooter, HelpDialog, MessageRole, ModelSelector, ProcessingState,
+    ProjectPicker, RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics,
+    SessionImportPicker, Sidebar, SidebarData, TabBar,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -871,6 +871,13 @@ impl App {
             && self.state.input_mode != InputMode::SelectingAgent
             && self.state.input_mode != InputMode::ShowingError
         {
+            // Handle Ctrl+P to open command palette
+            let is_ctrl_p = (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')))
+                || matches!(key.code, KeyCode::Char('\x10')); // ASCII 16 = Ctrl+P
+            if is_ctrl_p {
+                return self.execute_action(Action::OpenCommandPalette).await;
+            }
             // Handle Ctrl+N to add new project
             let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
@@ -888,7 +895,7 @@ impl App {
             }
         }
 
-        // Handle Ctrl+N for new project when tabs are empty (works from any input mode)
+        // Handle Ctrl+N and Ctrl+P when tabs are empty (works from any input mode)
         if self.state.tab_manager.is_empty() {
             let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
@@ -896,6 +903,15 @@ impl App {
 
             if is_ctrl_n {
                 return self.execute_action(Action::NewProject).await;
+            }
+
+            // Handle Ctrl+P for command palette
+            let is_ctrl_p = (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')))
+                || matches!(key.code, KeyCode::Char('\x10')); // ASCII 16 = Ctrl+P
+
+            if is_ctrl_p {
+                return self.execute_action(Action::OpenCommandPalette).await;
             }
         }
 
@@ -1253,6 +1269,9 @@ impl App {
                     InputMode::PickingProject => {
                         self.state.project_picker_state.delete_char();
                     }
+                    InputMode::CommandPalette => {
+                        self.state.command_palette_state.delete_char();
+                    }
                     _ => {
                         if let Some(session) = self.state.tab_manager.active_session_mut() {
                             session.input_box.backspace();
@@ -1375,6 +1394,9 @@ impl App {
                 InputMode::ImportingSession => {
                     self.state.session_import_state.select_next();
                 }
+                InputMode::CommandPalette => {
+                    self.state.command_palette_state.select_next();
+                }
                 _ => {}
             },
             Action::SelectPrev => match self.state.input_mode {
@@ -1396,6 +1418,9 @@ impl App {
                 }
                 InputMode::ImportingSession => {
                     self.state.session_import_state.select_prev();
+                }
+                InputMode::CommandPalette => {
+                    self.state.command_palette_state.select_prev();
                 }
                 _ => {}
             },
@@ -1566,6 +1591,17 @@ impl App {
                     self.state.error_dialog_state.hide();
                     self.state.input_mode = InputMode::Normal;
                 }
+                InputMode::CommandPalette => {
+                    if let Some(entry) = self.state.command_palette_state.selected_entry() {
+                        let action = entry.action.clone();
+                        self.state.command_palette_state.hide();
+                        self.state.input_mode = InputMode::Normal;
+                        // Execute the selected action (avoid recursion if it's Confirm)
+                        if !matches!(action, Action::Confirm | Action::OpenCommandPalette) {
+                            effects.extend(Box::pin(self.execute_action(action)).await?);
+                        }
+                    }
+                }
                 _ => {}
             },
             Action::Cancel => match self.state.input_mode {
@@ -1622,6 +1658,10 @@ impl App {
                 }
                 InputMode::ImportingSession => {
                     self.state.session_import_state.hide();
+                    self.state.input_mode = InputMode::Normal;
+                }
+                InputMode::CommandPalette => {
+                    self.state.command_palette_state.hide();
                     self.state.input_mode = InputMode::Normal;
                 }
                 _ => {}
@@ -1884,6 +1924,14 @@ impl App {
                 if self.state.input_mode == InputMode::Command {
                     self.complete_command();
                 }
+            }
+
+            // ========== Command Palette ==========
+            Action::OpenCommandPalette => {
+                self.state
+                    .command_palette_state
+                    .show(&self.config.keybindings);
+                self.state.input_mode = InputMode::CommandPalette;
             }
         }
 
@@ -2263,6 +2311,7 @@ impl App {
                 | KeyContext::Command
                 | KeyContext::HelpDialog
                 | KeyContext::SessionImport
+                | KeyContext::CommandPalette
         )
     }
 
@@ -2306,6 +2355,9 @@ impl App {
             }
             InputMode::ImportingSession => {
                 self.state.session_import_state.insert_char(c);
+            }
+            InputMode::CommandPalette => {
+                self.state.command_palette_state.insert_char(c);
             }
             _ => {}
         }
@@ -2352,6 +2404,12 @@ impl App {
                 let sanitized = pasted.replace('\n', " ");
                 for ch in sanitized.chars() {
                     self.state.session_import_state.insert_char(ch);
+                }
+            }
+            InputMode::CommandPalette => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.command_palette_state.insert_char(ch);
                 }
             }
             _ => {}
@@ -5008,6 +5066,15 @@ impl App {
                         );
                     }
 
+                    // Draw command palette (on top of everything)
+                    if self.state.command_palette_state.is_visible() {
+                        CommandPalette::new().render(
+                            size,
+                            f.buffer_mut(),
+                            &self.state.command_palette_state,
+                        );
+                    }
+
                     // Draw footer for empty state (sidebar-aware)
                     let footer_context = if self.state.input_mode == InputMode::SidebarNavigation {
                         FooterContext::Sidebar
@@ -5336,6 +5403,11 @@ impl App {
         // Draw help dialog (on top of everything)
         if self.state.help_dialog_state.is_visible() {
             HelpDialog::new().render(size, f.buffer_mut(), &mut self.state.help_dialog_state);
+        }
+
+        // Draw command palette (on top of everything)
+        if self.state.command_palette_state.is_visible() {
+            CommandPalette::new().render(size, f.buffer_mut(), &self.state.command_palette_state);
         }
 
         // Draw removing project spinner overlay

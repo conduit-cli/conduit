@@ -3,6 +3,7 @@ mod agent_selector;
 mod base_dir_dialog;
 mod chat_message;
 mod chat_view;
+mod command_palette;
 mod confirmation_dialog;
 mod dialog;
 mod error_dialog;
@@ -36,6 +37,7 @@ pub use agent_selector::{AgentSelector, AgentSelectorState};
 pub use base_dir_dialog::{BaseDirDialog, BaseDirDialogState};
 pub use chat_message::{ChatMessage, MessageRole};
 pub use chat_view::ChatView;
+pub use command_palette::{CommandPalette, CommandPaletteEntry, CommandPaletteState};
 pub use confirmation_dialog::{
     ConfirmationContext, ConfirmationDialog, ConfirmationDialogState, ConfirmationType,
 };

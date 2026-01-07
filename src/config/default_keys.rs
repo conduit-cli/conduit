@@ -27,8 +27,9 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "C-q", Action::Quit);
     bind(&mut config.global, "C-t", Action::ToggleSidebar);
     bind(&mut config.global, "C-n", Action::NewProject);
-    bind(&mut config.global, "C-p", Action::OpenPr);
-    // Note: Ctrl+C is handled specially in app.rs for double-press detection
+    bind(&mut config.global, "C-p", Action::OpenCommandPalette);
+    bind(&mut config.global, "C-M-p", Action::OpenPr); // Ctrl+Alt+P for PR
+                                                       // Note: Ctrl+C is handled specially in app.rs for double-press detection
     bind(&mut config.global, "C-g", Action::ToggleViewMode);
     bind(&mut config.global, "C-o", Action::ShowModelSelector);
     bind(&mut config.global, "M-i", Action::OpenSessionImport);
@@ -547,6 +548,37 @@ pub fn default_keybindings() -> KeybindingConfig {
         Action::Cancel,
     );
     session_import.insert(
+        KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
+        Action::Backspace,
+    );
+
+    // ========== Command Palette ==========
+    let palette = config
+        .context
+        .entry(KeyContext::CommandPalette)
+        .or_default();
+
+    palette.insert(
+        KeyCombo::new(KeyCode::Up, KeyModifiers::NONE),
+        Action::SelectPrev,
+    );
+    palette.insert(
+        KeyCombo::new(KeyCode::Down, KeyModifiers::NONE),
+        Action::SelectNext,
+    );
+    bind(palette, "C-k", Action::SelectPrev);
+    bind(palette, "C-j", Action::SelectNext);
+    bind(palette, "C-p", Action::SelectPrev);
+    bind(palette, "C-n", Action::SelectNext);
+    palette.insert(
+        KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),
+        Action::Confirm,
+    );
+    palette.insert(
+        KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE),
+        Action::Cancel,
+    );
+    palette.insert(
         KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
         Action::Backspace,
     );
