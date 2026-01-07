@@ -5,8 +5,8 @@ use ratatui::layout::Rect;
 
 use crate::ui::components::{
     AddRepoDialogState, AgentSelectorState, BaseDirDialogState, ConfirmationDialogState,
-    ErrorDialogState, HelpDialogState, KnightRiderSpinner, ModelSelectorState, ProjectPickerState,
-    SessionImportPickerState, SidebarData, SidebarState,
+    ErrorDialogState, HelpDialogState, KnightRiderSpinner, LogoShineAnimation, ModelSelectorState,
+    ProjectPickerState, SessionImportPickerState, SidebarData, SidebarState,
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
@@ -187,6 +187,8 @@ pub struct AppState {
     pub last_ctrl_c_press: Option<Instant>,
     /// Last Esc press time for double-press detection
     pub last_esc_press: Option<Instant>,
+    /// Logo shine animation for splash screen
+    pub logo_shine: LogoShineAnimation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +240,7 @@ impl AppState {
             footer_message: None,
             last_ctrl_c_press: None,
             last_esc_press: None,
+            logo_shine: LogoShineAnimation::new(),
         }
     }
 

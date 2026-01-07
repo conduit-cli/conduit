@@ -11,6 +11,7 @@ mod help_dialog;
 mod input_box;
 mod key_hints;
 mod knight_rider_spinner;
+mod logo_shine;
 mod markdown;
 mod model_selector;
 mod path_input;
@@ -45,6 +46,7 @@ pub use help_dialog::{HelpCategory, HelpDialog, HelpDialogState, KeybindingEntry
 pub use input_box::InputBox;
 pub use key_hints::{render_key_hints, render_key_hints_responsive, KeyHintBarStyle};
 pub use knight_rider_spinner::KnightRiderSpinner;
+pub use logo_shine::LogoShineAnimation;
 pub use markdown::MarkdownRenderer;
 pub use model_selector::{ModelSelector, ModelSelectorItem, ModelSelectorState};
 pub use path_input::PathInputState;
@@ -89,6 +91,11 @@ pub use theme::{
     PR_OPEN_BG,
     SELECTED_BG,
     SELECTED_BG_DIM,
+    // Logo shine colors
+    SHINE_CENTER,
+    SHINE_EDGE,
+    SHINE_MID,
+    SHINE_PEAK,
     // Knight Rider spinner colors
     SPINNER_ACTIVE,
     SPINNER_INACTIVE,

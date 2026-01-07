@@ -3,7 +3,7 @@
 //! Polls git status and PR information in the background without blocking the UI.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
@@ -269,8 +269,8 @@ impl GitTracker {
     }
 
     /// Check a single workspace immediately (both git and PR)
-    async fn check_workspace(&mut self, workspace_id: Uuid, working_dir: &PathBuf) {
-        let dir = working_dir.clone();
+    async fn check_workspace(&mut self, workspace_id: Uuid, working_dir: &Path) {
+        let dir = working_dir.to_path_buf();
 
         // Get git diff stats
         let new_stats = tokio::task::spawn_blocking({

@@ -281,10 +281,7 @@ impl App {
             session.update_status();
 
             // Register workspace with git tracker if available
-            let track_info = session
-                .workspace_id
-                .zip(session.working_dir.clone())
-                .map(|(id, dir)| (id, dir));
+            let track_info = session.workspace_id.zip(session.working_dir.clone());
 
             self.state.tab_manager.add_session(session);
 
@@ -640,6 +637,11 @@ impl App {
         // Tick footer Knight Rider spinner every 2 frames (~40ms at 50 FPS, matches opencode)
         if self.state.tick_count.is_multiple_of(2) {
             self.state.tick_footer_spinner();
+        }
+
+        // Tick logo shine animation every 3 frames (~50ms for smooth diagonal sweep)
+        if self.state.tick_count.is_multiple_of(3) {
+            self.state.logo_shine.tick();
         }
 
         // Clear stale double-press state and messages
@@ -4887,39 +4889,12 @@ impl App {
 
                     // Empty state message - different for first-time users vs returning users
                     let is_first_time = self.state.show_first_time_splash;
-                    let mut lines = vec![
-                        Line::from(Span::styled(
-                            "  ░██████                               ░██            ░██   ░██   ",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            " ░██   ░██                              ░██                  ░██   ",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            "░██         ░███████  ░████████   ░████████ ░██    ░██ ░██░████████",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            "░██        ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██   ░██   ",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            "░██        ░██    ░██ ░██    ░██ ░██    ░██ ░██    ░██ ░██   ░██   ",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            " ░██   ░██ ░██    ░██ ░██    ░██ ░██   ░███ ░██   ░███ ░██   ░██   ",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(Span::styled(
-                            "  ░██████   ░███████  ░██    ░██  ░█████░██  ░█████░██ ░██    ░████",
-                            Style::default().fg(TEXT_MUTED),
-                        )),
-                        Line::from(""),
-                        Line::from(""),
-                        Line::from(""),
-                    ];
+
+                    // Render animated logo with shine effect
+                    let mut lines = self.state.logo_shine.render_logo_lines();
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(""));
 
                     if is_first_time {
                         // First-time user - simpler message

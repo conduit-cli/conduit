@@ -103,6 +103,19 @@ pub const BORDER_FOCUSED: Color = Color::Rgb(130, 170, 255);
 pub const BORDER_DIMMED: Color = Color::Rgb(35, 35, 45);
 
 // =============================================================================
+// Logo Shine Animation Colors (diagonal sweep effect)
+// =============================================================================
+
+/// Shine edge - subtle brightening at band edges
+pub const SHINE_EDGE: Color = Color::Rgb(130, 130, 150);
+/// Shine mid - medium brightness
+pub const SHINE_MID: Color = Color::Rgb(180, 180, 200);
+/// Shine center - bright
+pub const SHINE_CENTER: Color = Color::Rgb(230, 230, 245);
+/// Shine peak - white center of shine band
+pub const SHINE_PEAK: Color = Color::Rgb(255, 255, 255);
+
+// =============================================================================
 // Legacy Aliases (for backward compatibility during migration)
 // =============================================================================
 
