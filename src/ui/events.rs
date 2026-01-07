@@ -115,6 +115,7 @@ pub struct WorkspaceCreated {
 pub struct WorkspaceArchived {
     pub workspace_id: Uuid,
     pub worktree_error: Option<String>,
+    pub branch_delete_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]

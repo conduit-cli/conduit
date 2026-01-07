@@ -2184,22 +2184,41 @@ impl App {
                                 .and_then(|repo| repo.base_path);
 
                             let mut worktree_error = None;
+                            let mut branch_delete_error = None;
+                            let mut archived_commit_sha = None;
                             if let Some(base_path) = repo_base_path {
+                                let commit_sha = worktree_manager
+                                    .get_branch_sha(&base_path, &workspace.branch)
+                                    .map_err(|e| format!("Failed to read branch SHA: {}", e))?;
+                                archived_commit_sha = Some(commit_sha);
+
                                 if let Err(e) =
                                     worktree_manager.remove_worktree(&base_path, &workspace.path)
                                 {
                                     worktree_error =
                                         Some(format!("Failed to remove worktree: {}", e));
                                 }
+
+                                if let Err(e) =
+                                    worktree_manager.delete_branch(&base_path, &workspace.branch)
+                                {
+                                    branch_delete_error = Some(format!(
+                                        "Failed to delete branch '{}': {}",
+                                        workspace.branch, e
+                                    ));
+                                }
                             }
 
-                            workspace_dao.archive(workspace_id).map_err(|e| {
-                                format!("Failed to archive workspace in database: {}", e)
-                            })?;
+                            workspace_dao
+                                .archive(workspace_id, archived_commit_sha)
+                                .map_err(|e| {
+                                    format!("Failed to archive workspace in database: {}", e)
+                                })?;
 
                             Ok(WorkspaceArchived {
                                 workspace_id,
                                 worktree_error,
+                                branch_delete_error,
                             })
                         })(
                         );
@@ -2270,7 +2289,20 @@ impl App {
                             workspace_dao.get_by_repository(repo_id).unwrap_or_default();
                         for ws in workspaces {
                             workspace_ids.push(ws.id);
+                            let mut archived_commit_sha = None;
                             if let Some(ref base_path) = repo_base_path {
+                                match worktree_manager.get_branch_sha(base_path, &ws.branch) {
+                                    Ok(sha) => {
+                                        archived_commit_sha = Some(sha);
+                                    }
+                                    Err(e) => {
+                                        errors.push(format!(
+                                            "Failed to read branch SHA for workspace '{}': {}",
+                                            ws.name, e
+                                        ));
+                                    }
+                                }
+
                                 if let Err(e) =
                                     worktree_manager.remove_worktree(base_path, &ws.path)
                                 {
@@ -2279,8 +2311,17 @@ impl App {
                                         ws.name, e
                                     ));
                                 }
+
+                                if let Err(e) =
+                                    worktree_manager.delete_branch(base_path, &ws.branch)
+                                {
+                                    errors.push(format!(
+                                        "Failed to delete branch '{}' for workspace '{}': {}",
+                                        ws.branch, ws.name, e
+                                    ));
+                                }
                             }
-                            if let Err(e) = workspace_dao.archive(ws.id) {
+                            if let Err(e) = workspace_dao.archive(ws.id, archived_commit_sha) {
                                 errors.push(format!(
                                     "Failed to archive workspace '{}': {}",
                                     ws.name, e
@@ -2915,7 +2956,7 @@ impl App {
         self.state.close_overlays();
         self.state.confirmation_dialog_state.show(
             format!("Archive \"{}\"?", workspace.name),
-            "This will remove the worktree but keep the branch.",
+            "This will remove the worktree and delete the branch.",
             warnings,
             confirmation_type,
             "Archive",
@@ -4265,6 +4306,13 @@ impl App {
                         self.show_error_with_details(
                             "Worktree Warning",
                             "Workspace archived but worktree removal failed",
+                            &error_msg,
+                        );
+                    }
+                    if let Some(error_msg) = archived.branch_delete_error {
+                        self.show_error_with_details(
+                            "Branch Deletion Warning",
+                            "Workspace archived but branch deletion failed",
                             &error_msg,
                         );
                     }

@@ -231,6 +231,42 @@ impl WorktreeManager {
         Ok(branch)
     }
 
+    /// Get the current commit SHA for a branch in the repository
+    pub fn get_branch_sha(&self, repo_path: &Path, branch: &str) -> Result<String, WorktreeError> {
+        self.validate_git_repo(repo_path)?;
+
+        let output = Command::new("git")
+            .args(["rev-parse", branch])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(WorktreeError::CommandFailed(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Delete a local branch in the repository
+    pub fn delete_branch(&self, repo_path: &Path, branch: &str) -> Result<(), WorktreeError> {
+        self.validate_git_repo(repo_path)?;
+
+        let output = Command::new("git")
+            .args(["branch", "-D", branch])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(WorktreeError::CommandFailed(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Check if a worktree has uncommitted changes
     pub fn is_dirty(&self, worktree_path: &Path) -> Result<(bool, Option<String>), WorktreeError> {
         if !worktree_path.exists() {

@@ -73,6 +73,8 @@ pub struct Workspace {
     pub is_default: bool,
     /// When the workspace was archived (None = active)
     pub archived_at: Option<DateTime<Utc>>,
+    /// Commit SHA at the time of archive (if recorded)
+    pub archived_commit_sha: Option<String>,
 }
 
 impl Workspace {
@@ -94,6 +96,7 @@ impl Workspace {
             last_accessed: now,
             is_default: false,
             archived_at: None,
+            archived_commit_sha: None,
         }
     }
 

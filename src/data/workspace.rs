@@ -43,7 +43,7 @@ impl WorkspaceStore {
     pub fn get_by_id(&self, id: Uuid) -> SqliteResult<Option<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at
+            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at, archived_commit_sha
              FROM workspaces WHERE id = ?1",
         )?;
 
@@ -59,7 +59,7 @@ impl WorkspaceStore {
     pub fn get_by_repository(&self, repository_id: Uuid) -> SqliteResult<Vec<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at
+            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at, archived_commit_sha
              FROM workspaces WHERE repository_id = ?1 AND archived_at IS NULL ORDER BY is_default DESC, name",
         )?;
 
@@ -93,7 +93,7 @@ impl WorkspaceStore {
     pub fn get_all(&self) -> SqliteResult<Vec<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at
+            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at, archived_commit_sha
              FROM workspaces WHERE archived_at IS NULL ORDER BY repository_id, is_default DESC, name",
         )?;
 
@@ -162,7 +162,7 @@ impl WorkspaceStore {
     ) -> SqliteResult<Option<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at
+            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at, archived_commit_sha
              FROM workspaces WHERE repository_id = ?1 AND is_default = 1 AND archived_at IS NULL",
         )?;
 
@@ -174,12 +174,12 @@ impl WorkspaceStore {
         }
     }
 
-    /// Archive a workspace (soft delete - marks as archived but keeps record)
-    pub fn archive(&self, id: Uuid) -> SqliteResult<()> {
+    /// Archive a workspace (soft delete - marks as archived and stores the branch SHA)
+    pub fn archive(&self, id: Uuid, archived_commit_sha: Option<String>) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE workspaces SET archived_at = ?2 WHERE id = ?1",
-            params![id.to_string(), Utc::now().to_rfc3339()],
+            "UPDATE workspaces SET archived_at = ?2, archived_commit_sha = ?3 WHERE id = ?1",
+            params![id.to_string(), Utc::now().to_rfc3339(), archived_commit_sha],
         )?;
         Ok(())
     }
@@ -193,6 +193,7 @@ impl WorkspaceStore {
         let last_accessed_str: String = row.get(6)?;
         let is_default: i32 = row.get(7)?;
         let archived_at_str: Option<String> = row.get(8)?;
+        let archived_commit_sha: Option<String> = row.get(9)?;
 
         Ok(Workspace {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
@@ -212,6 +213,7 @@ impl WorkspaceStore {
                     .map(|dt| dt.with_timezone(&Utc))
                     .ok()
             }),
+            archived_commit_sha,
         })
     }
 }

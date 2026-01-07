@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     last_accessed TEXT NOT NULL,
     is_default INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT,
+    archived_commit_sha TEXT,
     FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 );
 
@@ -165,6 +166,22 @@ impl Database {
         if !has_agent_mode {
             conn.execute(
                 "ALTER TABLE session_tabs ADD COLUMN agent_mode TEXT DEFAULT 'build'",
+                [],
+            )?;
+        }
+
+        // Migration 5: Add archived_commit_sha column to workspaces table
+        let has_archived_commit_sha: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name='archived_commit_sha'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_archived_commit_sha {
+            conn.execute(
+                "ALTER TABLE workspaces ADD COLUMN archived_commit_sha TEXT",
                 [],
             )?;
         }
