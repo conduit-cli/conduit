@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::git::{GitDiffStats, PrManager, PrState, PrStatus};
+use crate::git::{GitDiffStats, PrManager, PrStatus};
 
 /// Configuration for the background tracker
 pub struct GitTrackerConfig {
@@ -43,18 +43,21 @@ struct WorkspaceGitState {
 /// Updates sent from background tracker to UI
 #[derive(Debug, Clone)]
 pub enum GitTrackerUpdate {
-    /// PR status changed for a workspace
+    /// PR status changed for a workspace (None means PR was removed/closed)
     PrStatusChanged {
         workspace_id: Uuid,
-        status: PrStatus,
+        status: Option<PrStatus>,
     },
     /// Git diff stats changed for a workspace
     GitStatsChanged {
         workspace_id: Uuid,
         stats: GitDiffStats,
     },
-    /// Branch name changed
-    BranchChanged { workspace_id: Uuid, branch: String },
+    /// Branch name changed (None means detached HEAD)
+    BranchChanged {
+        workspace_id: Uuid,
+        branch: Option<String>,
+    },
 }
 
 /// Commands to the background tracker
@@ -215,13 +218,12 @@ impl GitTracker {
                         .flatten();
 
                 if new_branch != state.branch_name {
-                    if let Some(ref branch) = new_branch {
-                        state.branch_name = new_branch.clone();
-                        let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
-                            workspace_id,
-                            branch: branch.clone(),
-                        });
-                    }
+                    state.branch_name = new_branch.clone();
+                    // Always send update (including None for detached HEAD)
+                    let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
+                        workspace_id,
+                        branch: new_branch,
+                    });
                 }
             }
         }
@@ -257,12 +259,11 @@ impl GitTracker {
                 if pr_changed {
                     state.pr_status = new_pr_status.clone();
                     state.last_pr_check = Some(Instant::now());
-                    if let Some(status) = new_pr_status {
-                        let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
-                            workspace_id,
-                            status,
-                        });
-                    }
+                    // Always send update (including None to clear PR badge)
+                    let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
+                        workspace_id,
+                        status: new_pr_status,
+                    });
                 }
             }
         }
@@ -310,22 +311,17 @@ impl GitTracker {
             stats: new_stats,
         });
 
-        if let Some(branch) = new_branch {
-            let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
-                workspace_id,
-                branch,
-            });
-        }
+        // Always send branch update (including None for detached HEAD)
+        let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
+            workspace_id,
+            branch: new_branch,
+        });
 
-        if let Some(status) = new_pr_status {
-            // Only send if PR exists or we want to clear the state
-            if status.exists || status.state != PrState::Unknown {
-                let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
-                    workspace_id,
-                    status,
-                });
-            }
-        }
+        // Always send PR update (including None to clear)
+        let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
+            workspace_id,
+            status: new_pr_status,
+        });
     }
 }
 

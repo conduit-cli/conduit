@@ -14,7 +14,7 @@ use crate::agent::{
 use crate::git::{GitDiffStats, PrState, PrStatus};
 use crate::ui::components::{
     ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, PR_CLOSED_BG, PR_DRAFT_BG,
-    PR_MERGED_BG, PR_OPEN_BG, STATUS_BAR_BG, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED,
+    PR_MERGED_BG, PR_OPEN_BG, PR_UNKNOWN_BG, STATUS_BAR_BG, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED,
 };
 use ratatui::style::Color;
 
@@ -339,23 +339,25 @@ impl StatusBar {
         let mut spans = Vec::new();
         let mut has_content = false;
 
-        // PR badge with colored background (if PR exists)
+        // PR badge with colored background (if PR exists and has a valid number)
         if let Some(ref pr) = self.pr_status {
             if pr.exists {
-                let (bg_color, fg_color) = match pr.state {
-                    PrState::Open => (PR_OPEN_BG, Color::White),
-                    PrState::Merged => (PR_MERGED_BG, Color::White),
-                    PrState::Closed => (PR_CLOSED_BG, Color::White),
-                    PrState::Draft => (PR_DRAFT_BG, Color::White),
-                    PrState::Unknown => (PR_OPEN_BG, Color::White), // Default to open styling
-                };
+                if let Some(number) = pr.number {
+                    let (bg_color, fg_color) = match pr.state {
+                        PrState::Open => (PR_OPEN_BG, Color::White),
+                        PrState::Merged => (PR_MERGED_BG, Color::White),
+                        PrState::Closed => (PR_CLOSED_BG, Color::White),
+                        PrState::Draft => (PR_DRAFT_BG, Color::White),
+                        PrState::Unknown => (PR_UNKNOWN_BG, Color::White),
+                    };
 
-                let badge = format!(" PR #{} ", pr.number.unwrap_or(0));
-                spans.push(Span::styled(
-                    badge,
-                    Style::default().bg(bg_color).fg(fg_color),
-                ));
-                has_content = true;
+                    let badge = format!(" PR #{} ", number);
+                    spans.push(Span::styled(
+                        badge,
+                        Style::default().bg(bg_color).fg(fg_color),
+                    ));
+                    has_content = true;
+                }
             }
         }
 

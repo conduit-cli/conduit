@@ -89,6 +89,7 @@ pub use theme::{
     PR_DRAFT_BG,
     PR_MERGED_BG,
     PR_OPEN_BG,
+    PR_UNKNOWN_BG,
     SELECTED_BG,
     SELECTED_BG_DIM,
     // Logo shine colors

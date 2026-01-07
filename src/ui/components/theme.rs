@@ -71,6 +71,8 @@ pub const PR_MERGED_BG: Color = Color::Rgb(130, 80, 223);
 pub const PR_CLOSED_BG: Color = Color::Rgb(218, 54, 51);
 /// Draft PR - gray background (GitHub style)
 pub const PR_DRAFT_BG: Color = Color::Rgb(110, 118, 129);
+/// Unknown PR state - neutral gray background
+pub const PR_UNKNOWN_BG: Color = Color::Rgb(80, 80, 90);
 
 // =============================================================================
 // Knight Rider Spinner Colors (gradient trail)

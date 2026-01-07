@@ -4256,8 +4256,8 @@ impl App {
                 // Update all sessions with this workspace
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
-                        session.pr_number = status.number;
-                        session.status_bar.set_pr_status(Some(status.clone()));
+                        session.pr_number = status.as_ref().and_then(|s| s.number);
+                        session.status_bar.set_pr_status(status.clone());
                     }
                 }
             }
@@ -4283,13 +4283,15 @@ impl App {
                 // Update all sessions with this workspace
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
-                        session.status_bar.set_branch_name(Some(branch.clone()));
+                        session.status_bar.set_branch_name(branch.clone());
                     }
                 }
-                // Also update sidebar data
-                self.state
-                    .sidebar_data
-                    .update_workspace_branch(workspace_id, branch);
+                // Also update sidebar data if branch is Some
+                if let Some(ref b) = branch {
+                    self.state
+                        .sidebar_data
+                        .update_workspace_branch(workspace_id, b.clone());
+                }
             }
         }
     }
