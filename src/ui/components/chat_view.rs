@@ -155,8 +155,8 @@ impl ChatView {
             self.update_cache_entry(idx, width);
         }
 
-        // Auto-scroll to bottom on new message
-        self.scroll_offset = 0;
+        // Auto-scroll to bottom only if user is already at bottom
+        // When scroll_offset > 0, user has scrolled up - preserve their position
     }
 
     /// Start or append to streaming message
@@ -194,7 +194,8 @@ impl ChatView {
                 self.update_cache_entry(idx, width);
             }
 
-            self.scroll_offset = 0;
+            // Auto-scroll to bottom only if user is already at bottom
+            // When scroll_offset > 0, user has scrolled up - preserve their position
         }
     }
 
@@ -1118,5 +1119,80 @@ fn chars_to_spans(chars: Vec<(char, Style)>) -> Vec<Span<'static>> {
 impl Default for ChatView {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_push_scrolls_to_bottom_when_already_at_bottom() {
+        let mut view = ChatView::new();
+        view.push(ChatMessage::user("First message"));
+        assert_eq!(view.scroll_offset, 0);
+
+        view.push(ChatMessage::assistant("Response"));
+        assert_eq!(
+            view.scroll_offset, 0,
+            "Should stay at bottom when already at bottom"
+        );
+    }
+
+    #[test]
+    fn test_push_preserves_scroll_when_user_scrolled_up() {
+        let mut view = ChatView::new();
+        view.push(ChatMessage::user("Message 1"));
+        view.push(ChatMessage::assistant("Response 1"));
+
+        // User scrolls up
+        view.scroll_up(5);
+        assert_eq!(view.scroll_offset, 5);
+
+        // New message arrives
+        view.push(ChatMessage::assistant("Response 2"));
+
+        // Scroll position should be preserved (not reset to 0)
+        assert!(
+            view.scroll_offset > 0,
+            "Scroll position should be preserved when user has scrolled up, got {}",
+            view.scroll_offset
+        );
+    }
+
+    #[test]
+    fn test_finalize_streaming_preserves_scroll_when_user_scrolled_up() {
+        let mut view = ChatView::new();
+        view.push(ChatMessage::user("Question"));
+
+        // Start streaming
+        view.stream_append("Streaming content...");
+
+        // User scrolls up during streaming
+        view.scroll_up(3);
+        assert_eq!(view.scroll_offset, 3);
+
+        // Finalize streaming
+        view.finalize_streaming();
+
+        // Scroll should be preserved
+        assert!(
+            view.scroll_offset > 0,
+            "Scroll position should be preserved after finalize_streaming, got {}",
+            view.scroll_offset
+        );
+    }
+
+    #[test]
+    fn test_finalize_streaming_stays_at_bottom_when_at_bottom() {
+        let mut view = ChatView::new();
+        view.stream_append("Streaming...");
+        assert_eq!(view.scroll_offset, 0);
+
+        view.finalize_streaming();
+        assert_eq!(
+            view.scroll_offset, 0,
+            "Should stay at bottom when already at bottom"
+        );
     }
 }
