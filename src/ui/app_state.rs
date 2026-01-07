@@ -250,6 +250,32 @@ impl AppState {
         }
     }
 
+    pub fn close_overlays(&mut self) {
+        self.add_repo_dialog_state.hide();
+        self.base_dir_dialog_state.hide();
+        self.project_picker_state.hide();
+        self.session_import_state.hide();
+        self.model_selector_state.hide();
+        self.agent_selector_state.hide();
+        self.confirmation_dialog_state.hide();
+        self.error_dialog_state.hide();
+        self.help_dialog_state.hide();
+        self.command_palette_state.hide();
+    }
+
+    pub fn has_active_overlay(&self) -> bool {
+        self.base_dir_dialog_state.is_visible()
+            || self.project_picker_state.is_visible()
+            || self.add_repo_dialog_state.is_visible()
+            || self.model_selector_state.is_visible()
+            || self.agent_selector_state.is_visible()
+            || self.confirmation_dialog_state.visible
+            || self.error_dialog_state.is_visible()
+            || self.help_dialog_state.is_visible()
+            || self.session_import_state.is_visible()
+            || self.command_palette_state.is_visible()
+    }
+
     /// Start footer spinner with optional message
     pub fn start_footer_spinner(&mut self, message: Option<String>) {
         self.footer_spinner = Some(KnightRiderSpinner::new());
@@ -272,5 +298,52 @@ impl AppState {
         if let Some(spinner) = &mut self.footer_spinner {
             spinner.tick();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppState;
+
+    #[test]
+    fn close_overlays_hides_all_dialogs() {
+        let mut state = AppState::new(1);
+        state.add_repo_dialog_state.path.visible = true;
+        state.base_dir_dialog_state.path.visible = true;
+        state.project_picker_state.visible = true;
+        state.session_import_state.visible = true;
+        state.model_selector_state.visible = true;
+        state.agent_selector_state.visible = true;
+        state.confirmation_dialog_state.visible = true;
+        state.error_dialog_state.visible = true;
+        state.help_dialog_state.visible = true;
+        state.command_palette_state.visible = true;
+
+        state.close_overlays();
+
+        assert!(!state.add_repo_dialog_state.path.visible);
+        assert!(!state.base_dir_dialog_state.path.visible);
+        assert!(!state.project_picker_state.visible);
+        assert!(!state.session_import_state.visible);
+        assert!(!state.model_selector_state.visible);
+        assert!(!state.agent_selector_state.visible);
+        assert!(!state.confirmation_dialog_state.visible);
+        assert!(!state.error_dialog_state.visible);
+        assert!(!state.help_dialog_state.visible);
+        assert!(!state.command_palette_state.visible);
+        assert!(!state.has_active_overlay());
+    }
+
+    #[test]
+    fn has_active_overlay_detects_visibility() {
+        let mut state = AppState::new(1);
+        assert!(!state.has_active_overlay());
+
+        state.command_palette_state.visible = true;
+        assert!(state.has_active_overlay());
+
+        state.command_palette_state.visible = false;
+        state.help_dialog_state.visible = true;
+        assert!(state.has_active_overlay());
     }
 }

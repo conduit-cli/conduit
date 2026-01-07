@@ -823,17 +823,9 @@ impl App {
         true
     }
 
-    /// Check if any dialog is currently active
+    /// Check if any overlay is currently active
     fn has_active_dialog(&self) -> bool {
-        self.state.base_dir_dialog_state.is_visible()
-            || self.state.project_picker_state.is_visible()
-            || self.state.add_repo_dialog_state.is_visible()
-            || self.state.model_selector_state.is_visible()
-            || self.state.agent_selector_state.is_visible()
-            || self.state.confirmation_dialog_state.visible
-            || self.state.error_dialog_state.is_visible()
-            || self.state.help_dialog_state.is_visible()
-            || self.state.session_import_state.is_visible()
+        self.state.has_active_overlay()
     }
 
     async fn handle_key_event(&mut self, key: event::KeyEvent) -> anyhow::Result<Vec<Effect>> {
@@ -1028,6 +1020,7 @@ impl App {
                     .as_ref()
                     .and_then(|dao| dao.get("projects_base_dir").ok().flatten());
 
+                self.state.close_overlays();
                 if let Some(base_dir_str) = base_dir {
                     let base_path = if base_dir_str.starts_with('~') {
                         dirs::home_dir()
@@ -1059,11 +1052,14 @@ impl App {
             }
             Action::ShowModelSelector => {
                 if let Some(session) = self.state.tab_manager.active_session() {
-                    self.state.model_selector_state.show(session.model.clone());
+                    let model = session.model.clone();
+                    self.state.close_overlays();
+                    self.state.model_selector_state.show(model);
                     self.state.input_mode = InputMode::SelectingModel;
                 }
             }
             Action::OpenSessionImport => {
+                self.state.close_overlays();
                 self.state.session_import_state.show();
                 self.state.input_mode = InputMode::ImportingSession;
                 // Trigger session discovery
@@ -1541,6 +1537,7 @@ impl App {
                         }
                         let base_path = self.state.base_dir_dialog_state.expanded_path();
                         self.state.base_dir_dialog_state.hide();
+                        self.state.close_overlays();
                         self.state.project_picker_state.show(base_path);
                         self.state.input_mode = InputMode::PickingProject;
                     }
@@ -1703,11 +1700,13 @@ impl App {
             }
             Action::AddRepository => match self.state.input_mode {
                 InputMode::SidebarNavigation => {
+                    self.state.close_overlays();
                     self.state.add_repo_dialog_state.show();
                     self.state.input_mode = InputMode::AddingRepository;
                 }
                 InputMode::PickingProject => {
                     self.state.project_picker_state.hide();
+                    self.state.close_overlays();
                     self.state.add_repo_dialog_state.show();
                     self.state.input_mode = InputMode::AddingRepository;
                 }
@@ -1715,6 +1714,7 @@ impl App {
             },
             Action::OpenSettings => {
                 if self.state.input_mode == InputMode::SidebarNavigation {
+                    self.state.close_overlays();
                     if let Some(dao) = &self.app_state_dao {
                         if let Ok(Some(current_dir)) = dao.get("projects_base_dir") {
                             self.state
@@ -1908,6 +1908,7 @@ impl App {
 
             // ========== Command Mode ==========
             Action::ShowHelp => {
+                self.state.close_overlays();
                 self.state.help_dialog_state.show(&self.config.keybindings);
                 self.state.input_mode = InputMode::ShowingHelp;
             }
@@ -1929,6 +1930,7 @@ impl App {
 
             // ========== Command Palette ==========
             Action::OpenCommandPalette => {
+                self.state.close_overlays();
                 self.state
                     .command_palette_state
                     .show(&self.config.keybindings);
@@ -2329,6 +2331,7 @@ impl App {
                 if c == '?' {
                     if let Some(session) = self.state.tab_manager.active_session() {
                         if session.input_box.input().is_empty() {
+                            self.state.close_overlays();
                             self.state.help_dialog_state.show(&self.config.keybindings);
                             self.state.input_mode = InputMode::ShowingHelp;
                             return;
@@ -2427,6 +2430,7 @@ impl App {
         // First check for built-in command aliases
         match command.as_str() {
             "help" | "h" | "?" => {
+                self.state.close_overlays();
                 self.state.help_dialog_state.show(&self.config.keybindings);
                 self.state.input_mode = InputMode::ShowingHelp;
                 return None;
@@ -2831,6 +2835,7 @@ impl App {
         };
 
         // Show confirmation dialog
+        self.state.close_overlays();
         self.state.confirmation_dialog_state.show(
             format!("Archive \"{}\"?", workspace.name),
             "This will remove the worktree but keep the branch.",
@@ -2844,12 +2849,14 @@ impl App {
 
     /// Show an error dialog with a simple message
     fn show_error(&mut self, title: &str, message: &str) {
+        self.state.close_overlays();
         self.state.error_dialog_state.show(title, message);
         self.state.input_mode = InputMode::ShowingError;
     }
 
     /// Show an error dialog with technical details
     fn show_error_with_details(&mut self, title: &str, message: &str, details: &str) {
+        self.state.close_overlays();
         self.state
             .error_dialog_state
             .show_with_details(title, message, details);
@@ -2926,6 +2933,7 @@ impl App {
         };
 
         // Show confirmation dialog
+        self.state.close_overlays();
         self.state.confirmation_dialog_state.show(
             format!("Remove \"{}\"?", repo.name),
             "This will archive all workspaces and remove the project.",
@@ -3722,6 +3730,7 @@ impl App {
             let new_button_width = 7;
             if relative_x >= current_x && relative_x < current_x + new_button_width {
                 // Show agent selector for new tab
+                self.state.close_overlays();
                 self.state.agent_selector_state.show();
                 self.state.input_mode = InputMode::SelectingAgent;
             }
@@ -3810,6 +3819,7 @@ impl App {
                 }
             } else if relative_x >= model_start && relative_x < model_end {
                 // Click on model/agent area - open model selector
+                self.state.close_overlays();
                 self.state.model_selector_state.show(model);
                 self.state.input_mode = InputMode::SelectingModel;
             }
@@ -3819,6 +3829,7 @@ impl App {
             let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
 
             if relative_x >= model_start && relative_x < model_end {
+                self.state.close_overlays();
                 self.state.model_selector_state.show(model);
                 self.state.input_mode = InputMode::SelectingModel;
             }
@@ -4139,25 +4150,22 @@ impl App {
                 effects.extend(self.handle_pr_preflight_result(tab_index, working_dir, result));
             }
             AppEvent::OpenPrCompleted { result: Err(err) } => {
-                self.state.error_dialog_state.show(
+                self.show_error(
                     "Failed to Open PR",
-                    format!("Could not open PR in browser: {}", err),
+                    &format!("Could not open PR in browser: {}", err),
                 );
-                self.state.input_mode = InputMode::ShowingError;
             }
             AppEvent::OpenPrCompleted { result: Ok(_) } => {}
             AppEvent::DebugDumped { result } => match result {
                 Ok(path) => {
-                    self.state.error_dialog_state.show_with_details(
+                    self.show_error_with_details(
                         "Debug Export Complete",
                         "Session debug info has been exported.",
-                        format!("File saved to:\n{}", path),
+                        &format!("File saved to:\n{}", path),
                     );
-                    self.state.input_mode = InputMode::ShowingError;
                 }
                 Err(err) => {
-                    self.state.error_dialog_state.show("Export Failed", err);
-                    self.state.input_mode = InputMode::ShowingError;
+                    self.show_error("Export Failed", &err);
                 }
             },
             AppEvent::WorkspaceCreated { result } => match result {
@@ -4746,6 +4754,7 @@ impl App {
         };
 
         // Show loading dialog immediately
+        self.state.close_overlays();
         self.state
             .confirmation_dialog_state
             .show_loading("Create Pull Request", "Checking repository status...");
@@ -4768,36 +4777,33 @@ impl App {
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
-            self.state.error_dialog_state.show_with_details(
+            self.show_error_with_details(
                 "GitHub CLI Not Found",
                 "The 'gh' command is not installed.",
                 "Install from: https://cli.github.com/\n\nbrew install gh  # macOS\napt install gh   # Debian/Ubuntu",
             );
-            self.state.input_mode = InputMode::ShowingError;
             return effects;
         }
 
         if !preflight.gh_authenticated {
             self.state.confirmation_dialog_state.hide();
-            self.state.error_dialog_state.show_with_details(
+            self.show_error_with_details(
                 "Not Authenticated",
                 "GitHub CLI is not authenticated.",
                 "Run: gh auth login",
             );
-            self.state.input_mode = InputMode::ShowingError;
             return effects;
         }
 
         if preflight.on_main_branch {
             self.state.confirmation_dialog_state.hide();
-            self.state.error_dialog_state.show(
+            self.show_error(
                 "Cannot Create PR",
-                format!(
+                &format!(
                     "You're on the '{}' branch. Create a feature branch first.",
                     preflight.branch_name
                 ),
             );
-            self.state.input_mode = InputMode::ShowingError;
             return effects;
         }
 
@@ -4810,6 +4816,7 @@ impl App {
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
+                self.state.close_overlays();
                 self.state.confirmation_dialog_state.show(
                     "Pull Request Exists",
                     format!(
@@ -4843,6 +4850,7 @@ impl App {
         }
 
         // Show confirmation dialog (replace loading state)
+        self.state.close_overlays();
         self.state.confirmation_dialog_state.show(
             "Create Pull Request",
             format!(
