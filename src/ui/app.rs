@@ -1132,10 +1132,12 @@ impl App {
                     } else {
                         self.state.tab_manager.next_tab();
                         self.sync_sidebar_to_active_tab();
+                        self.sync_footer_spinner();
                     }
                 } else {
                     self.state.tab_manager.next_tab();
                     self.sync_sidebar_to_active_tab();
+                    self.sync_footer_spinner();
                 }
             }
             Action::PrevTab => {
@@ -1148,6 +1150,7 @@ impl App {
                         self.state.sidebar_state.set_focused(false);
                         self.state.input_mode = InputMode::Normal;
                         self.sync_sidebar_to_active_tab();
+                        self.sync_footer_spinner();
                     }
                 } else if self.state.sidebar_state.visible {
                     // Check if on first tab - if so, go to sidebar
@@ -1159,16 +1162,19 @@ impl App {
                     } else {
                         self.state.tab_manager.prev_tab();
                         self.sync_sidebar_to_active_tab();
+                        self.sync_footer_spinner();
                     }
                 } else {
                     self.state.tab_manager.prev_tab();
                     self.sync_sidebar_to_active_tab();
+                    self.sync_footer_spinner();
                 }
             }
             Action::SwitchToTab(n) => {
                 if n > 0 {
                     self.state.tab_manager.switch_to((n - 1) as usize);
                     self.sync_sidebar_to_active_tab();
+                    self.sync_footer_spinner();
                 }
             }
 
@@ -2690,6 +2696,25 @@ impl App {
         }
     }
 
+    /// Sync footer spinner state to the active tab's processing state
+    fn sync_footer_spinner(&mut self) {
+        let is_active_processing = self
+            .state
+            .tab_manager
+            .active_session()
+            .is_some_and(|s| s.is_processing);
+
+        if is_active_processing {
+            // Start spinner if active tab is processing and spinner not already running
+            if self.state.footer_spinner.is_none() {
+                self.state.start_footer_spinner(None);
+            }
+        } else {
+            // Stop spinner if active tab is not processing
+            self.state.stop_footer_spinner();
+        }
+    }
+
     /// Initiate the archive workspace flow - check git status and show confirmation dialog
     fn initiate_archive_workspace(&mut self, workspace_id: uuid::Uuid) {
         // Get the workspace
@@ -4168,6 +4193,7 @@ impl App {
             }
             AppEvent::AgentStreamEnded { tab_index } => {
                 // Agent event stream ended (process exited) - ensure processing is stopped
+                let is_active_tab = self.state.tab_manager.active_index() == tab_index;
                 let was_processing =
                     if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                         // Clear PID since process has exited
@@ -4182,7 +4208,8 @@ impl App {
                     } else {
                         false
                     };
-                if was_processing {
+                // Only stop footer spinner if this was the active tab
+                if was_processing && is_active_tab {
                     self.state.stop_footer_spinner();
                 }
             }
@@ -4311,7 +4338,10 @@ impl App {
                 AgentEvent::TurnCompleted(completed) => {
                     session.add_usage(completed.usage);
                     session.stop_processing();
-                    should_stop_footer_spinner = true;
+                    // Only stop footer spinner if this is the active tab
+                    if is_active_tab {
+                        should_stop_footer_spinner = true;
+                    }
                     session.chat_view.finalize_streaming();
                     // Add turn summary to chat
                     let summary = session.current_turn_summary.clone();
@@ -4319,7 +4349,10 @@ impl App {
                 }
                 AgentEvent::TurnFailed(failed) => {
                     session.stop_processing();
-                    should_stop_footer_spinner = true;
+                    // Only stop footer spinner if this is the active tab
+                    if is_active_tab {
+                        should_stop_footer_spinner = true;
+                    }
                     let display = MessageDisplay::Error {
                         content: failed.error,
                     };
@@ -4423,7 +4456,10 @@ impl App {
                     session.chat_view.push(display.to_chat_message());
                     if err.is_fatal {
                         session.stop_processing();
-                        should_stop_footer_spinner = true;
+                        // Only stop footer spinner if this is the active tab
+                        if is_active_tab {
+                            should_stop_footer_spinner = true;
+                        }
                     }
                 }
                 AgentEvent::TokenUsage(usage_event) => {
