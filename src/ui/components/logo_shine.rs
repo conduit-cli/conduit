@@ -81,12 +81,13 @@ impl LogoShineAnimation {
         let sweep_frames = total_diagonal.div_ceil(speed);
 
         // Randomize initial interval
-        let min_interval = 180; // ~3 seconds at 60fps with tick every 3 frames
-        let max_interval = 300; // ~5 seconds
+        // At 60fps with tick every 3 frames = 20 ticks/sec (50ms per tick)
+        let min_interval = 60; // ~3 seconds (60 ticks * 50ms = 3000ms)
+        let max_interval = 100; // ~5 seconds (100 ticks * 50ms = 5000ms)
         let interval_frames = rand::rng().random_range(min_interval..=max_interval);
 
         // Start with a short delay (~1 second) before first shine so users see it quickly
-        let initial_delay = 20; // ~1 second at 50ms per tick
+        let initial_delay = 20; // ~1 second (20 ticks * 50ms = 1000ms)
 
         Self {
             frame: sweep_frames + interval_frames - initial_delay, // Start near end of interval
