@@ -76,6 +76,8 @@ pub struct App {
     session_tab_dao: Option<SessionTabStore>,
     /// Worktree manager
     worktree_manager: WorktreeManager,
+    /// Background git/PR status tracker
+    git_tracker: Option<crate::ui::git_tracker::GitTrackerHandle>,
 }
 
 impl App {
@@ -106,6 +108,23 @@ impl App {
         // Initialize worktree manager with managed directory (~/.conduit/worktrees)
         let worktree_manager = WorktreeManager::with_managed_dir(crate::util::worktrees_dir());
 
+        // Initialize git tracker
+        let (git_update_tx, mut git_update_rx) = mpsc::unbounded_channel();
+        let git_tracker = Some(crate::ui::git_tracker::spawn_git_tracker(git_update_tx));
+
+        // Forward git tracker updates to main event channel
+        let event_tx_for_tracker = event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(update) = git_update_rx.recv().await {
+                if event_tx_for_tracker
+                    .send(AppEvent::GitTracker(update))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
         let mut app = Self {
             config: config.clone(),
             state: AppState::new(config.max_tabs),
@@ -118,6 +137,7 @@ impl App {
             app_state_dao,
             session_tab_dao,
             worktree_manager,
+            git_tracker,
         };
 
         // Load sidebar data
@@ -260,7 +280,20 @@ impl App {
 
             session.update_status();
 
+            // Register workspace with git tracker if available
+            let track_info = session
+                .workspace_id
+                .zip(session.working_dir.clone())
+                .map(|(id, dir)| (id, dir));
+
             self.state.tab_manager.add_session(session);
+
+            // Track workspace after session is added
+            if let Some((workspace_id, working_dir)) = track_info {
+                if let Some(ref tracker) = self.git_tracker {
+                    tracker.track_workspace(workspace_id, working_dir);
+                }
+            }
         }
 
         // Restore active tab
@@ -2530,6 +2563,11 @@ impl App {
             }
         }
 
+        // Register workspace with git tracker for background status updates
+        if let Some(ref tracker) = self.git_tracker {
+            tracker.track_workspace(workspace_id, workspace.path.clone());
+        }
+
         // Close the sidebar and switch to normal mode (if requested)
         if close_sidebar {
             self.state.sidebar_state.hide();
@@ -2821,6 +2859,11 @@ impl App {
 
     /// Close any tabs that are using the specified workspace
     fn close_tabs_for_workspace(&mut self, workspace_id: uuid::Uuid) {
+        // Unregister workspace from git tracker
+        if let Some(ref tracker) = self.git_tracker {
+            tracker.untrack_workspace(workspace_id);
+        }
+
         // Find tabs with this workspace and close them (in reverse order to maintain indices)
         let indices_to_close: Vec<usize> = self
             .state
@@ -3685,6 +3728,102 @@ impl App {
                 self.state.input_mode = InputMode::SelectingModel;
             }
         }
+
+        // Check for PR badge click on the right side
+        self.check_pr_badge_click(x, status_bar_area);
+    }
+
+    /// Check if click is on the PR badge and open PR in browser if so
+    fn check_pr_badge_click(&mut self, x: u16, status_bar_area: Rect) {
+        // Get PR info and calculate right content width from current session
+        let (pr_number, working_dir, right_content_width, pr_badge_width) = {
+            let Some(session) = self.state.tab_manager.active_session() else {
+                return;
+            };
+
+            let pr_num = session.pr_number;
+            let wd = session.working_dir.clone();
+
+            // If no PR, nothing to click
+            let Some(num) = pr_num else {
+                return;
+            };
+
+            // Calculate PR badge width: " PR #N " = 5 + digits + 1
+            let badge_width = 5 + num.to_string().len() + 1;
+
+            // Calculate total right content width to find where it starts
+            // Format: [PR badge] [· +N -M] [· branch] [  ]
+            let mut total_width = badge_width;
+
+            // Git stats (if any)
+            let stats = session.status_bar.git_diff_stats();
+            if stats.has_changes() {
+                total_width += 3; // " · "
+                if stats.additions > 0 {
+                    total_width += 1 + stats.additions.to_string().len(); // "+N"
+                }
+                if stats.additions > 0 && stats.deletions > 0 {
+                    total_width += 1; // " "
+                }
+                if stats.deletions > 0 {
+                    total_width += 1 + stats.deletions.to_string().len(); // "-N"
+                }
+            }
+
+            // Branch name
+            if let Some(branch) = session.status_bar.branch_name() {
+                total_width += 3; // " · "
+                total_width += branch.len();
+            }
+
+            // Trailing padding
+            total_width += 2;
+
+            (Some(num), wd, total_width, badge_width)
+        };
+
+        let Some(_pr_num) = pr_number else {
+            return;
+        };
+
+        // Calculate where right content starts
+        let status_width = status_bar_area.width as usize;
+        if right_content_width > status_width {
+            return; // Content doesn't fit
+        }
+
+        let right_start_x = status_bar_area.x + (status_width - right_content_width) as u16;
+        let pr_badge_end_x = right_start_x + pr_badge_width as u16;
+
+        // Check if click is within PR badge
+        if x >= right_start_x && x < pr_badge_end_x {
+            if let Some(wd) = working_dir {
+                let _ = self.open_pr_in_browser(&wd);
+            }
+        }
+    }
+
+    /// Open PR in browser for the given working directory
+    fn open_pr_in_browser(&self, working_dir: &std::path::Path) -> anyhow::Result<()> {
+        use std::process::Command;
+
+        // Use gh pr view --web to open PR in browser
+        let output = Command::new("gh")
+            .arg("pr")
+            .arg("view")
+            .arg("--web")
+            .current_dir(working_dir)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                anyhow::bail!("Failed to open PR: {}", stderr)
+            }
+            Err(e) => anyhow::bail!("Failed to run gh: {}", e),
+        }
     }
 
     /// Handle click in model selector dialog
@@ -4085,10 +4224,63 @@ impl App {
                 // Background refresh done - stop spinner
                 self.state.session_import_state.set_loading(false);
             }
+            AppEvent::GitTracker(update) => {
+                self.handle_git_tracker_update(update);
+            }
             _ => {}
         }
 
         Ok(effects)
+    }
+
+    /// Handle updates from the background git tracker
+    fn handle_git_tracker_update(&mut self, update: crate::ui::git_tracker::GitTrackerUpdate) {
+        use crate::ui::git_tracker::GitTrackerUpdate;
+
+        match update {
+            GitTrackerUpdate::PrStatusChanged {
+                workspace_id,
+                status,
+            } => {
+                // Update all sessions with this workspace
+                for session in self.state.tab_manager.sessions_mut() {
+                    if session.workspace_id == Some(workspace_id) {
+                        session.pr_number = status.number;
+                        session.status_bar.set_pr_status(Some(status.clone()));
+                    }
+                }
+            }
+            GitTrackerUpdate::GitStatsChanged {
+                workspace_id,
+                stats,
+            } => {
+                // Update all sessions with this workspace
+                for session in self.state.tab_manager.sessions_mut() {
+                    if session.workspace_id == Some(workspace_id) {
+                        session.status_bar.set_git_diff_stats(stats.clone());
+                    }
+                }
+                // Also update sidebar data
+                self.state
+                    .sidebar_data
+                    .update_workspace_git_stats(workspace_id, stats);
+            }
+            GitTrackerUpdate::BranchChanged {
+                workspace_id,
+                branch,
+            } => {
+                // Update all sessions with this workspace
+                for session in self.state.tab_manager.sessions_mut() {
+                    if session.workspace_id == Some(workspace_id) {
+                        session.status_bar.set_branch_name(Some(branch.clone()));
+                    }
+                }
+                // Also update sidebar data
+                self.state
+                    .sidebar_data
+                    .update_workspace_branch(workspace_id, branch);
+            }
+        }
     }
 
     async fn handle_agent_event(

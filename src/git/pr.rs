@@ -8,12 +8,43 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+/// PR state matching GitHub's actual states
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrState {
+    #[default]
+    Unknown,
+    Open,
+    Merged,
+    Closed,
+    Draft,
+}
+
+impl PrState {
+    /// Parse from gh pr view JSON output
+    pub fn from_gh_json(state: &str, is_draft: bool, merged_at: Option<&str>) -> Self {
+        if merged_at.is_some() {
+            PrState::Merged
+        } else if is_draft {
+            PrState::Draft
+        } else {
+            match state.to_uppercase().as_str() {
+                "OPEN" => PrState::Open,
+                "CLOSED" => PrState::Closed,
+                "MERGED" => PrState::Merged,
+                _ => PrState::Unknown,
+            }
+        }
+    }
+}
+
 /// PR status for a branch
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PrStatus {
     pub exists: bool,
     pub number: Option<u32>,
     pub url: Option<String>,
+    pub state: PrState,
+    pub title: Option<String>,
 }
 
 /// Result of preflight checks before PR creation
@@ -34,6 +65,12 @@ pub struct PrPreflightResult {
 struct GhPrView {
     number: u32,
     url: String,
+    state: String,
+    #[serde(rename = "isDraft")]
+    is_draft: bool,
+    #[serde(rename = "mergedAt")]
+    merged_at: Option<String>,
+    title: String,
 }
 
 /// PR Manager for preflight checks and utilities
@@ -187,7 +224,12 @@ impl PrManager {
     /// Check if a PR exists for the current branch
     pub fn get_existing_pr(working_dir: &Path) -> Option<PrStatus> {
         let output = Command::new("gh")
-            .args(["pr", "view", "--json", "number,url"])
+            .args([
+                "pr",
+                "view",
+                "--json",
+                "number,url,state,isDraft,mergedAt,title",
+            ])
             .current_dir(working_dir)
             .output()
             .ok()?;
@@ -198,21 +240,28 @@ impl PrManager {
                 exists: false,
                 number: None,
                 url: None,
+                state: PrState::Unknown,
+                title: None,
             });
         }
 
         let json_str = String::from_utf8_lossy(&output.stdout);
         if let Ok(pr) = serde_json::from_str::<GhPrView>(&json_str) {
+            let state = PrState::from_gh_json(&pr.state, pr.is_draft, pr.merged_at.as_deref());
             Some(PrStatus {
                 exists: true,
                 number: Some(pr.number),
                 url: Some(pr.url),
+                state,
+                title: Some(pr.title),
             })
         } else {
             Some(PrStatus {
                 exists: false,
                 number: None,
                 url: None,
+                state: PrState::Unknown,
+                title: None,
             })
         }
     }

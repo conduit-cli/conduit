@@ -82,6 +82,11 @@ pub use theme::{
     FOOTER_BG,
     INPUT_BG,
     KEY_HINT_BG,
+    // PR state colors
+    PR_CLOSED_BG,
+    PR_DRAFT_BG,
+    PR_MERGED_BG,
+    PR_OPEN_BG,
     SELECTED_BG,
     SELECTED_BG_DIM,
     // Knight Rider spinner colors
@@ -101,5 +106,8 @@ pub use theme::{
     TEXT_SECONDARY,
 };
 pub use thinking_indicator::{ProcessingState, ThinkingIndicator};
-pub use tree_view::{ActionType, NodeType, SidebarData, TreeNode, TreeView, TreeViewState};
+pub use tree_view::{
+    ActionType, NodeType, SidebarData, SidebarGitDisplay, TreeNode, TreeView, TreeViewState,
+    SIDEBAR_GIT_DISPLAY,
+};
 pub use turn_summary::{FileChange, TurnSummary};

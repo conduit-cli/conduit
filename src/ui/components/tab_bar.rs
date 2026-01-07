@@ -82,7 +82,8 @@ impl TabBar {
             let is_active = i == self.active;
             let is_processing = self.processing_flags.get(i).copied().unwrap_or(false);
             let needs_attention = self.attention_flags.get(i).copied().unwrap_or(false);
-            let pr_number = self.pr_numbers.get(i).copied().flatten();
+            // PR number kept for future use (e.g., sidebar), but display moved to status bar
+            let _pr_number = self.pr_numbers.get(i).copied().flatten();
 
             // Base style for active tabs (with background)
             let active_bg_style = if is_active {
@@ -144,21 +145,7 @@ impl TabBar {
             }
             _total_width += 2;
 
-            // Show PR badge inline for active tab
-            if is_active {
-                if let Some(pr) = pr_number {
-                    let badge = format!(" PR #{} ", pr);
-                    _total_width += badge.len();
-                    spans.push(Span::styled(
-                        badge,
-                        active_bg_style
-                            .fg(TEXT_PRIMARY)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    spans.push(Span::styled(" ", active_bg_style));
-                    _total_width += 1;
-                }
-            }
+            // Note: PR badge moved to status bar
         }
 
         // Add new tab button - muted until hovered

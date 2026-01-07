@@ -9,6 +9,25 @@ use ratatui::{
 };
 use uuid::Uuid;
 
+use crate::git::GitDiffStats;
+
+use super::{ACCENT_ERROR, ACCENT_SUCCESS, ACCENT_WARNING, TEXT_MUTED};
+
+/// Display mode for git status in the sidebar
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarGitDisplay {
+    /// No git status display
+    Off,
+    /// Simple colored dot indicator (green=clean, orange=dirty)
+    ColoredDot,
+    /// Inline stats showing +12 -4 numbers
+    #[default]
+    InlineStats,
+}
+
+/// Current sidebar git display mode (toggle via constant for now)
+pub const SIDEBAR_GIT_DISPLAY: SidebarGitDisplay = SidebarGitDisplay::InlineStats;
+
 /// Type of action for action nodes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionType {
@@ -46,6 +65,8 @@ pub struct TreeNode {
     pub depth: usize,
     /// Type of this node
     pub node_type: NodeType,
+    /// Git diff stats for workspaces (updated by background tracker)
+    pub git_stats: Option<GitDiffStats>,
 }
 
 impl TreeNode {
@@ -61,6 +82,7 @@ impl TreeNode {
             expanded: true,
             depth: 0,
             node_type: NodeType::Repository,
+            git_stats: None,
         }
     }
 
@@ -75,6 +97,7 @@ impl TreeNode {
             expanded: false,
             depth: 1,
             node_type: NodeType::Workspace,
+            git_stats: None,
         }
     }
 
@@ -92,6 +115,7 @@ impl TreeNode {
             expanded: false,
             depth: 1, // Will be set when added as child
             node_type: NodeType::Action(action_type),
+            git_stats: None,
         }
     }
 
@@ -370,6 +394,52 @@ impl StatefulWidget for TreeView<'_> {
                 if let Some(suffix) = &node.suffix {
                     spans.push(Span::styled(suffix.as_str(), label_style));
                 }
+
+                // Add git stats based on display mode
+                match SIDEBAR_GIT_DISPLAY {
+                    SidebarGitDisplay::Off => {}
+                    SidebarGitDisplay::ColoredDot => {
+                        // Colored dot: green=clean, orange=dirty
+                        if let Some(ref stats) = node.git_stats {
+                            if stats.has_changes() {
+                                spans
+                                    .push(Span::styled("  ●", Style::default().fg(ACCENT_WARNING)));
+                            } else {
+                                spans
+                                    .push(Span::styled("  ●", Style::default().fg(ACCENT_SUCCESS)));
+                            }
+                        }
+                    }
+                    SidebarGitDisplay::InlineStats => {
+                        // Inline stats: +12 -4 (omit zeros)
+                        if let Some(ref stats) = node.git_stats {
+                            if stats.has_changes() {
+                                spans.push(Span::styled("  ", Style::default().fg(TEXT_MUTED)));
+
+                                let has_additions = stats.additions > 0;
+                                let has_deletions = stats.deletions > 0;
+
+                                if has_additions {
+                                    spans.push(Span::styled(
+                                        format!("+{}", stats.additions),
+                                        Style::default().fg(ACCENT_SUCCESS),
+                                    ));
+                                }
+
+                                if has_additions && has_deletions {
+                                    spans.push(Span::styled(" ", Style::default()));
+                                }
+
+                                if has_deletions {
+                                    spans.push(Span::styled(
+                                        format!("-{}", stats.deletions),
+                                        Style::default().fg(ACCENT_ERROR),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 // Single line items show label
                 spans.push(Span::styled(&node.label, label_style));
@@ -607,5 +677,33 @@ impl SidebarData {
         self.visible_nodes()
             .iter()
             .position(|node| node.id == workspace_id && node.node_type == NodeType::Workspace)
+    }
+
+    /// Update git stats for a workspace by its ID
+    pub fn update_workspace_git_stats(&mut self, workspace_id: Uuid, stats: GitDiffStats) {
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository {
+                for child in &mut node.children {
+                    if child.id == workspace_id && child.node_type == NodeType::Workspace {
+                        child.git_stats = Some(stats);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update branch name for a workspace by its ID
+    pub fn update_workspace_branch(&mut self, workspace_id: Uuid, branch: String) {
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository {
+                for child in &mut node.children {
+                    if child.id == workspace_id && child.node_type == NodeType::Workspace {
+                        child.suffix = Some(branch);
+                        return;
+                    }
+                }
+            }
+        }
     }
 }

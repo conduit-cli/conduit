@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::agent::{AgentEvent, AgentType};
 use crate::git::PrPreflightResult;
+use crate::ui::git_tracker::GitTrackerUpdate;
 use uuid::Uuid;
 
 /// Application-level events
@@ -99,6 +100,9 @@ pub enum AppEvent {
 
     /// Background session discovery complete
     SessionDiscoveryComplete,
+
+    /// Git tracker update (PR status, git stats, branch changes)
+    GitTracker(GitTrackerUpdate),
 }
 
 #[derive(Debug, Clone)]

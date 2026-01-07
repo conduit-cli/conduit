@@ -150,6 +150,11 @@ impl TabManager {
         &self.sessions
     }
 
+    /// Get mutable references to all sessions for iteration
+    pub fn sessions_mut(&mut self) -> &mut [AgentSession] {
+        &mut self.sessions
+    }
+
     /// Get tab names for display
     pub fn tab_names(&self) -> Vec<String> {
         self.sessions.iter().map(|s| s.tab_name()).collect()

@@ -60,6 +60,19 @@ pub const AGENT_CLAUDE: Color = Color::Rgb(130, 180, 220);
 pub const AGENT_CODEX: Color = Color::Rgb(180, 140, 200);
 
 // =============================================================================
+// PR State Colors (GitHub-style backgrounds)
+// =============================================================================
+
+/// Open PR - green background (GitHub style)
+pub const PR_OPEN_BG: Color = Color::Rgb(35, 134, 54);
+/// Merged PR - purple background (GitHub style)
+pub const PR_MERGED_BG: Color = Color::Rgb(130, 80, 223);
+/// Closed PR - red background (GitHub style)
+pub const PR_CLOSED_BG: Color = Color::Rgb(218, 54, 51);
+/// Draft PR - gray background (GitHub style)
+pub const PR_DRAFT_BG: Color = Color::Rgb(110, 118, 129);
+
+// =============================================================================
 // Knight Rider Spinner Colors (gradient trail)
 // =============================================================================
 

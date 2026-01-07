@@ -11,10 +11,12 @@ use crate::agent::{
     events::{ContextWarningLevel, ContextWindowState},
     AgentMode, AgentType, ModelRegistry, SessionId, TokenUsage,
 };
+use crate::git::{GitDiffStats, PrState, PrStatus};
 use crate::ui::components::{
-    ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, STATUS_BAR_BG, TEXT_BRIGHT,
-    TEXT_FAINT, TEXT_MUTED,
+    ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, PR_CLOSED_BG, PR_DRAFT_BG,
+    PR_MERGED_BG, PR_OPEN_BG, STATUS_BAR_BG, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED,
 };
+use ratatui::style::Color;
 
 /// Status bar component showing session info
 pub struct StatusBar {
@@ -32,6 +34,10 @@ pub struct StatusBar {
     branch_name: Option<String>,
     /// Working directory folder name
     folder_name: Option<String>,
+    /// PR status for the current session
+    pr_status: Option<PrStatus>,
+    /// Git diff stats (+/- counts)
+    git_diff_stats: GitDiffStats,
     /// Time spent in draw()
     draw_time: Duration,
     /// Time spent processing events
@@ -65,6 +71,8 @@ impl StatusBar {
             repo_name: None,
             branch_name: None,
             folder_name: None,
+            pr_status: None,
+            git_diff_stats: GitDiffStats::default(),
             draw_time: Duration::ZERO,
             event_time: Duration::ZERO,
             fps: 0.0,
@@ -100,6 +108,31 @@ impl StatusBar {
 
     pub fn set_context_state(&mut self, state: ContextWindowState) {
         self.context_state = Some(state);
+    }
+
+    /// Set PR status for display
+    pub fn set_pr_status(&mut self, status: Option<PrStatus>) {
+        self.pr_status = status;
+    }
+
+    /// Set git diff stats for display
+    pub fn set_git_diff_stats(&mut self, stats: GitDiffStats) {
+        self.git_diff_stats = stats;
+    }
+
+    /// Set branch name directly (from git tracker)
+    pub fn set_branch_name(&mut self, branch: Option<String>) {
+        self.branch_name = branch;
+    }
+
+    /// Get branch name
+    pub fn branch_name(&self) -> Option<&str> {
+        self.branch_name.as_deref()
+    }
+
+    /// Get git diff stats
+    pub fn git_diff_stats(&self) -> &GitDiffStats {
+        &self.git_diff_stats
     }
 
     /// Set project info for right side of status bar
@@ -301,42 +334,75 @@ impl StatusBar {
     }
 
     /// Build project info spans for right side of status bar
-    /// Format: repo · branch · ~ folder
+    /// New format: PR #123 · +44 -10 · feature-branch (or without PR if none)
     fn build_project_info_spans(&self) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
+        let mut has_content = false;
 
-        if let Some(repo) = &self.repo_name {
-            // Repo name - bright like model
-            spans.push(Span::styled(repo.clone(), Style::default().fg(TEXT_BRIGHT)));
+        // PR badge with colored background (if PR exists)
+        if let Some(ref pr) = self.pr_status {
+            if pr.exists {
+                let (bg_color, fg_color) = match pr.state {
+                    PrState::Open => (PR_OPEN_BG, Color::White),
+                    PrState::Merged => (PR_MERGED_BG, Color::White),
+                    PrState::Closed => (PR_CLOSED_BG, Color::White),
+                    PrState::Draft => (PR_DRAFT_BG, Color::White),
+                    PrState::Unknown => (PR_OPEN_BG, Color::White), // Default to open styling
+                };
 
-            // Separator
-            spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
-
-            // Branch name - muted like agent
-            if let Some(branch) = &self.branch_name {
+                let badge = format!(" PR #{} ", pr.number.unwrap_or(0));
                 spans.push(Span::styled(
-                    branch.clone(),
-                    Style::default().fg(TEXT_MUTED),
+                    badge,
+                    Style::default().bg(bg_color).fg(fg_color),
                 ));
-            } else {
-                spans.push(Span::styled("(no branch)", Style::default().fg(TEXT_MUTED)));
+                has_content = true;
+            }
+        }
+
+        // Git stats: +44 -10 (omit zeros)
+        if self.git_diff_stats.has_changes() {
+            if has_content {
+                spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
             }
 
-            // Separator
-            spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
+            let has_additions = self.git_diff_stats.additions > 0;
+            let has_deletions = self.git_diff_stats.deletions > 0;
 
-            // Tilde with accent
-            spans.push(Span::styled("~ ", Style::default().fg(ACCENT_PRIMARY)));
-
-            // Folder name - muted
-            if let Some(folder) = &self.folder_name {
+            if has_additions {
                 spans.push(Span::styled(
-                    folder.clone(),
-                    Style::default().fg(TEXT_MUTED),
+                    format!("+{}", self.git_diff_stats.additions),
+                    Style::default().fg(ACCENT_SUCCESS), // Green
                 ));
             }
 
-            // Trailing padding
+            if has_additions && has_deletions {
+                spans.push(Span::raw(" "));
+            }
+
+            if has_deletions {
+                spans.push(Span::styled(
+                    format!("-{}", self.git_diff_stats.deletions),
+                    Style::default().fg(ACCENT_ERROR), // Red
+                ));
+            }
+
+            has_content = true;
+        }
+
+        // Branch name
+        if let Some(ref branch) = self.branch_name {
+            if has_content {
+                spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
+            }
+            spans.push(Span::styled(
+                branch.clone(),
+                Style::default().fg(TEXT_MUTED),
+            ));
+            has_content = true;
+        }
+
+        // Trailing padding if we have content
+        if has_content {
             spans.push(Span::raw("  "));
         }
 
