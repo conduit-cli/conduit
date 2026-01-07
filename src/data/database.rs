@@ -153,6 +153,22 @@ impl Database {
             )?;
         }
 
+        // Migration 4: Add agent_mode column to session_tabs table
+        let has_agent_mode: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='agent_mode'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_agent_mode {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN agent_mode TEXT DEFAULT 'build'",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 

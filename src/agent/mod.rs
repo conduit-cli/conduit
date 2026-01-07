@@ -18,5 +18,5 @@ pub use history::{
     load_claude_history_with_debug, load_codex_history_with_debug, HistoryDebugEntry, HistoryError,
 };
 pub use models::{ModelInfo, ModelRegistry};
-pub use runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
+pub use runner::{AgentHandle, AgentMode, AgentRunner, AgentStartConfig, AgentType};
 pub use session::{SessionId, SessionMetadata, SessionStatus};

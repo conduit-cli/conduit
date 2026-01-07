@@ -56,6 +56,12 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-p", Action::ToggleMetrics);
     bind(&mut config.global, "M-g", Action::DumpDebugState);
 
+    // Agent mode toggle (Build/Plan) - Ctrl+Backspace
+    config.global.insert(
+        KeyCombo::new(KeyCode::Backspace, KeyModifiers::CONTROL),
+        Action::ToggleAgentMode,
+    );
+
     // Alt+Shift for scrolling (M-S-j = Alt+Shift+J)
     bind(&mut config.global, "M-S-j", Action::ScrollDown(1));
     bind(&mut config.global, "M-S-k", Action::ScrollUp(1));

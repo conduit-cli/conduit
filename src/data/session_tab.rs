@@ -23,13 +23,14 @@ impl SessionTabStore {
     pub fn create(&self, tab: &SessionTab) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_session_id, model, pr_number, created_at, pending_user_message)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
                 tab.workspace_id.map(|id| id.to_string()),
                 tab.agent_type.as_str(),
+                tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
                 tab.pr_number,
@@ -44,7 +45,7 @@ impl SessionTabStore {
     pub fn get_all(&self) -> SqliteResult<Vec<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_session_id, model, pr_number, created_at, pending_user_message
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message
              FROM session_tabs ORDER BY tab_index",
         )?;
 
@@ -60,7 +61,7 @@ impl SessionTabStore {
     pub fn get_by_id(&self, id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_session_id, model, pr_number, created_at, pending_user_message
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message
              FROM session_tabs WHERE id = ?1",
         )?;
 
@@ -76,13 +77,14 @@ impl SessionTabStore {
     pub fn update(&self, tab: &SessionTab) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE session_tabs SET tab_index = ?2, workspace_id = ?3, agent_type = ?4,
-             agent_session_id = ?5, model = ?6, pr_number = ?7, pending_user_message = ?8 WHERE id = ?1",
+            "UPDATE session_tabs SET tab_index = ?2, workspace_id = ?3, agent_type = ?4, agent_mode = ?5,
+             agent_session_id = ?6, model = ?7, pr_number = ?8, pending_user_message = ?9 WHERE id = ?1",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
                 tab.workspace_id.map(|id| id.to_string()),
                 tab.agent_type.as_str(),
+                tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
                 tab.pr_number,
@@ -121,7 +123,7 @@ impl SessionTabStore {
     pub fn get_by_workspace_id(&self, workspace_id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_session_id, model, pr_number, created_at, pending_user_message
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message
              FROM session_tabs WHERE workspace_id = ?1",
         )?;
 
@@ -134,24 +136,26 @@ impl SessionTabStore {
     }
 
     /// Convert a database row to a SessionTab
+    /// Row order: id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message
     fn row_to_session_tab(row: &rusqlite::Row) -> SqliteResult<SessionTab> {
         let id_str: String = row.get(0)?;
         let workspace_id_str: Option<String> = row.get(2)?;
         let agent_type_str: String = row.get(3)?;
-        let created_at_str: String = row.get(7)?;
+        let created_at_str: String = row.get(8)?;
 
         Ok(SessionTab {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
             tab_index: row.get(1)?,
             workspace_id: workspace_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
             agent_type: AgentType::parse(&agent_type_str),
-            agent_session_id: row.get(4)?,
-            model: row.get(5)?,
-            pr_number: row.get(6)?,
+            agent_mode: row.get(4)?,
+            agent_session_id: row.get(5)?,
+            model: row.get(6)?,
+            pr_number: row.get(7)?,
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
-            pending_user_message: row.get(8)?,
+            pending_user_message: row.get(9)?,
         })
     }
 }

@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::agent::{
     events::{ContextWarningLevel, ContextWindowState},
-    AgentType, ModelRegistry, SessionId, TokenUsage,
+    AgentMode, AgentType, ModelRegistry, SessionId, TokenUsage,
 };
 use crate::ui::components::{
     ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, STATUS_BAR_BG, TEXT_BRIGHT,
@@ -19,6 +19,7 @@ use crate::ui::components::{
 /// Status bar component showing session info
 pub struct StatusBar {
     agent_type: AgentType,
+    agent_mode: AgentMode,
     model: Option<String>,
     session_id: Option<SessionId>,
     token_usage: TokenUsage,
@@ -55,6 +56,7 @@ impl StatusBar {
     pub fn new(agent_type: AgentType) -> Self {
         Self {
             agent_type,
+            agent_mode: AgentMode::default(),
             model: None,
             session_id: None,
             token_usage: TokenUsage::default(),
@@ -81,6 +83,10 @@ impl StatusBar {
 
     pub fn set_agent_type(&mut self, agent_type: AgentType) {
         self.agent_type = agent_type;
+    }
+
+    pub fn set_agent_mode(&mut self, mode: AgentMode) {
+        self.agent_mode = mode;
     }
 
     pub fn set_model(&mut self, model: Option<String>) {
@@ -156,6 +162,16 @@ impl StatusBar {
 
         // Leading spaces
         spans.push(Span::raw("  "));
+
+        // Mode indicator - ONLY for Claude, with accent color
+        if self.agent_type == AgentType::Claude {
+            spans.push(Span::styled(
+                self.agent_mode.display_name(),
+                Style::default().fg(ACCENT_PRIMARY),
+            ));
+            // Two spaces separator between mode and model
+            spans.push(Span::raw("  "));
+        }
 
         // Model name first - bright/primary color
         let model_id = self

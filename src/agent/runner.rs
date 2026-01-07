@@ -14,6 +14,59 @@ pub enum AgentType {
     Codex,
 }
 
+/// Agent mode (Build vs Plan)
+///
+/// Build mode (default): Claude can read, write, and execute commands
+/// Plan mode: Claude can only read and analyze, no modifications allowed
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AgentMode {
+    #[default]
+    Build,
+    Plan,
+}
+
+impl AgentMode {
+    /// Convert to Claude's --permission-mode argument value
+    pub fn as_permission_mode(&self) -> &'static str {
+        match self {
+            AgentMode::Build => "default",
+            AgentMode::Plan => "plan",
+        }
+    }
+
+    /// Display name for the UI
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AgentMode::Build => "Build",
+            AgentMode::Plan => "Plan",
+        }
+    }
+
+    /// String representation for storage
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentMode::Build => "build",
+            AgentMode::Plan => "plan",
+        }
+    }
+
+    /// Parse from string
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "plan" => AgentMode::Plan,
+            _ => AgentMode::Build,
+        }
+    }
+
+    /// Toggle between Build and Plan
+    pub fn toggle(&self) -> Self {
+        match self {
+            AgentMode::Build => AgentMode::Plan,
+            AgentMode::Plan => AgentMode::Build,
+        }
+    }
+}
+
 impl AgentType {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -56,6 +109,8 @@ pub struct AgentStartConfig {
     pub model: Option<String>,
     /// Optional image paths to attach to the initial prompt
     pub images: Vec<PathBuf>,
+    /// Agent mode (Build vs Plan) - only used by Claude
+    pub agent_mode: AgentMode,
 }
 
 impl AgentStartConfig {
@@ -69,6 +124,7 @@ impl AgentStartConfig {
             additional_args: vec![],
             model: None,
             images: Vec::new(),
+            agent_mode: AgentMode::default(),
         }
     }
 
@@ -94,6 +150,11 @@ impl AgentStartConfig {
 
     pub fn with_images(mut self, images: Vec<PathBuf>) -> Self {
         self.images = images;
+        self
+    }
+
+    pub fn with_agent_mode(mut self, mode: AgentMode) -> Self {
+        self.agent_mode = mode;
         self
     }
 }

@@ -131,6 +131,8 @@ pub struct SessionTab {
     pub workspace_id: Option<Uuid>,
     /// Agent type (Claude or Codex)
     pub agent_type: AgentType,
+    /// Agent mode (Build or Plan) - only applicable to Claude
+    pub agent_mode: Option<String>,
     /// Agent session ID (for resume and history loading)
     pub agent_session_id: Option<String>,
     /// Selected model
@@ -158,6 +160,7 @@ impl SessionTab {
             tab_index,
             workspace_id,
             agent_type,
+            agent_mode: None,
             agent_session_id,
             model,
             pr_number,

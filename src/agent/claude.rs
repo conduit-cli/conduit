@@ -36,6 +36,10 @@ impl ClaudeCodeRunner {
         cmd.arg("-p").arg(&config.prompt);
         cmd.arg("--output-format").arg("stream-json");
 
+        // Permission mode (Build vs Plan)
+        cmd.arg("--permission-mode")
+            .arg(config.agent_mode.as_permission_mode());
+
         // Allowed tools
         if !config.allowed_tools.is_empty() {
             cmd.arg("--allowedTools")

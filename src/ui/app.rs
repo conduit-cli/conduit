@@ -21,8 +21,8 @@ use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 
 use crate::agent::{
-    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentRunner,
-    AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
+    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
+    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
     MessageDisplay, SessionId,
 };
 use crate::config::{
@@ -172,6 +172,12 @@ impl App {
             session.workspace_id = tab.workspace_id;
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
+            // Restore agent mode (defaults to Build if not set)
+            session.agent_mode = tab
+                .agent_mode
+                .as_deref()
+                .map(AgentMode::parse)
+                .unwrap_or_default();
 
             // Look up workspace to get working_dir, workspace_name, and project_name
             if let Some(workspace_id) = tab.workspace_id {
@@ -346,6 +352,8 @@ impl App {
                     session.model.clone(),
                     session.pr_number.map(|n| n as i32),
                 );
+                // Preserve agent mode for session restoration
+                tab.agent_mode = Some(session.agent_mode.as_str().to_string());
                 // Preserve pending user message for interrupted sessions
                 tab.pending_user_message = session.pending_user_message.clone();
                 tab
@@ -1034,6 +1042,15 @@ impl App {
                 // } else {
                 //     self.state.stop_footer_spinner();
                 // }
+            }
+            Action::ToggleAgentMode => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    // Only toggle for Claude sessions - Codex doesn't support plan mode
+                    if session.agent_type == AgentType::Claude {
+                        session.agent_mode = session.agent_mode.toggle();
+                        session.update_status();
+                    }
+                }
             }
             Action::DumpDebugState => {
                 effects.push(Effect::DumpDebugState);
@@ -4234,12 +4251,13 @@ impl App {
         let tab_index = self.state.tab_manager.active_index();
 
         // Extract session info in a limited borrow scope
-        let (agent_type, model, session_id_to_use, working_dir) = {
+        let (agent_type, agent_mode, model, session_id_to_use, working_dir) = {
             let Some(session) = self.state.tab_manager.active_session_mut() else {
                 return Ok(effects);
             };
 
             let agent_type = session.agent_type;
+            let agent_mode = session.agent_mode;
             let model = session.model.clone();
             // Use agent_session_id if available (set by agent after first prompt)
             // Fall back to resume_session_id only for initial session restoration
@@ -4253,7 +4271,13 @@ impl App {
                 .clone()
                 .unwrap_or_else(|| self.config.working_dir.clone());
 
-            (agent_type, model, session_id_to_use, working_dir)
+            (
+                agent_type,
+                agent_mode,
+                model,
+                session_id_to_use,
+                working_dir,
+            )
         };
 
         let mut prompt = prompt;
@@ -4323,7 +4347,8 @@ impl App {
 
         let mut config = AgentStartConfig::new(prompt, working_dir)
             .with_tools(self.config.claude_allowed_tools.clone())
-            .with_images(images);
+            .with_images(images)
+            .with_agent_mode(agent_mode);
 
         // Add model if specified
         if let Some(model_id) = model {

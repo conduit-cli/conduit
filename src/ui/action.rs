@@ -162,6 +162,8 @@ pub enum Action {
     // ========== Agent Selection ==========
     /// Confirm agent selection
     SelectAgent,
+    /// Toggle between Build and Plan mode (Claude only)
+    ToggleAgentMode,
 
     // ========== Session Import ==========
     /// Open session import picker
@@ -270,6 +272,7 @@ impl Action {
 
             // Agent
             Action::SelectAgent => "Select agent",
+            Action::ToggleAgentMode => "Toggle Build/Plan mode",
 
             // Session import
             Action::OpenSessionImport => "Import session",

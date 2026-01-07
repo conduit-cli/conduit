@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::agent::{
     events::{ContextCompactionEvent, ContextWarningLevel, ContextWindowState, TokenUsageEvent},
     models::ModelRegistry,
-    AgentHandle, AgentType, SessionId, TokenUsage,
+    AgentHandle, AgentMode, AgentType, SessionId, TokenUsage,
 };
 use crate::git::PrManager;
 use crate::ui::components::{
@@ -20,6 +20,8 @@ pub struct AgentSession {
     pub id: Uuid,
     /// Type of agent (Claude or Codex)
     pub agent_type: AgentType,
+    /// Agent mode (Build vs Plan) - only applicable to Claude
+    pub agent_mode: AgentMode,
     /// Selected model for this session
     pub model: Option<String>,
     /// Associated workspace ID (for project context)
@@ -81,6 +83,7 @@ impl AgentSession {
         Self {
             id: Uuid::new_v4(),
             agent_type,
+            agent_mode: AgentMode::default(),
             model: None,
             workspace_id: None,
             working_dir: None,
@@ -143,6 +146,7 @@ impl AgentSession {
     /// Update status bar with current state
     pub fn update_status(&mut self) {
         self.status_bar.set_agent_type(self.agent_type);
+        self.status_bar.set_agent_mode(self.agent_mode);
         self.status_bar.set_model(self.model.clone());
         self.status_bar
             .set_session_id(self.agent_session_id.clone());
