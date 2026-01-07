@@ -307,7 +307,13 @@ impl CommandPalette {
         }
 
         // Render cursor
-        let cursor_x = area.x + prompt.len() as u16 + state.list.search.cursor as u16;
+        let prompt_width = UnicodeWidthStr::width(prompt) as u16;
+        let cursor_offset = input
+            .chars()
+            .take(state.list.search.cursor)
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1) as u16)
+            .sum::<u16>();
+        let cursor_x = area.x + prompt_width + cursor_offset;
         if cursor_x < area.x + area.width {
             buf[(cursor_x, area.y)]
                 .set_style(Style::default().add_modifier(ratatui::style::Modifier::REVERSED));

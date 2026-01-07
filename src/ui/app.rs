@@ -2184,26 +2184,29 @@ impl App {
                                 })
                                 .and_then(|repo| repo.base_path);
 
-                            let mut worktree_error = None;
-                            let mut branch_delete_error = None;
+                            let mut warnings = Vec::new();
                             let mut archived_commit_sha = None;
                             if let Some(base_path) = repo_base_path {
-                                let commit_sha = worktree_manager
-                                    .get_branch_sha(&base_path, &workspace.branch)
-                                    .map_err(|e| format!("Failed to read branch SHA: {}", e))?;
-                                archived_commit_sha = Some(commit_sha);
+                                match worktree_manager.get_branch_sha(&base_path, &workspace.branch)
+                                {
+                                    Ok(commit_sha) => {
+                                        archived_commit_sha = Some(commit_sha);
+                                    }
+                                    Err(e) => {
+                                        warnings.push(format!("Failed to read branch SHA: {}", e));
+                                    }
+                                }
 
                                 if let Err(e) =
                                     worktree_manager.remove_worktree(&base_path, &workspace.path)
                                 {
-                                    worktree_error =
-                                        Some(format!("Failed to remove worktree: {}", e));
+                                    warnings.push(format!("Failed to remove worktree: {}", e));
                                 }
 
                                 if let Err(e) =
                                     worktree_manager.delete_branch(&base_path, &workspace.branch)
                                 {
-                                    branch_delete_error = Some(format!(
+                                    warnings.push(format!(
                                         "Failed to delete branch '{}': {}",
                                         workspace.branch, e
                                     ));
@@ -2218,8 +2221,7 @@ impl App {
 
                             Ok(WorkspaceArchived {
                                 workspace_id,
-                                worktree_error,
-                                branch_delete_error,
+                                warnings,
                             })
                         })(
                         );
@@ -3314,6 +3316,15 @@ impl App {
             for _ in 0..*pending_down {
                 self.state.session_import_state.select_next();
             }
+        } else if self.state.input_mode == InputMode::CommandPalette
+            && self.state.command_palette_state.is_visible()
+        {
+            for _ in 0..*pending_up {
+                self.state.command_palette_state.select_prev();
+            }
+            for _ in 0..*pending_down {
+                self.state.command_palette_state.select_next();
+            }
         } else if self.state.view_mode == ViewMode::RawEvents {
             let list_height = self.raw_events_list_visible_height();
             let detail_height = self.raw_events_detail_visible_height();
@@ -4303,18 +4314,11 @@ impl App {
             },
             AppEvent::WorkspaceArchived { result } => match result {
                 Ok(archived) => {
-                    if let Some(error_msg) = archived.worktree_error {
+                    if !archived.warnings.is_empty() {
                         self.show_error_with_details(
-                            "Worktree Warning",
-                            "Workspace archived but worktree removal failed",
-                            &error_msg,
-                        );
-                    }
-                    if let Some(error_msg) = archived.branch_delete_error {
-                        self.show_error_with_details(
-                            "Branch Deletion Warning",
-                            "Workspace archived but branch deletion failed",
-                            &error_msg,
+                            "Archive Warning",
+                            "Workspace archived with warnings",
+                            &archived.warnings.join("\n"),
                         );
                     }
 
