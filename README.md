@@ -140,6 +140,51 @@ Default settings in `src/config/settings.rs`:
 - Input tokens: $3.00 / 1M tokens
 - Output tokens: $15.00 / 1M tokens
 
+## Website
+
+The landing page at [getconduit.sh](https://getconduit.sh) is built with Astro.
+
+### Development
+
+```bash
+cd website
+npm install
+npm run dev
+```
+
+The dev server runs at http://localhost:4321
+
+### Build
+
+```bash
+cd website
+npm run build
+```
+
+Output is in `website/dist/`.
+
+### Deploy
+
+The site is static and can be deployed to any hosting provider:
+
+**GitHub Pages:**
+```bash
+cd website
+npm run build
+# Push dist/ to gh-pages branch or configure GitHub Actions
+```
+
+**Netlify/Vercel:**
+- Connect repo and set build command to `cd website && npm run build`
+- Set publish directory to `website/dist`
+
+**Manual:**
+```bash
+cd website
+npm run build
+# Upload contents of dist/ to your server
+```
+
 ## License
 
 MIT
