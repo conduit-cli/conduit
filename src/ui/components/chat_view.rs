@@ -9,11 +9,118 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
-    render_minimal_scrollbar, ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics,
-    TurnSummary,
+    render_minimal_scrollbar,
+    theme::{
+        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, DIFF_ADD, DIFF_REMOVE, TOOL_BLOCK_BG, TOOL_COMMAND,
+        TOOL_COMMENT, TOOL_OUTPUT,
+    },
+    ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics, TurnSummary,
 };
 
 mod chat_view_cache;
+
+// =============================================================================
+// Tool Block Builder - Opencode-style tool rendering
+// =============================================================================
+
+/// Helper for building Opencode-style tool blocks with consistent styling.
+/// Creates lines with ┃ prefix and full-width background.
+struct ToolBlockBuilder {
+    width: usize,
+    block_style: Style,
+    bg_style: Style,
+}
+
+impl ToolBlockBuilder {
+    fn new(width: usize) -> Self {
+        Self {
+            width,
+            // Use conversation background color as foreground so ┃ blends with surrounding area
+            block_style: Style::default().fg(BG_BASE).bg(TOOL_BLOCK_BG),
+            bg_style: Style::default().bg(TOOL_BLOCK_BG),
+        }
+    }
+
+    /// Create a line with ┃ prefix and full-width background
+    fn line(&self, spans: Vec<Span<'static>>) -> Line<'static> {
+        let prefix = "┃  ";
+        let prefix_width = UnicodeWidthStr::width(prefix);
+
+        let content_width: usize = spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+
+        let total_used = prefix_width + content_width;
+        let padding_needed = self.width.saturating_sub(total_used);
+
+        let mut line_spans = vec![
+            Span::styled("┃", self.block_style),
+            Span::styled("  ", self.bg_style),
+        ];
+        line_spans.extend(spans);
+
+        if padding_needed > 0 {
+            line_spans.push(Span::styled(" ".repeat(padding_needed), self.bg_style));
+        }
+
+        Line::from(line_spans)
+    }
+
+    /// Create an empty line for padding (fills entire width)
+    fn empty_line(&self) -> Line<'static> {
+        let prefix = "┃  ";
+        let prefix_width = UnicodeWidthStr::width(prefix);
+        let padding = self.width.saturating_sub(prefix_width);
+        Line::from(vec![
+            Span::styled("┃", self.block_style),
+            Span::styled("  ", self.bg_style),
+            Span::styled(" ".repeat(padding), self.bg_style),
+        ])
+    }
+
+    /// Create a comment line (# prefix, muted color)
+    fn comment(&self, text: &str) -> Line<'static> {
+        self.line(vec![Span::styled(
+            format!("# {}", text),
+            Style::default().fg(TOOL_COMMENT).bg(TOOL_BLOCK_BG),
+        )])
+    }
+
+    /// Create a command line ($ prefix, bright color)
+    fn command(&self, text: &str) -> Line<'static> {
+        self.line(vec![Span::styled(
+            format!("$ {}", text),
+            Style::default().fg(TOOL_COMMAND).bg(TOOL_BLOCK_BG),
+        )])
+    }
+
+    /// Create an output line (normal color)
+    fn output(&self, text: &str) -> Line<'static> {
+        self.line(vec![Span::styled(
+            text.to_string(),
+            Style::default().fg(TOOL_OUTPUT).bg(TOOL_BLOCK_BG),
+        )])
+    }
+
+    /// Create a colored output line
+    fn output_colored(&self, text: &str, color: Color) -> Line<'static> {
+        self.line(vec![Span::styled(
+            text.to_string(),
+            Style::default().fg(color).bg(TOOL_BLOCK_BG),
+        )])
+    }
+
+    /// Create a line with custom spans
+    fn custom(&self, spans: Vec<Span<'static>>) -> Line<'static> {
+        self.line(spans)
+    }
+
+    /// Get the background style for use in custom spans
+    fn bg_style(&self) -> Style {
+        self.bg_style
+    }
+}
 
 use self::chat_view_cache::LineCache;
 
@@ -567,36 +674,233 @@ impl ChatView {
         }
     }
 
-    /// Get icon for tool type
-    fn tool_icon(tool_name: &str) -> &'static str {
+    /// Format tool messages using Opencode-style blocks
+    fn format_tool_message(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
+        let tool_name = msg.tool_name.as_deref().unwrap_or("Tool");
+
+        // Special formatting for TodoWrite
+        if tool_name == "TodoWrite" {
+            return self.format_todowrite(msg, width, lines);
+        }
+
+        let tool_args = msg.tool_args.as_deref().unwrap_or("");
+        let content_lines: Vec<&str> = msg.content.lines().collect();
+        let line_count = content_lines.len();
+
+        // Determine if error
+        let is_error = if let Some(code) = msg.exit_code {
+            code != 0
+        } else {
+            msg.content.starts_with("Error:")
+        };
+
+        let builder = ToolBlockBuilder::new(width);
+
+        // === Top padding ===
+        lines.push(builder.empty_line());
+
+        // === Description line (# comment) ===
+        let description = self.get_tool_description(tool_name, tool_args);
+        lines.push(builder.comment(&description));
+
+        // === Blank line after description ===
+        lines.push(builder.empty_line());
+
+        // === Command line ($ command) ===
+        let command_display = self.get_tool_command(tool_name, tool_args, width.saturating_sub(6));
+        lines.push(builder.command(&command_display));
+
+        // === Blank line after title section ===
+        lines.push(builder.empty_line());
+
+        // === Output content ===
+        let line_word = if line_count == 1 { "line" } else { "lines" };
+        if msg.is_collapsed {
+            // Collapsed: show summary
+            let summary = if line_count > 0 {
+                format!("▶ {} {} (click to expand)", line_count, line_word)
+            } else {
+                "▶ No output".to_string()
+            };
+            lines.push(builder.output(&summary));
+        } else {
+            // Expanded: show output lines
+            let max_display_lines = 50;
+            let truncated = line_count > max_display_lines;
+            let display_lines = if truncated {
+                &content_lines[..max_display_lines]
+            } else {
+                &content_lines[..]
+            };
+
+            let prefix_width = 3; // "┃  "
+            let content_width = width.saturating_sub(prefix_width).max(1);
+
+            for line in display_lines {
+                // Check for diff-style lines
+                let (line_color, line_text) = if line.starts_with('+') && !line.starts_with("+++") {
+                    (DIFF_ADD, line.to_string())
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    (DIFF_REMOVE, line.to_string())
+                } else if line.starts_with("Error:") || line.contains("error:") {
+                    (ACCENT_ERROR, line.to_string())
+                } else {
+                    // Parse ANSI escape codes
+                    let parsed = line.as_bytes().into_text();
+                    match parsed {
+                        Ok(text) => {
+                            // If ANSI parsed successfully, add spans with background
+                            let mut spans: Vec<Span<'static>> = text
+                                .lines
+                                .into_iter()
+                                .flat_map(|l| l.spans)
+                                .map(|s| {
+                                    Span::styled(s.content.into_owned(), s.style.bg(TOOL_BLOCK_BG))
+                                })
+                                .collect();
+                            if spans.is_empty() {
+                                spans.push(Span::styled("", builder.bg_style()));
+                            }
+                            lines.push(builder.custom(spans));
+                            continue;
+                        }
+                        Err(_) => (TOOL_OUTPUT, line.to_string()),
+                    }
+                };
+
+                // Truncate if needed
+                let display_text = truncate_to_width(&line_text, content_width);
+                lines.push(builder.output_colored(&display_text, line_color));
+            }
+
+            // Truncation notice
+            if truncated {
+                let remaining = line_count - max_display_lines;
+                let more_word = if remaining == 1 { "line" } else { "lines" };
+                lines.push(builder.output_colored(
+                    &format!("... ({} more {})", remaining, more_word),
+                    TOOL_COMMENT,
+                ));
+            }
+        }
+
+        // === Blank line before status ===
+        lines.push(builder.empty_line());
+
+        // === Status line ===
+        let status_text = if is_error {
+            if let Some(code) = msg.exit_code {
+                format!("✗ Failed (exit: {})", code)
+            } else {
+                "✗ Failed".to_string()
+            }
+        } else if let Some(code) = msg.exit_code {
+            format!("✓ Completed (exit: {})", code)
+        } else {
+            format!("✓ {} {}", line_count, line_word)
+        };
+
+        let status_color = if is_error {
+            ACCENT_ERROR
+        } else {
+            ACCENT_SUCCESS
+        };
+        lines.push(builder.output_colored(&status_text, status_color));
+
+        // === Bottom padding ===
+        lines.push(builder.empty_line());
+    }
+
+    /// Get a human-readable description for a tool invocation
+    fn get_tool_description(&self, tool_name: &str, tool_args: &str) -> String {
+        // Try to extract description from JSON args if present
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(tool_args) {
+            if let Some(desc) = json.get("description").and_then(|d| d.as_str()) {
+                return desc.to_string();
+            }
+        }
+
+        // Default descriptions by tool type
         match tool_name {
-            "Bash" => "⚡",
-            "Read" => "📄",
-            "Write" => "💾",
-            "Edit" => "✏️",
-            "Glob" => "🔍",
-            "Grep" => "🔎",
-            "LS" => "📂",
-            "Task" => "🤖",
-            "TodoWrite" => "📋",
-            _ => "🔧",
+            "Bash" => "Run command".to_string(),
+            "Read" => "Read file".to_string(),
+            "Write" => "Write file".to_string(),
+            "Edit" => "Edit file".to_string(),
+            "Glob" => "Find files".to_string(),
+            "Grep" => "Search for pattern".to_string(),
+            "LS" => "List directory".to_string(),
+            "Task" => "Run agent".to_string(),
+            _ => tool_name.to_string(),
         }
     }
 
-    /// Get status icon for todo items
-    fn todo_status_icon(status: &str) -> &'static str {
-        match status {
-            "completed" => "✅",
-            "in_progress" => "🔄",
-            _ => "⬜", // includes "pending" and any unknown status
+    /// Get the command/path to display for a tool invocation
+    fn get_tool_command(&self, tool_name: &str, tool_args: &str, max_width: usize) -> String {
+        // Try to parse as JSON first
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(tool_args) {
+            let command = match tool_name {
+                "Bash" | "exec_command" | "shell" | "local_shell_call" | "command_execution" => {
+                    json.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(String::from)
+                }
+                "Read" | "read_file" => {
+                    let path = json.get("file_path").and_then(|p| p.as_str()).unwrap_or("");
+                    let offset = json.get("offset").and_then(|o| o.as_i64());
+                    let limit = json.get("limit").and_then(|l| l.as_i64());
+                    if let (Some(off), Some(lim)) = (offset, limit) {
+                        Some(format!("{} (lines {}-{})", path, off, off + lim))
+                    } else {
+                        Some(path.to_string())
+                    }
+                }
+                "Write" | "write_file" | "Edit" => json
+                    .get("file_path")
+                    .and_then(|p| p.as_str())
+                    .map(String::from),
+                "Glob" => {
+                    let pattern = json.get("pattern").and_then(|p| p.as_str()).unwrap_or("");
+                    let path = json.get("path").and_then(|p| p.as_str());
+                    if let Some(p) = path {
+                        Some(format!("{} in {}", pattern, p))
+                    } else {
+                        Some(pattern.to_string())
+                    }
+                }
+                "Grep" => {
+                    let pattern = json.get("pattern").and_then(|p| p.as_str()).unwrap_or("");
+                    let path = json.get("path").and_then(|p| p.as_str()).unwrap_or(".");
+                    Some(format!("\"{}\" in {}", pattern, path))
+                }
+                "Task" => {
+                    let prompt = json.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
+                    let agent_type = json
+                        .get("subagent_type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("agent");
+                    Some(format!(
+                        "[{}] {}",
+                        agent_type,
+                        truncate_to_width(prompt, max_width.saturating_sub(15))
+                    ))
+                }
+                _ => None,
+            };
+
+            if let Some(cmd) = command {
+                return truncate_to_width(&cmd, max_width);
+            }
         }
+
+        // Fallback: use raw args (truncated)
+        truncate_to_width(tool_args, max_width)
     }
 
-    /// Format TodoWrite tool as a checkbox list
-    fn format_todowrite_message(&self, msg: &ChatMessage, lines: &mut Vec<Line<'static>>) {
+    /// Format TodoWrite tool message
+    fn format_todowrite(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
         let tool_args = msg.tool_args.as_deref().unwrap_or("{}");
 
-        // Try to parse the todos from arguments
+        // Parse todos
         let todos: Vec<(String, String)> =
             match serde_json::from_str::<serde_json::Value>(tool_args) {
                 Ok(json) => {
@@ -619,57 +923,34 @@ impl ChatView {
                 Err(_) => Vec::new(),
             };
 
-        // Calculate stats
         let total = todos.len();
         let completed = todos.iter().filter(|(_, s)| s == "completed").count();
         let in_progress = todos.iter().filter(|(_, s)| s == "in_progress").count();
 
-        // Header
-        let header_stats = if total > 0 {
-            format!("{}/{} completed", completed, total)
-        } else {
-            "No tasks".to_string()
-        };
+        let builder = ToolBlockBuilder::new(width);
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                "┌─ 📋 Todo List ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("─ {} ", header_stats),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
+        // Top padding
+        lines.push(builder.empty_line());
 
-        if todos.is_empty() {
-            // No todos parsed - show raw content
-            lines.push(Line::from(vec![
-                Span::styled("│ ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    "(Could not parse todo list)",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-        } else if msg.is_collapsed {
-            // Collapsed view - show summary
+        // Description
+        lines.push(builder.comment("Update todo list"));
+
+        // Blank line
+        lines.push(builder.empty_line());
+
+        if msg.is_collapsed {
+            // Collapsed view
             let summary = format!(
-                "{} total: {} completed, {} in progress, {} pending",
+                "▶ {} tasks: {} completed, {} in progress, {} pending",
                 total,
                 completed,
                 in_progress,
-                total - completed - in_progress
+                total.saturating_sub(completed).saturating_sub(in_progress)
             );
-            lines.push(Line::from(vec![
-                Span::styled("│ ", Style::default().fg(Color::Cyan)),
-                Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(summary, Style::default().fg(Color::DarkGray)),
-            ]));
+            lines.push(builder.output(&summary));
         } else {
-            // Expanded view - show all todos
-            let max_display = 15; // Limit displayed items
+            // Expanded view - show todo items
+            let max_display = 15;
             let display_todos = if todos.len() > max_display {
                 &todos[..max_display]
             } else {
@@ -677,219 +958,45 @@ impl ChatView {
             };
 
             for (content, status) in display_todos {
-                let icon = Self::todo_status_icon(status);
-                let text_color = match status.as_str() {
-                    "completed" => Color::DarkGray,
-                    "in_progress" => Color::Yellow,
-                    _ => Color::White,
+                let (icon, text_color) = match status.as_str() {
+                    "completed" => ("✅", TOOL_COMMENT),
+                    "in_progress" => ("🔄", TOOL_COMMAND),
+                    _ => ("⬜", TOOL_OUTPUT),
                 };
 
-                // Truncate long content (use display width for proper UTF-8 handling)
                 let display_content = truncate_to_width(content, 70);
-
-                lines.push(Line::from(vec![
-                    Span::styled("│  ", Style::default().fg(Color::Cyan)),
-                    Span::raw(format!("{} ", icon)),
-                    Span::styled(display_content, Style::default().fg(text_color)),
-                ]));
-            }
-
-            // Show truncation notice
-            if todos.len() > max_display {
-                let remaining = todos.len() - max_display;
-                let remaining_pending = todos[max_display..]
-                    .iter()
-                    .filter(|(_, s)| s != "completed")
-                    .count();
-                let note = if remaining_pending > 0 {
-                    format!("... (+{} more, {} pending)", remaining, remaining_pending)
-                } else {
-                    format!("... (+{} more)", remaining)
-                };
-                lines.push(Line::from(vec![
-                    Span::styled("│  ", Style::default().fg(Color::Cyan)),
-                    Span::styled("   ", Style::default()),
-                    Span::styled(note, Style::default().fg(Color::DarkGray)),
-                ]));
-            }
-        }
-
-        // Footer
-        let status_icon = if completed == total && total > 0 {
-            ("✓", "All done", Color::Green)
-        } else if in_progress > 0 {
-            ("●", "In progress", Color::Yellow)
-        } else {
-            ("✓", "Updated", Color::Green)
-        };
-
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("└─ {} ", status_icon.0),
-                Style::default().fg(status_icon.2),
-            ),
-            Span::styled(
-                status_icon.1,
-                Style::default()
-                    .fg(status_icon.2)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    }
-
-    /// Format tool messages as rich cards
-    fn format_tool_message(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
-        let tool_name = msg.tool_name.as_deref().unwrap_or("Tool");
-
-        // Special formatting for TodoWrite
-        if tool_name == "TodoWrite" {
-            return self.format_todowrite_message(msg, lines);
-        }
-
-        let tool_args = msg.tool_args.as_deref().unwrap_or("");
-        let icon = Self::tool_icon(tool_name);
-        let content_lines: Vec<&str> = msg.content.lines().collect();
-        let line_count = content_lines.len();
-
-        // Determine success/error state
-        let (is_error, status_icon, status_color) = if let Some(code) = msg.exit_code {
-            if code == 0 {
-                (false, "✓", Color::Green)
-            } else {
-                (true, "✗", Color::Red)
-            }
-        } else if msg.content.starts_with("Error:") {
-            (true, "✗", Color::Red)
-        } else {
-            (false, "✓", Color::Green)
-        };
-
-        // Truncate args if too long (use display width for proper UTF-8 handling)
-        let args_display = truncate_to_width(tool_args, 60);
-
-        // Header: ┌─ 🔧 ToolName ─────────────────
-        let header_text = format!("┌─ {} {} ", icon, tool_name);
-        let mut header_spans = vec![Span::styled(
-            header_text,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )];
-
-        // Add args on same line if short, otherwise on next line
-        if !args_display.is_empty() && args_display.len() <= 40 {
-            header_spans.push(Span::styled(
-                format!("─ {} ", args_display),
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-        lines.push(Line::from(header_spans));
-
-        // Args on separate line if long
-        if !args_display.is_empty() && args_display.len() > 40 {
-            lines.push(Line::from(vec![
-                Span::styled("│ ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!("$ {}", args_display),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]));
-        }
-
-        // If collapsed, show summary only
-        if msg.is_collapsed {
-            let summary = if line_count > 0 {
-                let first_line = content_lines[0];
-                // Use display width for proper UTF-8 handling
-                let preview = truncate_to_width(first_line, 50);
-                format!("{} ({} lines)", preview, line_count)
-            } else {
-                "No output".to_string()
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled("│ ", Style::default().fg(Color::Cyan)),
-                Span::styled("▶ ", Style::default().fg(Color::DarkGray)),
-                Span::styled(summary, Style::default().fg(Color::DarkGray)),
-            ]));
-        } else {
-            // Show full output with connectors
-            let max_lines = 50; // Limit displayed lines
-            let truncated = line_count > max_lines;
-            let display_lines = if truncated {
-                &content_lines[..max_lines]
-            } else {
-                &content_lines[..]
-            };
-
-            let prefix = vec![
-                Span::styled("│ ", Style::default().fg(Color::Cyan)),
-                Span::raw("  "),
-            ];
-            let prefix_width = UnicodeWidthStr::width("│ ") + UnicodeWidthStr::width("  ");
-            let content_width = width.saturating_sub(prefix_width).max(1);
-
-            for line in display_lines {
-                // Parse ANSI escape codes in the line
-                let parsed_text = line.as_bytes().into_text();
-                let content_spans: Vec<Span<'static>> = match parsed_text {
-                    Ok(text) => text
-                        .lines
-                        .into_iter()
-                        .flat_map(|l| l.spans)
-                        .map(|s| Span::styled(s.content.into_owned(), s.style))
-                        .collect(),
-                    Err(_) => {
-                        vec![Span::styled(
-                            line.to_string(),
-                            Style::default().fg(Color::White),
-                        )]
-                    }
-                };
-
-                let wrapped = wrap_spans(content_spans, content_width);
-                for wrapped_spans in wrapped {
-                    let mut line_spans = prefix.clone();
-                    line_spans.extend(wrapped_spans);
-                    lines.push(Line::from(line_spans));
-                }
-            }
-
-            // Show truncation notice
-            if truncated {
-                lines.push(Line::from(vec![
-                    Span::styled("│ ", Style::default().fg(Color::Cyan)),
+                lines.push(builder.custom(vec![
+                    Span::styled(format!("{} ", icon), builder.bg_style()),
                     Span::styled(
-                        format!("  ... ({} more lines)", line_count - max_lines),
-                        Style::default().fg(Color::DarkGray),
+                        display_content,
+                        Style::default().fg(text_color).bg(TOOL_BLOCK_BG),
                     ),
                 ]));
             }
+
+            if todos.len() > max_display {
+                let remaining = todos.len() - max_display;
+                lines.push(
+                    builder.output_colored(&format!("... (+{} more)", remaining), TOOL_COMMENT),
+                );
+            }
         }
 
-        // Footer with status
-        let exit_info = if let Some(code) = msg.exit_code {
-            format!(" (exit: {})", code)
+        // Status line
+        let status_text = format!("{}/{} completed", completed, total);
+        let status_color = if completed == total && total > 0 {
+            ACCENT_SUCCESS
+        } else if in_progress > 0 {
+            Color::Yellow
         } else {
-            String::new()
+            ACCENT_SUCCESS
         };
 
-        lines.push(Line::from(vec![
-            Span::styled("└─ ", Style::default().fg(Color::Cyan)),
-            Span::styled(status_icon, Style::default().fg(status_color)),
-            Span::raw(" "),
-            Span::styled(
-                if is_error { "Failed" } else { "Completed" },
-                Style::default()
-                    .fg(status_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(exit_info, Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!(" ─ {} lines", line_count),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
+        lines.push(builder.empty_line());
+        lines.push(builder.output_colored(&status_text, status_color));
+
+        // Bottom padding
+        lines.push(builder.empty_line());
     }
 
     /// Format turn summary message
@@ -1194,5 +1301,70 @@ mod tests {
             view.scroll_offset, 0,
             "Should stay at bottom when already at bottom"
         );
+    }
+
+    #[test]
+    fn test_tool_message_block_style() {
+        let mut view = ChatView::new();
+
+        // Add a Bash tool message
+        let tool_msg = ChatMessage::tool_with_exit(
+            "Bash",
+            r#"{"command": "ls -la", "description": "List files"}"#,
+            "total 0\ndrwxr-xr-x  2 user staff 64 Jan  1 00:00 .\ndrwxr-xr-x 10 user staff 320 Jan  1 00:00 ..",
+            Some(0),
+        );
+        view.push(tool_msg);
+
+        // The view should have the tool message
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].role, MessageRole::Tool);
+    }
+
+    #[test]
+    fn test_tool_command_parsing_bash() {
+        let view = ChatView::new();
+        let result = view.get_tool_command(
+            "Bash",
+            r#"{"command": "cargo test", "description": "Run tests"}"#,
+            100,
+        );
+        assert_eq!(result, "cargo test");
+    }
+
+    #[test]
+    fn test_tool_command_parsing_read() {
+        let view = ChatView::new();
+        let result = view.get_tool_command(
+            "Read",
+            r#"{"file_path": "/path/to/file.rs", "offset": 10, "limit": 50}"#,
+            100,
+        );
+        assert_eq!(result, "/path/to/file.rs (lines 10-60)");
+    }
+
+    #[test]
+    fn test_tool_command_parsing_grep() {
+        let view = ChatView::new();
+        let result =
+            view.get_tool_command("Grep", r#"{"pattern": "fn main", "path": "src/"}"#, 100);
+        assert_eq!(result, "\"fn main\" in src/");
+    }
+
+    #[test]
+    fn test_tool_description_with_custom() {
+        let view = ChatView::new();
+        let result = view.get_tool_description(
+            "Bash",
+            r#"{"command": "ls", "description": "List directory contents"}"#,
+        );
+        assert_eq!(result, "List directory contents");
+    }
+
+    #[test]
+    fn test_tool_description_default() {
+        let view = ChatView::new();
+        let result = view.get_tool_description("Read", r#"{"file_path": "/path/to/file"}"#);
+        assert_eq!(result, "Read file");
     }
 }

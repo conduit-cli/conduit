@@ -118,6 +118,23 @@ pub const SHINE_CENTER: Color = Color::Rgb(230, 230, 245);
 pub const SHINE_PEAK: Color = Color::Rgb(255, 255, 255);
 
 // =============================================================================
+// Tool Block Colors (Opencode-style)
+// =============================================================================
+
+/// Tool block background - slightly lighter than chat, distinct
+pub const TOOL_BLOCK_BG: Color = Color::Rgb(35, 38, 45);
+/// Tool description/comment text (# lines) - muted gray
+pub const TOOL_COMMENT: Color = Color::Rgb(120, 120, 130);
+/// Tool command text ($ lines) - bright, prominent
+pub const TOOL_COMMAND: Color = Color::Rgb(200, 200, 210);
+/// Tool output text - medium gray
+pub const TOOL_OUTPUT: Color = Color::Rgb(160, 160, 170);
+/// Diff add lines (+) - soft green
+pub const DIFF_ADD: Color = Color::Rgb(130, 200, 140);
+/// Diff remove lines (-) - soft red
+pub const DIFF_REMOVE: Color = Color::Rgb(230, 120, 120);
+
+// =============================================================================
 // Legacy Aliases (for backward compatibility during migration)
 // =============================================================================
 
