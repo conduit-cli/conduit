@@ -1201,13 +1201,9 @@ impl App {
                 let mut copied_text = None;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if session.input_box.has_selection() {
-                        if let Some(text) = session.input_box.selected_text() {
-                            copied_text = Some(text);
-                            session.input_box.clear_selection();
-                        }
-                    } else if let Some(text) = session.chat_view.copy_selection() {
-                        copied_text = Some(text);
-                        session.chat_view.clear_selection();
+                        copied_text = session.input_box.selected_text();
+                    } else {
+                        copied_text = session.chat_view.copy_selection();
                     }
                 }
 
@@ -3519,6 +3515,9 @@ impl App {
     }
 
     fn handle_selection_start(&mut self, x: u16, y: u16) -> bool {
+        if self.has_active_dialog() {
+            return false;
+        }
         if self.state.view_mode != ViewMode::Chat {
             return false;
         }
@@ -3905,8 +3904,8 @@ impl App {
             }
         }
 
-        // Click in chat area - could be used for text selection in future
-        // For now, clicking in chat area while in sidebar mode returns to normal
+        // Click in chat area - selection handled earlier in the mouse pipeline.
+        // Clicking in chat area while in sidebar mode returns to normal.
         if self.state.input_mode == InputMode::SidebarNavigation {
             self.state.input_mode = InputMode::Normal;
             self.state.sidebar_state.set_focused(false);

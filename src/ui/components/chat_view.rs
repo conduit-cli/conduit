@@ -1781,16 +1781,18 @@ fn wrap_spans_with_joiners(
 }
 
 fn line_gutter_cols(line: &Line<'_>) -> u16 {
+    const TOOL_BLOCK_PREFIX: &str = "┃  ";
+    const CONTENT_PREFIX_WIDTH: u16 = 2; // "❯ ", "• ", "ℹ ", "✗ ", "  "
+    const CONTENT_PREFIXES: [&str; 5] = ["❯ ", "• ", "ℹ ", "✗ ", "  "];
+
     let flat = line_to_flat(line);
-    if flat.starts_with("┃  ") {
+    if flat.starts_with(TOOL_BLOCK_PREFIX) {
         3
-    } else if flat.starts_with("❯ ")
-        || flat.starts_with("• ")
-        || flat.starts_with("ℹ ")
-        || flat.starts_with("✗ ")
-        || flat.starts_with("  ")
+    } else if CONTENT_PREFIXES
+        .iter()
+        .any(|prefix| flat.starts_with(prefix))
     {
-        2
+        CONTENT_PREFIX_WIDTH
     } else {
         0
     }
