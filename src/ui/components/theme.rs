@@ -121,8 +121,8 @@ pub const SHINE_PEAK: Color = Color::Rgb(255, 255, 255);
 // Tool Block Colors (Opencode-style)
 // =============================================================================
 
-/// Tool block background - slightly lighter than chat, distinct
-pub const TOOL_BLOCK_BG: Color = Color::Rgb(35, 38, 45);
+/// Tool block background - very dark, subtle distinction from chat
+pub const TOOL_BLOCK_BG: Color = Color::Rgb(24, 25, 32);
 /// Tool description/comment text (# lines) - muted gray
 pub const TOOL_COMMENT: Color = Color::Rgb(120, 120, 130);
 /// Tool command text ($ lines) - bright, prominent

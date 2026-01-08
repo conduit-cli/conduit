@@ -120,6 +120,36 @@ impl ToolBlockBuilder {
     fn bg_style(&self) -> Style {
         self.bg_style
     }
+
+    /// Get the content width (total width minus prefix)
+    fn content_width(&self) -> usize {
+        let prefix_width = 3; // "┃  "
+        self.width.saturating_sub(prefix_width).max(1)
+    }
+
+    /// Wrap text and return multiple lines with the given color
+    fn wrapped_output_colored(&self, text: &str, color: Color) -> Vec<Line<'static>> {
+        let content_width = self.content_width();
+        let style = Style::default().fg(color).bg(TOOL_BLOCK_BG);
+        let spans = vec![Span::styled(text.to_string(), style)];
+        let wrapped = wrap_spans(spans, content_width);
+
+        wrapped
+            .into_iter()
+            .map(|line_spans| self.line(line_spans))
+            .collect()
+    }
+
+    /// Wrap custom spans and return multiple lines
+    fn wrapped_custom(&self, spans: Vec<Span<'static>>) -> Vec<Line<'static>> {
+        let content_width = self.content_width();
+        let wrapped = wrap_spans(spans, content_width);
+
+        wrapped
+            .into_iter()
+            .map(|line_spans| self.line(line_spans))
+            .collect()
+    }
 }
 
 use self::chat_view_cache::LineCache;
@@ -733,9 +763,6 @@ impl ChatView {
                 &content_lines[..]
             };
 
-            let prefix_width = 3; // "┃  "
-            let content_width = width.saturating_sub(prefix_width).max(1);
-
             for line in display_lines {
                 // Check for diff-style lines
                 let (line_color, line_text) = if line.starts_with('+') && !line.starts_with("+++") {
@@ -761,16 +788,16 @@ impl ChatView {
                             if spans.is_empty() {
                                 spans.push(Span::styled("", builder.bg_style()));
                             }
-                            lines.push(builder.custom(spans));
+                            // Wrap ANSI-parsed lines
+                            lines.extend(builder.wrapped_custom(spans));
                             continue;
                         }
                         Err(_) => (TOOL_OUTPUT, line.to_string()),
                     }
                 };
 
-                // Truncate if needed
-                let display_text = truncate_to_width(&line_text, content_width);
-                lines.push(builder.output_colored(&display_text, line_color));
+                // Wrap long lines
+                lines.extend(builder.wrapped_output_colored(&line_text, line_color));
             }
 
             // Truncation notice
