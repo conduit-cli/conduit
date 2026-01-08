@@ -4641,6 +4641,7 @@ impl App {
                         args: args_str,
                         output: "Running...".to_string(),
                         exit_code: None,
+                        file_size: None, // Will be populated when tool completes
                     };
                     session.chat_view.push(display.to_chat_message());
                 }

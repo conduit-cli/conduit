@@ -20,6 +20,7 @@ pub enum MessageDisplay {
         args: String,
         output: String,
         exit_code: Option<i32>,
+        file_size: Option<u64>,
     },
     System {
         content: String,
@@ -49,40 +50,16 @@ impl MessageDisplay {
                 args,
                 output,
                 exit_code,
+                file_size,
             } => {
                 let mut msg = ChatMessage::tool_with_exit(name, args, output, *exit_code);
-                // For Read tool on images, cache file size for later display
-                if name == "Read" {
-                    msg.file_size = Self::get_file_size_for_image(args);
-                }
+                // Use provided file_size (from session history) if available
+                msg.file_size = *file_size;
                 msg
             }
             MessageDisplay::System { content } => ChatMessage::system(content),
             MessageDisplay::Error { content } => ChatMessage::error(content),
         }
-    }
-
-    /// Get file size for an image file from tool args (for Read tool)
-    /// Returns None if not an image file or file doesn't exist
-    fn get_file_size_for_image(args: &str) -> Option<u64> {
-        const IMAGE_EXTENSIONS: &[&str] = &[
-            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".tif",
-        ];
-
-        // Try to extract file_path from JSON args
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(args) {
-            if let Some(path) = json.get("file_path").and_then(|p| p.as_str()) {
-                let path_lower = path.to_lowercase();
-                let is_image = IMAGE_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext));
-                if is_image {
-                    if let Ok(metadata) = std::fs::metadata(path) {
-                        return Some(metadata.len());
-                    }
-                }
-            }
-        }
-
-        None
     }
 
     /// Map raw tool names to display names
@@ -241,6 +218,7 @@ error: command failed"#;
             args: "ls -la".to_string(),
             output: "file1.txt\nfile2.txt".to_string(),
             exit_code: Some(0),
+            file_size: None,
         };
         let msg = display.to_chat_message();
         assert_eq!(msg.exit_code, Some(0));
@@ -254,6 +232,7 @@ error: command failed"#;
             args: "file.txt".to_string(),
             output: "file contents".to_string(),
             exit_code: None,
+            file_size: None,
         };
         let msg = display.to_chat_message();
         assert_eq!(msg.exit_code, None);

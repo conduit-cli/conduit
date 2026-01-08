@@ -725,6 +725,13 @@ fn convert_claude_entry_with_tools(
                                                 result_content
                                             };
 
+                                            // Extract file size from toolUseResult.file.originalSize if present
+                                            let file_size = entry
+                                                .get("toolUseResult")
+                                                .and_then(|r| r.get("file"))
+                                                .and_then(|f| f.get("originalSize"))
+                                                .and_then(|s| s.as_u64());
+
                                             let display = MessageDisplay::Tool {
                                                 name: MessageDisplay::tool_display_name_owned(
                                                     &tool_info.name,
@@ -732,6 +739,7 @@ fn convert_claude_entry_with_tools(
                                                 args,
                                                 output,
                                                 exit_code: None,
+                                                file_size,
                                             };
                                             messages.push(display.to_chat_message());
                                         }
@@ -828,6 +836,7 @@ fn convert_claude_entry_with_tools(
                         args,
                         output,
                         exit_code: None, // Claude doesn't provide exit codes
+                        file_size: None, // Not available in this code path
                     };
                     return vec![display.to_chat_message()];
                 }
@@ -1222,6 +1231,7 @@ fn convert_codex_entry_with_debug(
                         args: command.clone(),
                         output,
                         exit_code,
+                        file_size: None, // Codex doesn't provide file size
                     };
 
                     let preview = truncate_preview(raw_output, 60);
