@@ -1469,4 +1469,198 @@ mod tests {
         assert!(msg.is_none());
         assert!(reason.contains("AGENTS.md"));
     }
+
+    /// Test that function_call entries are skipped in history parsing.
+    /// This is expected behavior because function_call_output already creates
+    /// the complete Tool message with both the command and output.
+    /// For live events, item.started handles tool invocation display.
+    #[test]
+    fn test_function_call_entry_is_skipped_in_history() {
+        // function_call entries don't have a "role" field, so they are skipped
+        let entry = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"ls\"}",
+                "call_id": "call_aeinHIp3JWOoInq6T7yjlGKx"
+            }
+        });
+        let function_calls = HashMap::new();
+
+        let (msg, status, _reason) = convert_codex_entry_with_debug(&entry, &function_calls);
+
+        // function_call is skipped - the tool info is captured via extract_function_call_info
+        // and used when function_call_output arrives
+        assert_eq!(status, "SKIP");
+        assert!(msg.is_none());
+    }
+
+    /// Test a full Codex tool call cycle: function_call followed by function_call_output
+    /// The function_call is skipped but its info is used to enrich function_call_output
+    #[test]
+    fn test_codex_tool_call_cycle() {
+        let entries = vec![
+            // User message
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "List the files"}]
+                }
+            }),
+            // Tool invocation (function_call) - will be skipped but info is captured
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"ls -la\"}",
+                    "call_id": "call_test123"
+                }
+            }),
+            // Tool output (function_call_output) - creates the Tool message
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_test123",
+                    "output": "Process exited with code 0\nOutput:\nfile1.txt\nfile2.txt"
+                }
+            }),
+            // Assistant response
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Found 2 files."}]
+                }
+            }),
+        ];
+
+        // Build function_calls map (first pass) - captures function_call info
+        let mut function_calls = HashMap::new();
+        for entry in &entries {
+            if let Some((call_id, info)) = extract_function_call_info(entry) {
+                function_calls.insert(call_id, info);
+            }
+        }
+
+        // Verify function_call info was captured
+        assert!(function_calls.contains_key("call_test123"));
+
+        // Process all entries (second pass)
+        let mut messages = Vec::new();
+        for entry in &entries {
+            let (msg, status, _reason) = convert_codex_entry_with_debug(entry, &function_calls);
+            if status == "INCLUDE" {
+                if let Some(m) = msg {
+                    messages.push(m);
+                }
+            }
+        }
+
+        // Should have 3 messages: User, Tool (from function_call_output), Assistant
+        assert_eq!(
+            messages.len(),
+            3,
+            "Expected 3 messages (user, tool, assistant), got {}",
+            messages.len()
+        );
+
+        assert_eq!(messages[0].role, MessageRole::User);
+        assert_eq!(messages[0].content, "List the files");
+
+        // Tool message from function_call_output has the command looked up from function_calls
+        assert_eq!(messages[1].role, MessageRole::Tool);
+        assert_eq!(messages[1].tool_name, Some("Bash".to_string()));
+        assert!(
+            messages[1]
+                .tool_args
+                .as_ref()
+                .map_or(false, |args| args.contains("ls")),
+            "Tool args should contain the command from function_call lookup"
+        );
+
+        assert_eq!(messages[2].role, MessageRole::Assistant);
+    }
+
+    /// Test parsing the fixture file - verifies function_call_output creates Tool messages
+    #[test]
+    fn test_codex_session_with_tool_calls_fixture() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("codex_tool_calls.jsonl");
+
+        // Skip if fixture doesn't exist (for CI or fresh clones)
+        if !fixture_path.exists() {
+            eprintln!(
+                "Skipping test: fixture file not found at {:?}",
+                fixture_path
+            );
+            return;
+        }
+
+        let content = fs::read_to_string(&fixture_path).expect("Failed to read fixture");
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Parse all entries
+        let entries: Vec<serde_json::Value> = lines
+            .iter()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+
+        // First pass: collect function_call info for later lookup
+        let mut function_calls = HashMap::new();
+        for entry in &entries {
+            if let Some((call_id, info)) = extract_function_call_info(entry) {
+                function_calls.insert(call_id, info);
+            }
+        }
+
+        // Verify we captured function_call info
+        assert!(
+            function_calls.contains_key("call_aeinHIp3JWOoInq6T7yjlGKx"),
+            "Should have extracted function_call info for call_id"
+        );
+
+        // Second pass: convert entries
+        let mut messages = Vec::new();
+        for entry in &entries {
+            let (msg, status, _reason) = convert_codex_entry_with_debug(entry, &function_calls);
+            if status == "INCLUDE" {
+                if let Some(m) = msg {
+                    messages.push(m);
+                }
+            }
+        }
+
+        // Verify we have Tool messages from function_call_output
+        let tool_messages: Vec<_> = messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .collect();
+
+        assert!(
+            !tool_messages.is_empty(),
+            "Should have Tool messages from function_call_output"
+        );
+
+        // The tool message should show the ls command (looked up from function_calls)
+        let has_ls_tool = tool_messages.iter().any(|m| {
+            m.tool_args
+                .as_ref()
+                .map_or(false, |args| args.contains("ls"))
+        });
+        assert!(
+            has_ls_tool,
+            "Tool message should have 'ls' command from function_call lookup"
+        );
+    }
 }

@@ -1,0 +1,5 @@
+{"timestamp":"2026-01-08T03:45:04.600Z","type":"session_meta","payload":{"id":"019b9bb5-3c46-7102-a931-e1e373fbd049"}}
+{"timestamp":"2026-01-08T03:45:04.688Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List the files in this directory."}]}}
+{"timestamp":"2026-01-08T03:45:12.134Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","call_id":"call_aeinHIp3JWOoInq6T7yjlGKx"}}
+{"timestamp":"2026-01-08T03:45:12.229Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_aeinHIp3JWOoInq6T7yjlGKx","output":"Chunk ID: d3f24e\nWall time: 0.0532 seconds\nProcess exited with code 0\nOriginal token count: 20\nOutput:\nAGENTS.md\tCargo.toml\tREADME.md\tdocs\t\tsrc\r\nCargo.lock\tLICENSE\t\tTODO.md\t\tscripts\r\n"}}
+{"timestamp":"2026-01-08T03:45:15.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Here are the files in the current directory:\n\n- AGENTS.md\n- Cargo.lock\n- Cargo.toml\n- LICENSE\n- README.md\n- TODO.md\n- docs/\n- scripts/\n- src/"}]}}

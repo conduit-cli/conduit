@@ -327,6 +327,11 @@ impl CodexCliRunner {
                     error: error.message,
                 }))
             }
+            "item.started" => {
+                let item: CodexThreadItem =
+                    serde_json::from_value(raw.get("item")?.clone()).ok()?;
+                Self::convert_item_started_event(&item)
+            }
             "item.completed" | "item.updated" => {
                 let item: CodexThreadItem =
                     serde_json::from_value(raw.get("item")?.clone()).ok()?;
@@ -363,8 +368,33 @@ impl CodexCliRunner {
             "event_msg" => raw.get("payload").and_then(Self::convert_event_msg),
             "message" => Self::convert_message(raw),
             "thread.started" | "turn.started" | "turn.completed" | "turn.failed"
-            | "item.updated" | "item.completed" | "error" => Self::convert_thread_event(raw),
+            | "item.started" | "item.updated" | "item.completed" | "error" => {
+                Self::convert_thread_event(raw)
+            }
             _ => Some(AgentEvent::Raw { data: raw.clone() }),
+        }
+    }
+
+    /// Convert item.started events to ToolStarted events
+    /// This creates the placeholder message that CommandOutput will later update
+    fn convert_item_started_event(item: &CodexThreadItem) -> Option<AgentEvent> {
+        let item_type = item.item_type.as_deref()?;
+
+        match item_type {
+            "command_execution" | "local_shell_call" => {
+                let command = item
+                    .details
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("shell");
+
+                Some(AgentEvent::ToolStarted(ToolStartedEvent {
+                    tool_name: "Bash".to_string(),
+                    tool_id: "Bash".to_string(),
+                    arguments: serde_json::json!({ "command": command }),
+                }))
+            }
+            _ => None, // Other item types don't need ToolStarted
         }
     }
 
@@ -707,5 +737,254 @@ mod tests {
             double_dash_pos.unwrap() < prompt_pos.unwrap(),
             "'--' should come before prompt"
         );
+    }
+
+    /// Test that function_call events are converted to ToolStarted events
+    #[test]
+    fn test_function_call_produces_tool_started() {
+        let raw_event = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"ls -la\"}",
+                "call_id": "call_test123"
+            }
+        });
+        let function_calls = HashMap::new();
+
+        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
+
+        assert!(event.is_some(), "function_call should produce an event");
+        match event.unwrap() {
+            AgentEvent::ToolStarted(tool) => {
+                assert_eq!(tool.tool_name, "exec_command");
+                // Arguments should be parsed
+                assert!(!tool.arguments.is_null());
+            }
+            other => panic!(
+                "Expected ToolStarted event, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    /// Test that function_call_output events are converted to CommandOutput for shell tools
+    #[test]
+    fn test_function_call_output_produces_command_output() {
+        let raw_event = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_test123",
+                "output": "Process exited with code 0\nOutput:\nfile1.txt\nfile2.txt"
+            }
+        });
+
+        // Pre-populate function_calls with the call info
+        let mut function_calls = HashMap::new();
+        function_calls.insert(
+            "call_test123".to_string(),
+            FunctionCallInfo {
+                name: "exec_command".to_string(),
+                command: "ls -la".to_string(),
+            },
+        );
+
+        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
+
+        assert!(
+            event.is_some(),
+            "function_call_output should produce an event"
+        );
+        match event.unwrap() {
+            AgentEvent::CommandOutput(cmd) => {
+                assert_eq!(cmd.command, "ls -la");
+                assert!(cmd.output.contains("file1.txt"));
+                assert_eq!(cmd.exit_code, Some(0));
+            }
+            other => panic!(
+                "Expected CommandOutput event, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    /// Test the full event cycle: function_call followed by function_call_output
+    #[test]
+    fn test_codex_tool_event_cycle() {
+        // Simulate the event sequence from a real Codex session
+        let function_call_event = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": "{\"cmd\":\"ls\"}",
+                "call_id": "call_abc123"
+            }
+        });
+
+        let function_call_output_event = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_abc123",
+                "output": "Process exited with code 0\nOutput:\nAGENTS.md\nCargo.toml"
+            }
+        });
+
+        let mut function_calls = HashMap::new();
+
+        // First event: function_call
+        if let Some((call_id, info)) =
+            CodexCliRunner::extract_function_call_info(&function_call_event)
+        {
+            function_calls.insert(call_id, info);
+        }
+
+        let event1 = CodexCliRunner::convert_event(&function_call_event, &function_calls);
+        assert!(
+            matches!(event1, Some(AgentEvent::ToolStarted(_))),
+            "First event should be ToolStarted"
+        );
+
+        // Second event: function_call_output (uses the function_calls map)
+        let event2 = CodexCliRunner::convert_event(&function_call_output_event, &function_calls);
+        assert!(
+            matches!(event2, Some(AgentEvent::CommandOutput(_))),
+            "Second event should be CommandOutput"
+        );
+
+        // Verify the CommandOutput has the correct command from the lookup
+        if let Some(AgentEvent::CommandOutput(cmd)) = event2 {
+            assert_eq!(
+                cmd.command, "ls",
+                "Command should be looked up from function_calls"
+            );
+        }
+    }
+
+    /// Test that item.started events are converted to ToolStarted events
+    #[test]
+    fn test_item_started_produces_tool_started() {
+        // This is the actual structure from a real Codex session
+        // CodexThreadItem requires an "id" field
+        let raw_event = serde_json::json!({
+            "type": "item.started",
+            "item": {
+                "id": "item_123",
+                "type": "command_execution",
+                "command": "/bin/zsh -lc \"sed -n '6420,7855p' ~/code/file.rs\"",
+                "status": "in_progress"
+            }
+        });
+        let function_calls = HashMap::new();
+
+        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
+
+        assert!(event.is_some(), "item.started should produce an event");
+        match event.unwrap() {
+            AgentEvent::ToolStarted(tool) => {
+                assert_eq!(tool.tool_name, "Bash");
+                assert_eq!(tool.tool_id, "Bash");
+                // Arguments should contain the command
+                let args = tool.arguments;
+                assert!(
+                    args.get("command").is_some(),
+                    "Arguments should contain the command"
+                );
+            }
+            other => panic!(
+                "Expected ToolStarted event, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    /// Test that item.completed events for command_execution produce CommandOutput
+    #[test]
+    fn test_item_completed_produces_command_output() {
+        let raw_event = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "item_456",
+                "type": "command_execution",
+                "command": "ls -la",
+                "aggregated_output": "file1.txt\nfile2.txt",
+                "exit_code": 0
+            }
+        });
+        let function_calls = HashMap::new();
+
+        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
+
+        assert!(event.is_some(), "item.completed should produce an event");
+        match event.unwrap() {
+            AgentEvent::CommandOutput(cmd) => {
+                assert_eq!(cmd.command, "ls -la");
+                assert!(cmd.output.contains("file1.txt"));
+                assert_eq!(cmd.exit_code, Some(0));
+            }
+            other => panic!(
+                "Expected CommandOutput event, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    /// Test the full item event cycle: item.started followed by item.completed
+    #[test]
+    fn test_item_event_cycle() {
+        // Simulate the event sequence from a real Codex session using item.* events
+        let item_started_event = serde_json::json!({
+            "type": "item.started",
+            "item": {
+                "id": "item_789",
+                "type": "command_execution",
+                "command": "ls -la",
+                "status": "in_progress"
+            }
+        });
+
+        let item_completed_event = serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": "item_789",
+                "type": "command_execution",
+                "command": "ls -la",
+                "aggregated_output": "total 123\ndrwxr-xr-x  10 user  staff   320 Jan  8 10:00 .\ndrwxr-xr-x   5 user  staff   160 Jan  8 09:00 ..",
+                "exit_code": 0
+            }
+        });
+
+        let function_calls = HashMap::new();
+
+        // First event: item.started should create ToolStarted
+        let event1 = CodexCliRunner::convert_event(&item_started_event, &function_calls);
+        assert!(
+            matches!(event1, Some(AgentEvent::ToolStarted(_))),
+            "item.started should produce ToolStarted, got {:?}",
+            event1.as_ref().map(|e| std::mem::discriminant(e))
+        );
+
+        // Second event: item.completed should create CommandOutput
+        let event2 = CodexCliRunner::convert_event(&item_completed_event, &function_calls);
+        assert!(
+            matches!(event2, Some(AgentEvent::CommandOutput(_))),
+            "item.completed should produce CommandOutput, got {:?}",
+            event2.as_ref().map(|e| std::mem::discriminant(e))
+        );
+
+        // Verify the ToolStarted has correct tool info
+        if let Some(AgentEvent::ToolStarted(tool)) = event1 {
+            assert_eq!(tool.tool_name, "Bash");
+        }
+
+        // Verify the CommandOutput has the correct output
+        if let Some(AgentEvent::CommandOutput(cmd)) = event2 {
+            assert_eq!(cmd.command, "ls -la");
+            assert!(cmd.output.contains("total 123"));
+            assert_eq!(cmd.exit_code, Some(0));
+        }
     }
 }
