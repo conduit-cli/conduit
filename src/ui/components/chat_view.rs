@@ -53,7 +53,9 @@ impl ToolBlockBuilder {
             .sum();
 
         let total_used = prefix_width + content_width;
-        // Add 1 extra for edge padding to ensure full coverage
+        // Add 1 extra character of padding to prevent background color from stopping
+        // 1 character short at certain terminal widths due to unicode width calculation
+        // differences between ratatui and actual terminal rendering
         let padding_needed = self.width.saturating_sub(total_used).saturating_add(1);
 
         let mut line_spans = vec![
@@ -70,7 +72,9 @@ impl ToolBlockBuilder {
     /// Create an empty line for padding (fills entire width)
     fn empty_line(&self) -> Line<'static> {
         let prefix_width = 3; // "┃" (1) + "  " (2)
-                              // Add 1 extra for edge padding to ensure full coverage
+                              // Add 1 extra character of padding to prevent background color from stopping
+                              // 1 character short at certain terminal widths due to unicode width calculation
+                              // differences between ratatui and actual terminal rendering
         let padding = self.width.saturating_sub(prefix_width).saturating_add(1);
         Line::from(vec![
             Span::styled("┃", self.block_style),
@@ -929,7 +933,8 @@ impl ChatView {
                     let offset = json.get("offset").and_then(|o| o.as_i64());
                     let limit = json.get("limit").and_then(|l| l.as_i64());
                     if let (Some(off), Some(lim)) = (offset, limit) {
-                        Some(format!("{} (lines {}-{})", path, off, off + lim))
+                        // Display as 1-indexed line numbers (Read tool uses 0-indexed offset internally)
+                        Some(format!("{} (lines {}-{})", path, off + 1, off + lim))
                     } else {
                         Some(path.to_string())
                     }
@@ -1123,7 +1128,8 @@ impl ChatView {
         } else if in_progress > 0 {
             Color::Yellow
         } else {
-            ACCENT_SUCCESS
+            // Pending items - use neutral muted color (not success green)
+            TOOL_COMMENT
         };
 
         lines.push(builder.empty_line());

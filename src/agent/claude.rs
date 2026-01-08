@@ -133,7 +133,7 @@ impl ClaudeCodeRunner {
             ClaudeRawEvent::ToolResult(result) => {
                 let tool_id = result.tool_use_id.clone().unwrap_or_default();
                 let is_error = result.is_error.unwrap_or(false);
-                tracing::info!(
+                tracing::debug!(
                     "ToolResult received: tool_id={}, is_error={}, content_len={}",
                     tool_id,
                     is_error,
@@ -169,7 +169,7 @@ impl ClaudeCodeRunner {
                 // User events contain tool results from Claude Code CLI
                 let mut events = Vec::new();
                 for (tool_id, content, is_error) in user.extract_tool_results() {
-                    tracing::info!(
+                    tracing::debug!(
                         "User event tool result: tool_id={}, is_error={}, content_len={}",
                         tool_id,
                         is_error,
