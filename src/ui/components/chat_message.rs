@@ -27,6 +27,8 @@ pub struct ChatMessage {
     pub is_collapsed: bool,
     /// Exit code for tool execution (e.g., shell commands)
     pub exit_code: Option<i32>,
+    /// Cached file size for Read tool on images (avoids fs lookup on session restore)
+    pub file_size: Option<u64>,
 }
 
 impl ChatMessage {
@@ -40,6 +42,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -53,6 +56,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -70,6 +74,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false, // Default to expanded
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -89,6 +94,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code,
+            file_size: None,
         }
     }
 
@@ -102,6 +108,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -115,6 +122,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -128,6 +136,7 @@ impl ChatMessage {
             summary: None,
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 
@@ -141,6 +150,7 @@ impl ChatMessage {
             summary: Some(summary),
             is_collapsed: false,
             exit_code: None,
+            file_size: None,
         }
     }
 

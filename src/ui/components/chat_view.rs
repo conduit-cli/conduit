@@ -855,7 +855,12 @@ impl ChatView {
             format!("✓ Completed (exit: {})", code)
         } else if is_image {
             // For images, show file size instead of line count
-            let size_str = Self::get_file_size_from_args(tool_args);
+            // Use cached file_size if available, otherwise try fs lookup
+            let size_str = if let Some(size) = msg.file_size {
+                Self::format_file_size(size)
+            } else {
+                Self::get_file_size_from_args(tool_args)
+            };
             format!("✓ Read image ({})", size_str)
         } else {
             format!("✓ {} {}", line_count, line_word)
