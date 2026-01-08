@@ -552,7 +552,7 @@ impl ChatView {
             if let Some(ref streaming_joiners) = self.streaming_joiner_before {
                 joiner_before.extend(streaming_joiners.iter().cloned());
             } else {
-                joiner_before.extend(std::iter::repeat(None).take(streaming.len()));
+                joiner_before.extend(std::iter::repeat_n(None, streaming.len()));
             }
         }
 
