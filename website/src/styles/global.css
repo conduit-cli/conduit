@@ -346,6 +346,80 @@ h1, h2, h3 {
   animation: glow-pulse 2s ease-in-out infinite;
 }
 
+/* Parallel Flow Lines - converging toward center */
+@keyframes flow-left-to-center {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(50vw);
+    opacity: 0;
+  }
+}
+
+@keyframes flow-right-to-center {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50vw);
+    opacity: 0;
+  }
+}
+
+.flow-lines-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.flow-line {
+  position: absolute;
+  height: 1px;
+  width: 120px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-accent-primary) 50%,
+    transparent 100%
+  );
+  opacity: 0.3;
+}
+
+.flow-line-left {
+  left: 0;
+  animation: flow-left-to-center 4s linear infinite;
+}
+
+.flow-line-right {
+  right: 0;
+  animation: flow-right-to-center 4s linear infinite;
+}
+
+/* Staggered positions and delays */
+.flow-line-1 { top: 25%; animation-delay: 0s; }
+.flow-line-2 { top: 35%; animation-delay: 0.8s; }
+.flow-line-3 { top: 45%; animation-delay: 1.6s; }
+.flow-line-4 { top: 55%; animation-delay: 0.4s; }
+.flow-line-5 { top: 65%; animation-delay: 1.2s; }
+.flow-line-6 { top: 75%; animation-delay: 2s; }
+
 /* ============================================================================
    Utility Classes
    ============================================================================ */

@@ -9,6 +9,18 @@ import WaitlistForm from './WaitlistForm.tsx'
     <div class="w-[800px] h-[600px] rounded-full bg-[var(--color-accent-primary)] opacity-[0.03] blur-[100px]"></div>
   </div>
 
+  <!-- Parallel flow lines converging to center -->
+  <div class="flow-lines-container">
+    <!-- Left side lines -->
+    <div class="flow-line flow-line-left flow-line-1"></div>
+    <div class="flow-line flow-line-left flow-line-2"></div>
+    <div class="flow-line flow-line-left flow-line-3"></div>
+    <!-- Right side lines -->
+    <div class="flow-line flow-line-right flow-line-4"></div>
+    <div class="flow-line flow-line-right flow-line-5"></div>
+    <div class="flow-line flow-line-right flow-line-6"></div>
+  </div>
+
   <!-- Terminal Window -->
   <div class="terminal-frame w-full max-w-3xl mx-auto relative z-10 animate-fade-in-up">
     <!-- Window Chrome -->
@@ -32,12 +44,11 @@ import WaitlistForm from './WaitlistForm.tsx'
           <span class="text-[var(--color-accent-success)]">$</span> conduit --version
         </p>
         <h1 class="font-display text-3xl md:text-4xl lg:text-5xl text-[var(--color-text-bright)] mb-4">
-          Orchestrate AI.<br />
+          Run a Team of AI Agents.<br />
           <span class="text-[var(--color-accent-primary)]">In Your Terminal.</span>
         </h1>
         <p class="text-[var(--color-text-secondary)] text-base max-w-lg mx-auto mb-2">
-          Run Claude Code and Codex CLI side-by-side with tab-based session management,
-          real-time streaming, and token tracking.
+          Parallel agents, parallel projects, one Conduit.
         </p>
         <p class="text-[var(--color-accent-warning)] font-mono text-sm">
           Coming soon.
