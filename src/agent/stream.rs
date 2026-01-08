@@ -257,8 +257,15 @@ impl ClaudeUserEvent {
         if results.is_empty() {
             if let Some(ref tur) = self.tool_use_result {
                 if let Some(ref stdout) = tur.stdout {
-                    // We don't have tool_use_id from this path, so this is a fallback
-                    results.push((String::new(), stdout.clone(), false));
+                    // Fallback path: tool_use_result exists but no tool_use_id available
+                    // Use sentinel value to avoid downstream correlation issues with empty string
+                    tracing::warn!(
+                        "Tool result missing tool_use_id, using sentinel. stdout_len={}, stderr={:?}, is_image={:?}",
+                        stdout.len(),
+                        tur.stderr.as_ref().map(|s| s.len()),
+                        tur.is_image
+                    );
+                    results.push(("unknown_tool_use_id".to_string(), stdout.clone(), false));
                 }
             }
         }

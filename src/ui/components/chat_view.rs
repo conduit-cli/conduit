@@ -1480,7 +1480,8 @@ mod tests {
             r#"{"file_path": "/path/to/file.rs", "offset": 10, "limit": 50}"#,
             100,
         );
-        assert_eq!(result, "/path/to/file.rs (lines 10-60)");
+        // 1-indexed display: offset 10 + 1 = line 11, through offset 10 + limit 50 = line 60
+        assert_eq!(result, "/path/to/file.rs (lines 11-60)");
     }
 
     #[test]
@@ -1506,5 +1507,83 @@ mod tests {
         let view = ChatView::new();
         let result = view.get_tool_description("Read", r#"{"file_path": "/path/to/file"}"#);
         assert_eq!(result, "Read file");
+    }
+
+    #[test]
+    fn test_update_last_tool_no_tool_message() {
+        let mut view = ChatView::new();
+        // Add only non-tool messages
+        view.push(ChatMessage::user("Hello"));
+        view.push(ChatMessage::assistant("Hi there"));
+
+        // update_last_tool should return false when no tool message exists
+        let result = view.update_last_tool("new content".to_string(), Some(0));
+        assert!(!result, "Should return false when no tool message exists");
+
+        // Original messages should be unchanged
+        assert_eq!(view.messages.len(), 2);
+        assert_eq!(view.messages[0].content, "Hello");
+        assert_eq!(view.messages[1].content, "Hi there");
+    }
+
+    #[test]
+    fn test_update_last_tool_empty_view() {
+        let mut view = ChatView::new();
+
+        // update_last_tool on empty view should return false
+        let result = view.update_last_tool("content".to_string(), Some(0));
+        assert!(!result, "Should return false on empty view");
+    }
+
+    #[test]
+    fn test_tool_message_collapsed_state() {
+        let mut view = ChatView::new();
+
+        // Create a tool message and set it to collapsed
+        let mut tool_msg = ChatMessage::tool(
+            "Bash",
+            r#"{"command": "ls"}"#,
+            "file1.txt\nfile2.txt\nfile3.txt",
+        );
+        tool_msg.is_collapsed = true;
+        view.push(tool_msg);
+
+        assert!(view.messages[0].is_collapsed, "Message should be collapsed");
+
+        // Toggle to expanded
+        view.messages[0].is_collapsed = false;
+        assert!(!view.messages[0].is_collapsed, "Message should be expanded");
+    }
+
+    #[test]
+    fn test_tool_message_error_exit_code() {
+        let mut view = ChatView::new();
+
+        // Add a tool message with error exit code
+        let tool_msg = ChatMessage::tool_with_exit(
+            "Bash",
+            r#"{"command": "false"}"#,
+            "Command failed",
+            Some(1),
+        );
+        view.push(tool_msg);
+
+        assert_eq!(view.messages[0].exit_code, Some(1));
+
+        // Test updating exit code via update_last_tool
+        view.update_last_tool("Updated output".to_string(), Some(127));
+        assert_eq!(view.messages[0].exit_code, Some(127));
+        assert_eq!(view.messages[0].content, "Updated output");
+    }
+
+    #[test]
+    fn test_tool_message_success_exit_code() {
+        let mut view = ChatView::new();
+
+        let tool_msg =
+            ChatMessage::tool_with_exit("Bash", r#"{"command": "true"}"#, "Success", Some(0));
+        view.push(tool_msg);
+
+        assert_eq!(view.messages[0].exit_code, Some(0));
     }
 }
