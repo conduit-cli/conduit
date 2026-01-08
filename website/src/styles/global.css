@@ -315,6 +315,157 @@ h1, h2, h3 {
   animation: glow-pulse 2s ease-in-out infinite;
 }
 
+/* CRT Boot Animation - Monitor power-on effect */
+@keyframes crt-boot {
+  /* Start completely black */
+  0% {
+    clip-path: inset(50% 50% 50% 50%);
+    filter: brightness(0) saturate(0);
+    opacity: 0;
+  }
+  /* Dot appears - electron gun warming up */
+  3% {
+    clip-path: inset(49% 49% 49% 49%);
+    filter: brightness(5) saturate(0);
+    opacity: 1;
+  }
+  /* Dot flickers */
+  5% {
+    clip-path: inset(49% 49% 49% 49%);
+    filter: brightness(2) saturate(0);
+    opacity: 0.6;
+  }
+  7% {
+    clip-path: inset(48.5% 48.5% 48.5% 48.5%);
+    filter: brightness(6) saturate(0);
+    opacity: 1;
+  }
+  10% {
+    clip-path: inset(48% 48% 48% 48%);
+    filter: brightness(3) saturate(0);
+    opacity: 0.8;
+  }
+  /* Horizontal expansion begins */
+  15% {
+    clip-path: inset(48% 35% 48% 35%);
+    filter: brightness(4) saturate(0);
+    opacity: 1;
+  }
+  20% {
+    clip-path: inset(47.5% 20% 47.5% 20%);
+    filter: brightness(3) saturate(0.2);
+  }
+  25% {
+    clip-path: inset(47% 8% 47% 8%);
+    filter: brightness(2.5) saturate(0.3);
+  }
+  /* Full horizontal line */
+  30% {
+    clip-path: inset(46.5% 2% 46.5% 2%);
+    filter: brightness(2) saturate(0.4);
+  }
+  /* Vertical expansion - slower and more dramatic */
+  40% {
+    clip-path: inset(35% 1% 35% 1%);
+    filter: brightness(1.8) saturate(0.5);
+  }
+  50% {
+    clip-path: inset(25% 0% 25% 0%);
+    filter: brightness(1.5) saturate(0.6);
+  }
+  60% {
+    clip-path: inset(15% 0% 15% 0%);
+    filter: brightness(1.3) saturate(0.75);
+  }
+  70% {
+    clip-path: inset(8% 0% 8% 0%);
+    filter: brightness(1.2) saturate(0.85);
+  }
+  /* Final settle with slight overshoot */
+  80% {
+    clip-path: inset(3% 0% 3% 0%);
+    filter: brightness(1.15) saturate(0.92);
+  }
+  90% {
+    clip-path: inset(1% 0% 1% 0%);
+    filter: brightness(1.08) saturate(0.97);
+  }
+  /* Full reveal */
+  100% {
+    clip-path: inset(0% 0% 0% 0%);
+    filter: brightness(1) saturate(1);
+  }
+}
+
+/* Glitch/jitter effect during boot */
+@keyframes crt-boot-glitch {
+  0%, 100% { transform: translate(0, 0) skewX(0); }
+  10% { transform: translate(-1px, -1px) skewX(0.5deg); }
+  20% { transform: translate(1px, 0) skewX(-0.3deg); }
+  30% { transform: translate(0, 1px) skewX(0.2deg); }
+  40% { transform: translate(-1px, 0) skewX(-0.4deg); }
+  50% { transform: translate(1px, -1px) skewX(0.3deg); }
+  60% { transform: translate(0, 1px) skewX(-0.2deg); }
+  70% { transform: translate(-1px, 0) skewX(0.1deg); }
+  80% { transform: translate(0, 0) skewX(0); }
+}
+
+/* Rolling scanline during boot */
+@keyframes crt-boot-scanroll {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(100%); }
+}
+
+/* CRT Boot wrapper */
+.crt-boot-wrapper {
+  position: relative;
+}
+
+/* Content reveal animation when booting */
+.crt-booting .crt-boot-content {
+  animation:
+    crt-boot 2.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards,
+    crt-boot-glitch 0.2s ease-in-out 0.3s 8;
+}
+
+/* Bright scan line that rolls during boot */
+.crt-boot-scanline {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.crt-boot-scanline::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(130, 170, 255, 0.6),
+    rgba(255, 255, 255, 0.9),
+    rgba(130, 170, 255, 0.6),
+    transparent
+  );
+  box-shadow: 0 0 30px rgba(130, 170, 255, 0.7), 0 0 60px rgba(255, 255, 255, 0.3);
+  animation: crt-boot-scanroll 0.25s linear infinite;
+}
+
+/* Static noise overlay during boot */
+.crt-boot-noise {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.15;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 5;
+}
+
 /* ============================================================================
    Utility Classes
    ============================================================================ */
@@ -373,5 +524,16 @@ h1, h2, h3 {
 
   .crt-scanlines {
     display: none;
+  }
+
+  /* Skip CRT boot animation */
+  .crt-booting .crt-boot-content {
+    clip-path: none !important;
+    filter: none !important;
+  }
+
+  .crt-boot-scanline,
+  .crt-boot-noise {
+    display: none !important;
   }
 }
