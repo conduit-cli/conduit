@@ -740,6 +740,13 @@ impl ChatView {
         let content_lines: Vec<&str> = msg.content.lines().collect();
         let line_count = content_lines.len();
 
+        // Check if this is an image file read
+        let is_image = if tool_name == "Read" {
+            Self::is_image_file(tool_args)
+        } else {
+            false
+        };
+
         // Determine if error
         let is_error = if let Some(code) = msg.exit_code {
             code != 0
@@ -846,6 +853,10 @@ impl ChatView {
             }
         } else if let Some(code) = msg.exit_code {
             format!("✓ Completed (exit: {})", code)
+        } else if is_image {
+            // For images, show file size instead of line count
+            let size_str = Self::get_file_size_from_args(tool_args);
+            format!("✓ Read image ({})", size_str)
         } else {
             format!("✓ {} {}", line_count, line_word)
         };
@@ -944,6 +955,52 @@ impl ChatView {
 
         // Fallback: use raw args (truncated)
         truncate_to_width(tool_args, max_width)
+    }
+
+    /// Check if tool_args refers to an image file
+    fn is_image_file(tool_args: &str) -> bool {
+        let image_extensions = [
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".tif",
+        ];
+
+        // Try to extract file_path from JSON args
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(tool_args) {
+            if let Some(path) = json.get("file_path").and_then(|p| p.as_str()) {
+                let path_lower = path.to_lowercase();
+                return image_extensions.iter().any(|ext| path_lower.ends_with(ext));
+            }
+        }
+
+        // Fallback: check if raw args look like an image path
+        let args_lower = tool_args.to_lowercase();
+        image_extensions.iter().any(|ext| args_lower.contains(ext))
+    }
+
+    /// Get file size from tool_args for display
+    fn get_file_size_from_args(tool_args: &str) -> String {
+        // Try to extract file_path and get its size
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(tool_args) {
+            if let Some(path) = json.get("file_path").and_then(|p| p.as_str()) {
+                if let Ok(metadata) = std::fs::metadata(path) {
+                    let size = metadata.len();
+                    return Self::format_file_size(size);
+                }
+            }
+        }
+        "unknown size".to_string()
+    }
+
+    /// Format file size in human-readable form
+    fn format_file_size(size: u64) -> String {
+        if size < 1024 {
+            format!("{}B", size)
+        } else if size < 1024 * 1024 {
+            format!("{:.1}KB", size as f64 / 1024.0)
+        } else if size < 1024 * 1024 * 1024 {
+            format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.1}GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+        }
     }
 
     /// Format TodoWrite tool message
