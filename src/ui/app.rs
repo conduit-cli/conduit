@@ -4641,7 +4641,7 @@ impl App {
                         args: args_str,
                         output: "Running...".to_string(),
                         exit_code: None,
-                        file_size: None, // Will be populated when tool completes
+                        file_size: None, // Only set for Read tool on images via update_last_tool
                     };
                     session.chat_view.push(display.to_chat_message());
                 }
