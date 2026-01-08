@@ -238,4 +238,21 @@ error: command failed"#;
         assert_eq!(msg.exit_code, None);
         assert_eq!(msg.content, "file contents");
     }
+
+    #[test]
+    fn test_to_chat_message_tool_with_file_size() {
+        let display = MessageDisplay::Tool {
+            name: "Read".to_string(),
+            args: r#"{"file_path": "/tmp/image.png"}"#.to_string(),
+            output: "image data".to_string(),
+            exit_code: None,
+            file_size: Some(12345),
+        };
+        let msg = display.to_chat_message();
+        assert_eq!(
+            msg.file_size,
+            Some(12345),
+            "file_size should be preserved through conversion"
+        );
+    }
 }

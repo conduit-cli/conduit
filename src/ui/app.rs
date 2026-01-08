@@ -4680,7 +4680,9 @@ impl App {
                         format!("Error: {}", tool.error.unwrap_or_default())
                     };
                     // Update the existing "Running..." message instead of pushing a new one
-                    session.chat_view.update_last_tool(output, None);
+                    if !session.chat_view.update_last_tool(output, None) {
+                        tracing::warn!("ToolCompleted: no matching tool message found to update");
+                    }
                 }
                 AgentEvent::CommandOutput(cmd) => {
                     // Check for PR URL in command output (e.g., from gh pr create)
@@ -4691,9 +4693,12 @@ impl App {
                     }
 
                     // Update the existing "Running..." message instead of pushing a new one
-                    session
+                    if !session
                         .chat_view
-                        .update_last_tool(cmd.output.clone(), cmd.exit_code);
+                        .update_last_tool(cmd.output.clone(), cmd.exit_code)
+                    {
+                        tracing::warn!("CommandOutput: no matching tool message found to update");
+                    }
                 }
                 AgentEvent::Error(err) => {
                     let display = MessageDisplay::Error {
