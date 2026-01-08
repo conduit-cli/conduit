@@ -69,15 +69,22 @@ impl MessageDisplay {
             ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".tif",
         ];
 
-        // Try to extract file_path from JSON args
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(args) {
-            if let Some(path) = json.get("file_path").and_then(|p| p.as_str()) {
-                let path_lower = path.to_lowercase();
-                let is_image = IMAGE_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext));
-                if is_image {
-                    if let Ok(metadata) = std::fs::metadata(path) {
-                        return Some(metadata.len());
-                    }
+        // Try to extract file_path from JSON args first
+        let path = if let Ok(json) = serde_json::from_str::<serde_json::Value>(args) {
+            json.get("file_path")
+                .and_then(|p| p.as_str())
+                .map(|s| s.to_string())
+        } else {
+            // Args might be just the path directly (from format_tool_args in history.rs)
+            Some(args.to_string())
+        };
+
+        if let Some(path) = path {
+            let path_lower = path.to_lowercase();
+            let is_image = IMAGE_EXTENSIONS.iter().any(|ext| path_lower.ends_with(ext));
+            if is_image {
+                if let Ok(metadata) = std::fs::metadata(&path) {
+                    return Some(metadata.len());
                 }
             }
         }
