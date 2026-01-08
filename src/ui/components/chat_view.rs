@@ -530,6 +530,7 @@ impl ChatView {
             self.clear_selection();
             return false;
         }
+        self.selection_scroll_lock = None;
         true
     }
 
@@ -830,6 +831,34 @@ impl ChatView {
         }
     }
 
+    fn format_wrapped_lines(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+        content_spans: Vec<Span<'static>>,
+        first_prefix: Vec<Span<'static>>,
+        cont_prefix: Vec<Span<'static>>,
+        first_prefix_width: usize,
+        cont_prefix_width: usize,
+        width: usize,
+    ) {
+        let content_width = width
+            .saturating_sub(first_prefix_width.max(cont_prefix_width))
+            .max(1);
+        let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
+        for (idx, (wrapped_spans, joiner)) in wrapped.into_iter().zip(wrapped_joiners).enumerate() {
+            let prefix = if idx == 0 {
+                first_prefix.clone()
+            } else {
+                cont_prefix.clone()
+            };
+            let mut line_spans = prefix;
+            line_spans.extend(wrapped_spans);
+            lines.push(Line::from(line_spans));
+            joiner_before.push(joiner);
+        }
+    }
+
     /// Format user messages with chevron prefix
     fn format_user_message(
         &self,
@@ -849,25 +878,21 @@ impl ChatView {
 
         for (i, line) in content_lines.iter().enumerate() {
             let content_spans = vec![Span::styled(line.to_string(), text_style)];
-            let (prefix, prefix_width) = if i == 0 {
+            let (first_prefix, first_prefix_width) = if i == 0 {
                 (prefix_first.clone(), prefix_first_width)
             } else {
                 (prefix_next.clone(), prefix_next_width)
             };
-            let content_width = width.saturating_sub(prefix_width).max(1);
-            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
-            for (idx, (wrapped_spans, joiner)) in
-                wrapped.into_iter().zip(wrapped_joiners).enumerate()
-            {
-                let mut line_spans = if idx == 0 {
-                    prefix.clone()
-                } else {
-                    prefix_next.clone()
-                };
-                line_spans.extend(wrapped_spans);
-                lines.push(Line::from(line_spans));
-                joiner_before.push(joiner);
-            }
+            self.format_wrapped_lines(
+                lines,
+                joiner_before,
+                content_spans,
+                first_prefix,
+                prefix_next.clone(),
+                first_prefix_width,
+                prefix_next_width,
+                width,
+            );
         }
     }
 
@@ -931,21 +956,16 @@ impl ChatView {
                 (continuation_prefix.clone(), continuation_width)
             };
 
-            let content_width = width.saturating_sub(first_prefix_width).max(1);
-            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
-            for (idx, (wrapped_spans, joiner)) in
-                wrapped.into_iter().zip(wrapped_joiners).enumerate()
-            {
-                let prefix = if idx == 0 {
-                    first_prefix.clone()
-                } else {
-                    continuation_prefix.clone()
-                };
-                let mut line_spans = prefix;
-                line_spans.extend(wrapped_spans);
-                lines.push(Line::from(line_spans));
-                joiner_before.push(joiner);
-            }
+            self.format_wrapped_lines(
+                lines,
+                joiner_before,
+                content_spans,
+                first_prefix,
+                continuation_prefix.clone(),
+                first_prefix_width,
+                continuation_width,
+                width,
+            );
 
             if first_content_line {
                 first_content_line = false;
@@ -984,25 +1004,21 @@ impl ChatView {
 
         for (i, line) in content_lines.iter().enumerate() {
             let content_spans = vec![Span::styled(line.to_string(), text_style)];
-            let (prefix, prefix_width) = if i == 0 {
+            let (first_prefix, first_prefix_width) = if i == 0 {
                 (prefix_first.clone(), prefix_first_width)
             } else {
                 (prefix_next.clone(), prefix_next_width)
             };
-            let content_width = width.saturating_sub(prefix_width).max(1);
-            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
-            for (idx, (wrapped_spans, joiner)) in
-                wrapped.into_iter().zip(wrapped_joiners).enumerate()
-            {
-                let mut line_spans = if idx == 0 {
-                    prefix.clone()
-                } else {
-                    prefix_next.clone()
-                };
-                line_spans.extend(wrapped_spans);
-                lines.push(Line::from(line_spans));
-                joiner_before.push(joiner);
-            }
+            self.format_wrapped_lines(
+                lines,
+                joiner_before,
+                content_spans,
+                first_prefix,
+                prefix_next.clone(),
+                first_prefix_width,
+                prefix_next_width,
+                width,
+            );
         }
     }
 
@@ -1023,25 +1039,21 @@ impl ChatView {
 
         for (i, line) in content_lines.iter().enumerate() {
             let content_spans = vec![Span::styled(line.to_string(), text_style)];
-            let (prefix, prefix_width) = if i == 0 {
+            let (first_prefix, first_prefix_width) = if i == 0 {
                 (prefix_first.clone(), prefix_first_width)
             } else {
                 (prefix_next.clone(), prefix_next_width)
             };
-            let content_width = width.saturating_sub(prefix_width).max(1);
-            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
-            for (idx, (wrapped_spans, joiner)) in
-                wrapped.into_iter().zip(wrapped_joiners).enumerate()
-            {
-                let mut line_spans = if idx == 0 {
-                    prefix.clone()
-                } else {
-                    prefix_next.clone()
-                };
-                line_spans.extend(wrapped_spans);
-                lines.push(Line::from(line_spans));
-                joiner_before.push(joiner);
-            }
+            self.format_wrapped_lines(
+                lines,
+                joiner_before,
+                content_spans,
+                first_prefix,
+                prefix_next.clone(),
+                first_prefix_width,
+                prefix_next_width,
+                width,
+            );
         }
     }
 
@@ -1616,74 +1628,8 @@ impl ChatView {
 }
 
 fn wrap_spans(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Vec<Span<'static>>> {
-    if spans.is_empty() {
-        return vec![Vec::new()];
-    }
-
-    if max_width == 0 {
-        return vec![Vec::new()];
-    }
-
-    let mut chars: Vec<(char, Style)> = Vec::new();
-    for span in spans {
-        let style = span.style;
-        for ch in span.content.chars() {
-            if ch.is_control() {
-                continue;
-            }
-            chars.push((ch, style));
-        }
-    }
-
-    if chars.is_empty() {
-        return vec![Vec::new()];
-    }
-
-    let mut lines: Vec<Vec<(char, Style)>> = Vec::new();
-    let mut current: Vec<(char, Style)> = Vec::new();
-    let mut line_width = 0usize;
-    let mut last_break: Option<(usize, usize)> = None;
-
-    for (ch, style) in chars {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-
-        if line_width + ch_width > max_width && !current.is_empty() {
-            if let Some((break_idx, break_width)) = last_break {
-                let next_line = current.split_off(break_idx);
-                lines.push(current);
-                current = next_line;
-                line_width = line_width.saturating_sub(break_width);
-                last_break = None;
-
-                let mut width = 0usize;
-                for (idx, (c, _)) in current.iter().enumerate() {
-                    let w = UnicodeWidthChar::width(*c).unwrap_or(0);
-                    width += w;
-                    if c.is_whitespace() {
-                        last_break = Some((idx + 1, width));
-                    }
-                }
-            } else {
-                lines.push(current);
-                current = Vec::new();
-                line_width = 0;
-                last_break = None;
-            }
-        }
-
-        current.push((ch, style));
-        line_width += ch_width;
-        if ch.is_whitespace() {
-            last_break = Some((current.len(), line_width));
-        }
-    }
-
-    lines.push(current);
-
+    let (lines, _joiners) = wrap_spans_with_joiners(spans, max_width);
     lines
-        .into_iter()
-        .map(|line_chars| chars_to_spans(line_chars))
-        .collect()
 }
 
 fn wrap_spans_with_joiners(
@@ -1898,6 +1844,8 @@ fn selection_to_copy_text(
 
         let is_code_block_line = is_code_block_line(line);
         if is_code_block_line && line_end_col >= content_width {
+            // For code blocks, allow selection to extend beyond visible width
+            // to capture the full line content when copying.
             row_sel_end = u16::MAX;
         }
 
@@ -2413,5 +2361,43 @@ mod tests {
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
         assert_eq!(out, "first\n\nthird");
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_mid_line_code_block() {
+        let lines = vec![code_line("abcde")];
+        let joiners = vec![None];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 1,
+        };
+        let end = SelectionPoint {
+            line_index: 0,
+            column: 3,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "```\nbcd\n```");
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_mixed_code_and_text_paragraphs() {
+        let lines = vec![
+            line("para1"),
+            line(""),
+            code_line("code"),
+            line(""),
+            line("para2"),
+        ];
+        let joiners = vec![None, None, None, None, None];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 0,
+        };
+        let end = SelectionPoint {
+            line_index: 4,
+            column: 10,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "para1\n\n```\ncode\n```\n\n\npara2");
     }
 }
