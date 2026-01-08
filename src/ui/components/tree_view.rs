@@ -364,7 +364,13 @@ impl StatefulWidget for TreeView<'_> {
             }
 
             // Build the line
-            let indent = "  ".repeat(node.depth);
+            // Repos (depth=0): " " (1 space) - moves them 1 char right
+            // Children (depth=1): "  " (2 spaces) - aligns nicely under repo names
+            let indent = if node.depth == 0 {
+                " ".to_string()
+            } else {
+                "  ".to_string()
+            };
             let expand_marker = if node.is_leaf() {
                 "  "
             } else if node.expanded {
@@ -392,54 +398,9 @@ impl StatefulWidget for TreeView<'_> {
 
             if is_two_line_workspace {
                 // First line shows branch (suffix) with the primary label style
+                // Git stats are shown on the second line (workspace name line)
                 if let Some(suffix) = &node.suffix {
                     spans.push(Span::styled(suffix.as_str(), label_style));
-                }
-
-                // Add git stats based on display mode
-                match SIDEBAR_GIT_DISPLAY {
-                    SidebarGitDisplay::Off => {}
-                    SidebarGitDisplay::ColoredDot => {
-                        // Colored dot: green=clean, orange=dirty
-                        if let Some(ref stats) = node.git_stats {
-                            if stats.has_changes() {
-                                spans
-                                    .push(Span::styled("  ●", Style::default().fg(ACCENT_WARNING)));
-                            } else {
-                                spans
-                                    .push(Span::styled("  ●", Style::default().fg(ACCENT_SUCCESS)));
-                            }
-                        }
-                    }
-                    SidebarGitDisplay::InlineStats => {
-                        // Inline stats: +12 -4 (omit zeros)
-                        if let Some(ref stats) = node.git_stats {
-                            if stats.has_changes() {
-                                spans.push(Span::styled("  ", Style::default().fg(TEXT_MUTED)));
-
-                                let has_additions = stats.additions > 0;
-                                let has_deletions = stats.deletions > 0;
-
-                                if has_additions {
-                                    spans.push(Span::styled(
-                                        format!("+{}", stats.additions),
-                                        Style::default().fg(ACCENT_SUCCESS),
-                                    ));
-                                }
-
-                                if has_additions && has_deletions {
-                                    spans.push(Span::styled(" ", Style::default()));
-                                }
-
-                                if has_deletions {
-                                    spans.push(Span::styled(
-                                        format!("-{}", stats.deletions),
-                                        Style::default().fg(ACCENT_ERROR),
-                                    ));
-                                }
-                            }
-                        }
-                    }
                 }
             } else {
                 // Single line items show label
@@ -480,12 +441,65 @@ impl StatefulWidget for TreeView<'_> {
             if is_two_line_workspace {
                 let name_y = y + 1;
                 if name_y < inner.y + inner.height {
-                    // Indent for second line: same indent + expand_marker width + extra spacing
-                    let name_indent = format!("{}    ", indent);
-                    let name_line = Line::from(vec![
+                    // Indent for second line: align under the branch name
+                    let name_indent = format!("{}  ", indent);
+                    let mut name_spans = vec![
                         Span::raw(name_indent),
                         Span::styled(&node.label, self.suffix_style),
-                    ]);
+                    ];
+
+                    // Add git stats on the second line (workspace name line)
+                    match SIDEBAR_GIT_DISPLAY {
+                        SidebarGitDisplay::Off => {}
+                        SidebarGitDisplay::ColoredDot => {
+                            // Colored dot: green=clean, orange=dirty
+                            if let Some(ref stats) = node.git_stats {
+                                if stats.has_changes() {
+                                    name_spans.push(Span::styled(
+                                        "  ●",
+                                        Style::default().fg(ACCENT_WARNING),
+                                    ));
+                                } else {
+                                    name_spans.push(Span::styled(
+                                        "  ●",
+                                        Style::default().fg(ACCENT_SUCCESS),
+                                    ));
+                                }
+                            }
+                        }
+                        SidebarGitDisplay::InlineStats => {
+                            // Inline stats: +12 -4 (omit zeros)
+                            if let Some(ref stats) = node.git_stats {
+                                if stats.has_changes() {
+                                    name_spans
+                                        .push(Span::styled("  ", Style::default().fg(TEXT_MUTED)));
+
+                                    let has_additions = stats.additions > 0;
+                                    let has_deletions = stats.deletions > 0;
+
+                                    if has_additions {
+                                        name_spans.push(Span::styled(
+                                            format!("+{}", stats.additions),
+                                            Style::default().fg(ACCENT_SUCCESS),
+                                        ));
+                                    }
+
+                                    if has_additions && has_deletions {
+                                        name_spans.push(Span::styled(" ", Style::default()));
+                                    }
+
+                                    if has_deletions {
+                                        name_spans.push(Span::styled(
+                                            format!("-{}", stats.deletions),
+                                            Style::default().fg(ACCENT_ERROR),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let name_line = Line::from(name_spans);
                     let name_area = Rect {
                         x: inner.x,
                         y: name_y,
