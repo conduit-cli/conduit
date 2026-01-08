@@ -245,6 +245,37 @@ h1, h2, h3 {
 }
 
 /* ============================================================================
+   Waitlist Form
+   ============================================================================ */
+
+.waitlist-input {
+  padding: 12px 16px;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-default);
+  outline: none;
+  transition: all 0.2s ease;
+  min-width: 0; /* Allow flex shrinking */
+}
+
+.waitlist-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.waitlist-input:focus {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 3px rgba(130, 170, 255, 0.1);
+}
+
+.waitlist-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
    Animations
    ============================================================================ */
 

@@ -1,0 +1,81 @@
+---
+import LogoShine from './LogoShine.tsx'
+import WaitlistForm from './WaitlistForm.tsx'
+---
+
+<section class="min-h-screen flex flex-col items-center justify-center px-4 py-20 relative overflow-hidden">
+  <!-- Ambient glow behind terminal -->
+  <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+    <div class="w-[800px] h-[600px] rounded-full bg-[var(--color-accent-primary)] opacity-[0.03] blur-[100px]"></div>
+  </div>
+
+  <!-- Terminal Window -->
+  <div class="terminal-frame w-full max-w-3xl mx-auto relative z-10 animate-fade-in-up">
+    <!-- Window Chrome -->
+    <div class="terminal-buttons">
+      <div class="terminal-button terminal-button-close"></div>
+      <div class="terminal-button terminal-button-minimize"></div>
+      <div class="terminal-button terminal-button-maximize"></div>
+      <span class="ml-4 text-[var(--color-text-muted)] text-xs font-mono">conduit — coming soon</span>
+    </div>
+
+    <!-- Terminal Content -->
+    <div class="p-8 md:p-12 flex flex-col items-center">
+      <!-- ASCII Logo with Shine Animation -->
+      <div class="mb-8">
+        <LogoShine client:load className="phosphor-glow" />
+      </div>
+
+      <!-- Tagline -->
+      <div class="text-center mb-10">
+        <p class="text-[var(--color-text-muted)] font-mono text-sm mb-2">
+          <span class="text-[var(--color-accent-success)]">$</span> conduit --version
+        </p>
+        <h1 class="font-display text-3xl md:text-4xl lg:text-5xl text-[var(--color-text-bright)] mb-4">
+          Orchestrate AI.<br />
+          <span class="text-[var(--color-accent-primary)]">In Your Terminal.</span>
+        </h1>
+        <p class="text-[var(--color-text-secondary)] text-base max-w-lg mx-auto mb-2">
+          Run Claude Code and Codex CLI side-by-side with tab-based session management,
+          real-time streaming, and token tracking.
+        </p>
+        <p class="text-[var(--color-accent-warning)] font-mono text-sm">
+          Coming soon.
+        </p>
+      </div>
+
+      <!-- Waitlist Form -->
+      <WaitlistForm client:load className="mb-8" />
+
+      <!-- Divider -->
+      <div class="flex items-center gap-4 w-full max-w-xs mb-6">
+        <div class="flex-1 h-px bg-[var(--color-border)]"></div>
+        <span class="text-[var(--color-text-muted)] text-xs font-mono">or</span>
+        <div class="flex-1 h-px bg-[var(--color-border)]"></div>
+      </div>
+
+      <!-- Twitter Follow CTA -->
+      <a
+        href="https://x.com/fcoury"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="group flex items-center gap-3 px-5 py-3 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-accent-primary)]/50 transition-all duration-200 hover:bg-[var(--color-bg-elevated)]"
+      >
+        <!-- X/Twitter Icon -->
+        <svg class="w-5 h-5 text-[var(--color-text-muted)] group-hover:text-[var(--color-text-primary)] transition-colors" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+        </svg>
+        <span class="text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)] transition-colors font-mono text-sm">
+          Follow <span class="text-[var(--color-accent-primary)]">@fcoury</span> to skip the line
+        </span>
+      </a>
+    </div>
+  </div>
+
+  <!-- Footer info -->
+  <div class="absolute bottom-8 text-center">
+    <p class="text-[var(--color-text-faint)] text-xs font-mono">
+      Built with Rust + Ratatui
+    </p>
+  </div>
+</section>
