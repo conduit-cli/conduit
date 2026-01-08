@@ -4,6 +4,7 @@
  */
 import type { APIRoute } from 'astro'
 import { createClient } from '@supabase/supabase-js'
+import { sendWaitlistWelcomeEmail } from '../../lib/email'
 
 const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
 const supabaseKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
@@ -73,6 +74,13 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Calculate position
     const position = await getPosition(supabase, data.created_at)
+
+    // Send welcome email (fire and forget - don't block the response)
+    sendWaitlistWelcomeEmail(
+      email.trim().toLowerCase(),
+      position,
+      !!twitter_verified
+    ).catch(err => console.error('Failed to send welcome email:', err))
 
     return new Response(JSON.stringify({
       success: true,

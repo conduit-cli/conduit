@@ -11,6 +11,7 @@
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.12",
     "@astrojs/react": "^4.4.2",
+    "@react-email/components": "^1.0.4",
     "@supabase/supabase-js": "^2.90.1",
     "@tailwindcss/vite": "^4.1.18",
     "@types/react": "^19.2.7",
