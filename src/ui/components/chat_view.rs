@@ -831,6 +831,7 @@ impl ChatView {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn format_wrapped_lines(
         &self,
         lines: &mut Vec<Line<'static>>,
