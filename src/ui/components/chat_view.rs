@@ -2364,7 +2364,7 @@ mod tests {
             column: 10,
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
-        assert_eq!(out, "before\n```\ncode1\ncode2\n```\nafter");
+        assert_eq!(out, "before\n```\ncode1\ncode2\n```\n\nafter");
     }
 
     #[test]
