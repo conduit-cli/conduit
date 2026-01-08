@@ -4,6 +4,8 @@ use ratatui::{
     text::{Line, Span, Text},
 };
 
+use super::theme::MARKDOWN_CODE_BG;
+
 /// Custom markdown renderer with table support
 pub struct MarkdownRenderer {
     /// Base style for text
@@ -149,8 +151,7 @@ impl MarkdownRenderer {
                     TagEnd::CodeBlock => {
                         in_code_block = false;
                         // Render code block with background
-                        let code_style =
-                            Style::default().fg(Color::Green).bg(Color::Rgb(30, 30, 30));
+                        let code_style = Style::default().fg(Color::Green).bg(MARKDOWN_CODE_BG);
 
                         lines.push(Line::from(Span::styled(
                             "```",
@@ -381,7 +382,8 @@ impl MarkdownRenderer {
         result.push(left);
 
         for (i, &width) in widths.iter().enumerate() {
-            result.extend(std::iter::repeat_n(fill, width + 2)); // +2 for padding
+            #[allow(clippy::manual_repeat_n)]
+            result.extend(std::iter::repeat(fill).take(width + 2)); // +2 for padding
             if i < widths.len() - 1 {
                 result.push(mid);
             }

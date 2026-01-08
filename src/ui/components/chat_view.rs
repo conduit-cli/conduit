@@ -11,8 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::{
     render_minimal_scrollbar,
     theme::{
-        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, BG_HIGHLIGHT, DIFF_ADD, DIFF_REMOVE, TOOL_BLOCK_BG,
-        TOOL_COMMAND, TOOL_COMMENT, TOOL_OUTPUT,
+        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, BG_HIGHLIGHT, DIFF_ADD, DIFF_REMOVE,
+        MARKDOWN_CODE_BG, TOOL_BLOCK_BG, TOOL_COMMAND, TOOL_COMMENT, TOOL_OUTPUT,
     },
     ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics, TurnSummary,
 };
@@ -157,8 +157,6 @@ impl ToolBlockBuilder {
 }
 
 use self::chat_view_cache::LineCache;
-
-const MARKDOWN_CODE_BG: Color = Color::Rgb(30, 30, 30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SelectionPoint {
@@ -542,15 +540,20 @@ impl ChatView {
         self.ensure_flat_cache();
         self.ensure_streaming_cache(width);
 
-        let mut lines = self.flat_cache.clone();
-        let mut joiner_before = self.joiner_before.clone();
+        let streaming_len = self.streaming_cache.as_ref().map(|s| s.len()).unwrap_or(0);
+        let total_len = self.flat_cache.len() + streaming_len;
+        let mut lines = Vec::with_capacity(total_len);
+        lines.extend(self.flat_cache.iter().cloned());
+        let mut joiner_before = Vec::with_capacity(total_len);
+        joiner_before.extend(self.joiner_before.iter().cloned());
 
         if let Some(ref streaming) = self.streaming_cache {
             lines.extend(streaming.iter().cloned());
             if let Some(ref streaming_joiners) = self.streaming_joiner_before {
                 joiner_before.extend(streaming_joiners.iter().cloned());
             } else {
-                joiner_before.extend(std::iter::repeat_n(None, streaming.len()));
+                #[allow(clippy::manual_repeat_n)]
+                joiner_before.extend(std::iter::repeat(None).take(streaming.len()));
             }
         }
 
@@ -1715,9 +1718,11 @@ fn wrap_spans_with_joiners(
     let mut current: Vec<(char, Style)> = Vec::new();
     let mut line_width = 0usize;
     let mut last_break: Option<(usize, usize)> = None;
+    // Joiners preserve whitespace between wrapped lines so copy can reconstruct original text.
     let mut pending_joiner: Option<String> = None;
 
     let trailing_whitespace = |line: &[(char, Style)]| -> String {
+        // Capture whitespace that would be lost when we split a line; this becomes the joiner.
         let mut rev = String::new();
         for (ch, _) in line.iter().rev() {
             if ch.is_whitespace() {
@@ -1734,6 +1739,7 @@ fn wrap_spans_with_joiners(
 
         if line_width + ch_width > max_width && !current.is_empty() {
             if let Some((break_idx, break_width)) = last_break {
+                // Word-boundary wrap: keep trailing whitespace as a joiner for copy reconstruction.
                 let joiner = trailing_whitespace(&current);
                 let next_line = current.split_off(break_idx);
                 lines.push(current);
@@ -1752,6 +1758,7 @@ fn wrap_spans_with_joiners(
                     }
                 }
             } else {
+                // Mid-word wrap: no whitespace to preserve, so use an empty joiner.
                 lines.push(current);
                 joiners.push(pending_joiner.take());
                 current = Vec::new();

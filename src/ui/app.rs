@@ -1202,13 +1202,10 @@ impl App {
             }
             Action::CopySelection => {
                 let mut copied_text = None;
-                let mut had_selection = false;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if session.input_box.has_selection() {
-                        had_selection = true;
                         copied_text = session.input_box.selected_text();
                     } else if session.chat_view.has_selection() {
-                        had_selection = true;
                         copied_text = session.chat_view.copy_selection();
                     }
                 }
@@ -1219,7 +1216,7 @@ impl App {
                         "Copied selection".to_string(),
                         Duration::from_secs(5),
                     );
-                } else if !had_selection {
+                } else {
                     self.state.set_timed_footer_message(
                         "No selection to copy".to_string(),
                         Duration::from_secs(3),
