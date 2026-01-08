@@ -181,6 +181,7 @@ pub struct AppState {
     pub last_sidebar_click: Option<(Instant, usize)>,
     pub last_raw_events_click: Option<(Instant, usize)>,
     pub scroll_drag: Option<ScrollDragTarget>,
+    pub selection_drag: Option<SelectionDragTarget>,
     /// Knight Rider spinner for footer (shown during global processing)
     pub footer_spinner: Option<KnightRiderSpinner>,
     /// Message to display in footer (alongside spinner)
@@ -206,6 +207,12 @@ pub enum ScrollDragTarget {
     SessionImport,
     RawEventsList,
     RawEventsDetail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionDragTarget {
+    Chat,
+    Input,
 }
 
 impl AppState {
@@ -243,6 +250,7 @@ impl AppState {
             last_sidebar_click: None,
             last_raw_events_click: None,
             scroll_drag: None,
+            selection_drag: None,
             footer_spinner: None,
             footer_message: None,
             footer_message_expires_at: None,

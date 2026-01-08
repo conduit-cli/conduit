@@ -2,20 +2,20 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::Style,
+    text::{Line, Span},
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_minimal_scrollbar, ScrollbarMetrics, INPUT_BG, TEXT_PRIMARY};
+use super::{render_minimal_scrollbar, ScrollbarMetrics, BG_HIGHLIGHT, INPUT_BG, TEXT_PRIMARY};
 use crate::ui::clipboard_paste::normalize_pasted_path;
 
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 
 #[derive(Debug, Clone)]
 struct VisualLine {
-    text: String,
     start: usize,
     end: usize,
     prefix_width: u16,
@@ -58,6 +58,10 @@ pub struct InputBox {
     large_paste_counters: HashMap<usize, usize>,
     /// Attached images tracked by placeholder
     attached_images: Vec<AttachedImage>,
+    /// Selection anchor (byte offset)
+    selection_anchor: Option<usize>,
+    /// Selection head (byte offset)
+    selection_head: Option<usize>,
 }
 
 impl InputBox {
@@ -74,6 +78,8 @@ impl InputBox {
             pending_pastes: Vec::new(),
             large_paste_counters: HashMap::new(),
             attached_images: Vec::new(),
+            selection_anchor: None,
+            selection_head: None,
         }
     }
 
@@ -88,6 +94,7 @@ impl InputBox {
         self.cursor_pos = self.input.len();
         self.pending_pastes.clear();
         self.attached_images.clear();
+        self.clear_selection();
     }
 
     /// Clear input
@@ -98,6 +105,7 @@ impl InputBox {
         self.scroll_offset = 0;
         self.pending_pastes.clear();
         self.attached_images.clear();
+        self.clear_selection();
     }
 
     /// Submit input and add to history
@@ -106,6 +114,7 @@ impl InputBox {
         self.cursor_pos = 0;
         self.history_index = None;
         self.scroll_offset = 0;
+        self.clear_selection();
 
         let mut expanded = input;
         for (placeholder, actual) in &self.pending_pastes {
@@ -163,7 +172,6 @@ impl InputBox {
     fn build_visual_lines(&self, width: u16) -> Vec<VisualLine> {
         if width == 0 {
             return vec![VisualLine {
-                text: String::new(),
                 start: 0,
                 end: 0,
                 prefix_width: 0,
@@ -189,13 +197,7 @@ impl InputBox {
                     cont_prefix
                 };
                 let prefix_width = UnicodeWidthStr::width(prefix) as u16;
-                let segment_text = if start <= end && end <= line.len() {
-                    &line[start..end]
-                } else {
-                    ""
-                };
                 visual.push(VisualLine {
-                    text: format!("{}{}", prefix, segment_text),
                     start: base_offset + start,
                     end: base_offset + end,
                     prefix_width,
@@ -207,7 +209,6 @@ impl InputBox {
 
         if visual.is_empty() {
             visual.push(VisualLine {
-                text: String::new(),
                 start: 0,
                 end: 0,
                 prefix_width: 0,
@@ -231,8 +232,50 @@ impl InputBox {
         lines.len().saturating_sub(1)
     }
 
+    fn selection_range(&self) -> Option<(usize, usize)> {
+        let (anchor, head) = self.selection_anchor.zip(self.selection_head)?;
+        if anchor == head {
+            return None;
+        }
+        Some((anchor.min(head), anchor.max(head)))
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_head = None;
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let Some((start, end)) = self.selection_range() else {
+            return false;
+        };
+        self.input.replace_range(start..end, "");
+        self.cursor_pos = start.min(self.input.len());
+        self.clear_selection();
+        true
+    }
+
+    fn collapse_selection_to_start(&mut self) -> bool {
+        let Some((start, _)) = self.selection_range() else {
+            return false;
+        };
+        self.cursor_pos = start.min(self.input.len());
+        self.clear_selection();
+        true
+    }
+
+    fn collapse_selection_to_end(&mut self) -> bool {
+        let Some((_, end)) = self.selection_range() else {
+            return false;
+        };
+        self.cursor_pos = end.min(self.input.len());
+        self.clear_selection();
+        true
+    }
+
     /// Insert character at cursor
     pub fn insert_char(&mut self, c: char) {
+        self.delete_selection();
         self.input.insert(self.cursor_pos, c);
         self.cursor_pos += c.len_utf8();
     }
@@ -242,6 +285,7 @@ impl InputBox {
         if text.is_empty() {
             return;
         }
+        self.delete_selection();
         self.input.insert_str(self.cursor_pos, text);
         self.cursor_pos += text.len();
     }
@@ -253,6 +297,9 @@ impl InputBox {
 
     /// Delete character before cursor
     pub fn backspace(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         if self.cursor_pos > 0 {
             // Find the previous character boundary
             let prev_pos = self.input[..self.cursor_pos]
@@ -267,6 +314,9 @@ impl InputBox {
 
     /// Delete character at cursor
     pub fn delete(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         if self.cursor_pos < self.input.len() {
             self.input.remove(self.cursor_pos);
         }
@@ -274,6 +324,9 @@ impl InputBox {
 
     /// Move cursor left
     pub fn move_left(&mut self) {
+        if self.collapse_selection_to_start() {
+            return;
+        }
         if self.cursor_pos > 0 {
             self.cursor_pos = self.input[..self.cursor_pos]
                 .char_indices()
@@ -285,6 +338,9 @@ impl InputBox {
 
     /// Move cursor right
     pub fn move_right(&mut self) {
+        if self.collapse_selection_to_end() {
+            return;
+        }
         if self.cursor_pos < self.input.len() {
             self.cursor_pos = self.input[self.cursor_pos..]
                 .char_indices()
@@ -296,6 +352,9 @@ impl InputBox {
 
     /// Move cursor up one line. Returns true if moved, false if already at top.
     pub fn move_up(&mut self) -> bool {
+        if self.collapse_selection_to_start() {
+            return true;
+        }
         let lines: Vec<&str> = self.input.split('\n').collect();
         if lines.len() <= 1 {
             return false; // Single line, can't move up
@@ -329,6 +388,9 @@ impl InputBox {
 
     /// Move cursor down one line. Returns true if moved, false if already at bottom.
     pub fn move_down(&mut self) -> bool {
+        if self.collapse_selection_to_end() {
+            return true;
+        }
         let lines: Vec<&str> = self.input.split('\n').collect();
         if lines.len() <= 1 {
             return false; // Single line, can't move down
@@ -382,6 +444,9 @@ impl InputBox {
 
     /// Move cursor to start
     pub fn move_start(&mut self) {
+        if self.collapse_selection_to_start() {
+            return;
+        }
         if let Some(width) = self.last_content_width {
             let visual_lines = self.build_visual_lines(width);
             let line_idx = self.cursor_visual_index(&visual_lines);
@@ -401,11 +466,17 @@ impl InputBox {
 
     /// Move cursor to end
     pub fn move_end(&mut self) {
+        if self.collapse_selection_to_end() {
+            return;
+        }
         self.cursor_pos = self.input.len();
     }
 
     /// Move cursor left by one word
     pub fn move_word_left(&mut self) {
+        if self.collapse_selection_to_start() {
+            return;
+        }
         if self.cursor_pos == 0 {
             return;
         }
@@ -430,6 +501,9 @@ impl InputBox {
 
     /// Move cursor right by one word
     pub fn move_word_right(&mut self) {
+        if self.collapse_selection_to_end() {
+            return;
+        }
         if self.cursor_pos >= self.input.len() {
             return;
         }
@@ -452,6 +526,9 @@ impl InputBox {
 
     /// Delete word before cursor (Ctrl+W)
     pub fn delete_word_back(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         if self.cursor_pos == 0 {
             return;
         }
@@ -482,6 +559,9 @@ impl InputBox {
 
     /// Delete from cursor to start of line (Ctrl+U)
     pub fn delete_to_start(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         if self.cursor_pos == 0 {
             return;
         }
@@ -491,6 +571,9 @@ impl InputBox {
 
     /// Delete from cursor to end of line (Ctrl+K)
     pub fn delete_to_end(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
         self.input.truncate(self.cursor_pos);
     }
 
@@ -517,6 +600,7 @@ impl InputBox {
         if let Some(i) = self.history_index {
             self.input = self.history[i].clone();
             self.cursor_pos = self.input.len();
+            self.clear_selection();
         }
     }
 
@@ -538,6 +622,7 @@ impl InputBox {
             }
         }
         self.cursor_pos = self.input.len();
+        self.clear_selection();
     }
 
     /// Set focus state
@@ -725,17 +810,16 @@ impl InputBox {
         })
     }
 
-    /// Set cursor position from a mouse click
-    pub fn set_cursor_from_click(&mut self, click_x: u16, click_y: u16, area: Rect) {
+    fn cursor_pos_from_point(&self, click_x: u16, click_y: u16, area: Rect) -> Option<usize> {
         if area.height < 3 || area.width < 4 {
-            return;
+            return None;
         }
 
         let padding_top: u16 = 1;
         let padding_bottom: u16 = 1;
         let content_height = area.height.saturating_sub(padding_top + padding_bottom);
         if content_height == 0 {
-            return;
+            return None;
         }
 
         let visible_lines = content_height as usize;
@@ -744,7 +828,7 @@ impl InputBox {
         let show_scrollbar = visual_lines_full.len() > visible_lines;
         let content_width = base_width.saturating_sub(if show_scrollbar { 1 } else { 0 });
         if content_width == 0 {
-            return;
+            return None;
         }
 
         let content_x = area.x;
@@ -756,7 +840,7 @@ impl InputBox {
             || click_x >= content_x + content_width
             || click_y >= content_y + content_height
         {
-            return;
+            return None;
         }
 
         let relative_x = click_x - content_x;
@@ -770,19 +854,85 @@ impl InputBox {
 
         let target_line = relative_y + self.scroll_offset;
         if target_line >= visual_lines.len() {
-            return;
+            return None;
         }
 
         let line = &visual_lines[target_line];
         if relative_x < line.prefix_width {
-            self.cursor_pos = line.start.min(self.input.len());
-            return;
+            return Some(line.start.min(self.input.len()));
         }
 
         let target_x = (relative_x - line.prefix_width) as usize;
         let segment = &self.input[line.start..line.end];
         let byte_offset = byte_offset_for_x(segment, target_x);
-        self.cursor_pos = (line.start + byte_offset).min(self.input.len());
+        Some((line.start + byte_offset).min(self.input.len()))
+    }
+
+    /// Set cursor position from a mouse click
+    pub fn set_cursor_from_click(&mut self, click_x: u16, click_y: u16, area: Rect) {
+        if let Some(pos) = self.cursor_pos_from_point(click_x, click_y, area) {
+            self.cursor_pos = pos;
+            self.clear_selection();
+        }
+    }
+
+    pub fn begin_selection(&mut self, click_x: u16, click_y: u16, area: Rect) -> bool {
+        let Some(pos) = self.cursor_pos_from_point(click_x, click_y, area) else {
+            return false;
+        };
+        self.cursor_pos = pos;
+        self.selection_anchor = Some(pos);
+        self.selection_head = None;
+        true
+    }
+
+    pub fn update_selection(&mut self, click_x: u16, click_y: u16, area: Rect) -> bool {
+        if self.selection_anchor.is_none() {
+            return false;
+        }
+        let Some(pos) = self.cursor_pos_from_point(click_x, click_y, area) else {
+            return false;
+        };
+        self.cursor_pos = pos;
+        self.selection_head = Some(pos);
+        if area.height >= 3 && area.width > 0 {
+            let padding_top = 1;
+            let padding_bottom = 1;
+            let content_height = area.height.saturating_sub(padding_top + padding_bottom);
+            let visible_lines = content_height as usize;
+            let base_width = area.width;
+            let visual_lines_full = self.build_visual_lines(base_width);
+            let show_scrollbar = visual_lines_full.len() > visible_lines;
+            let content_width = base_width.saturating_sub(if show_scrollbar { 1 } else { 0 });
+            if content_width > 0 {
+                let visual_lines = if show_scrollbar {
+                    self.build_visual_lines(content_width)
+                } else {
+                    visual_lines_full
+                };
+                let cursor_line = self.cursor_visual_index(&visual_lines);
+                self.ensure_cursor_visible(cursor_line, visible_lines.max(1));
+            }
+        }
+        true
+    }
+
+    pub fn finalize_selection(&mut self) -> bool {
+        let has_selection = self.selection_range().is_some();
+        if self.selection_head.is_none() || self.selection_anchor == self.selection_head {
+            self.clear_selection();
+            return false;
+        }
+        has_selection
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection_range().is_some()
+    }
+
+    pub fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.selection_range()?;
+        Some(self.input[start..end].to_string())
     }
 
     /// Render the input box
@@ -831,17 +981,50 @@ impl InputBox {
         let max_scroll = total_lines.saturating_sub(visible_lines);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        let display_text = visual_lines
+        let base_style = Style::default().fg(TEXT_PRIMARY).bg(INPUT_BG);
+        let selection_style = Style::default().fg(TEXT_PRIMARY).bg(BG_HIGHLIGHT);
+        let selection = self.selection_range();
+
+        let mut display_lines: Vec<Line> = Vec::with_capacity(visible_lines);
+        for line in visual_lines
             .iter()
             .skip(self.scroll_offset)
             .take(visible_lines)
-            .map(|line| line.text.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
+        {
+            let mut spans: Vec<Span> = Vec::new();
+            let prefix = " ".repeat(line.prefix_width as usize);
+            spans.push(Span::styled(prefix, base_style));
 
-        let paragraph = Paragraph::new(display_text)
-            .style(Style::default().fg(TEXT_PRIMARY).bg(INPUT_BG))
-            .wrap(Wrap { trim: false });
+            let segment = &self.input[line.start..line.end];
+            if let Some((sel_start, sel_end)) = selection {
+                let overlap_start = sel_start.max(line.start);
+                let overlap_end = sel_end.min(line.end);
+                if overlap_start < overlap_end {
+                    let local_start = overlap_start - line.start;
+                    let local_end = overlap_end - line.start;
+                    let before = &segment[..local_start];
+                    let selected = &segment[local_start..local_end];
+                    let after = &segment[local_end..];
+                    if !before.is_empty() {
+                        spans.push(Span::styled(before.to_string(), base_style));
+                    }
+                    if !selected.is_empty() {
+                        spans.push(Span::styled(selected.to_string(), selection_style));
+                    }
+                    if !after.is_empty() {
+                        spans.push(Span::styled(after.to_string(), base_style));
+                    }
+                } else {
+                    spans.push(Span::styled(segment.to_string(), base_style));
+                }
+            } else {
+                spans.push(Span::styled(segment.to_string(), base_style));
+            }
+
+            display_lines.push(Line::from(spans));
+        }
+
+        let paragraph = Paragraph::new(display_lines).wrap(Wrap { trim: false });
 
         let content_area = Rect {
             x: area.x,

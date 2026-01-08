@@ -30,6 +30,8 @@ pub enum Action {
     DumpDebugState,
     /// Copy current workspace path to clipboard
     CopyWorkspacePath,
+    /// Copy active selection to clipboard
+    CopySelection,
 
     // ========== Tab Management ==========
     /// Close current tab
@@ -203,6 +205,7 @@ impl Action {
             Action::ToggleMetrics => "Toggle metrics",
             Action::DumpDebugState => "Dump debug state",
             Action::CopyWorkspacePath => "Copy workspace path",
+            Action::CopySelection => "Copy selection",
 
             // Tab management
             Action::CloseTab => "Close tab",
@@ -325,6 +328,7 @@ impl Action {
                 | Action::ToggleMetrics
                 | Action::DumpDebugState
                 | Action::CopyWorkspacePath
+                | Action::CopySelection
                 // Tab management
                 | Action::CloseTab
                 | Action::NextTab

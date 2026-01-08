@@ -194,6 +194,7 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "show_model_selector" => Some(Action::ShowModelSelector),
         "toggle_metrics" => Some(Action::ToggleMetrics),
         "dump_debug_state" => Some(Action::DumpDebugState),
+        "copy_selection" => Some(Action::CopySelection),
 
         // Tab management
         "close_tab" => Some(Action::CloseTab),
@@ -289,6 +290,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "show_model_selector",
     "toggle_metrics",
     "dump_debug_state",
+    "copy_selection",
     // Tab management
     "close_tab",
     "next_tab",

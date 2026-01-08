@@ -12,6 +12,8 @@ use super::{ChatMessage, ChatView, MessageRole};
 pub(super) struct CachedMessageLines {
     /// Pre-rendered lines for this message
     pub(super) lines: Vec<Line<'static>>,
+    /// Joiner strings for each line (soft-wrap continuations)
+    pub(super) joiner_before: Vec<Option<String>>,
     /// Hash of message content for invalidation detection (reserved for future use)
     #[allow(dead_code)]
     pub(super) content_hash: u64,
@@ -59,12 +61,15 @@ impl ChatView {
         add_spacing: bool,
     ) -> CachedMessageLines {
         let mut lines = Vec::new();
-        self.format_message(msg, width, &mut lines);
+        let mut joiner_before = Vec::new();
+        self.format_message_with_joiners(msg, width, &mut lines, &mut joiner_before);
         if add_spacing {
             lines.push(Line::from(""));
+            joiner_before.push(None);
         }
         CachedMessageLines {
             lines,
+            joiner_before,
             content_hash: Self::compute_message_hash(msg),
         }
     }
@@ -163,8 +168,10 @@ impl ChatView {
 
         self.flat_cache.clear();
         self.flat_cache.reserve(self.line_cache.total_line_count);
+        self.joiner_before.clear();
+        self.joiner_before.reserve(self.line_cache.total_line_count);
         for cached in self.line_cache.entries.iter().flatten() {
-            for line in &cached.lines {
+            for (line, joiner) in cached.lines.iter().zip(cached.joiner_before.iter()) {
                 // Skip consecutive blank lines to avoid excessive spacing
                 let is_blank = is_blank_line(line);
                 let last_is_blank = self.flat_cache.last().map(is_blank_line).unwrap_or(false);
@@ -173,6 +180,7 @@ impl ChatView {
                     continue;
                 }
                 self.flat_cache.push(line.clone());
+                self.joiner_before.push(joiner.clone());
             }
         }
         self.flat_cache_width = self.cache_width;

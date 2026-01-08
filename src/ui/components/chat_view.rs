@@ -11,8 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::{
     render_minimal_scrollbar,
     theme::{
-        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, DIFF_ADD, DIFF_REMOVE, TOOL_BLOCK_BG, TOOL_COMMAND,
-        TOOL_COMMENT, TOOL_OUTPUT,
+        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, BG_HIGHLIGHT, DIFF_ADD, DIFF_REMOVE, TOOL_BLOCK_BG,
+        TOOL_COMMAND, TOOL_COMMENT, TOOL_OUTPUT,
     },
     ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics, TurnSummary,
 };
@@ -158,6 +158,12 @@ impl ToolBlockBuilder {
 
 use self::chat_view_cache::LineCache;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectionPoint {
+    line_index: usize,
+    column: u16,
+}
+
 /// Truncate a string to fit within a maximum display width, adding "..." if truncated.
 /// Uses unicode display width to handle multi-byte and wide characters correctly.
 fn truncate_to_width(s: &str, max_width: usize) -> String {
@@ -233,6 +239,16 @@ pub struct ChatView {
     flat_cache_dirty: bool,
     /// Cached lines for current streaming message
     streaming_cache: Option<Vec<Line<'static>>>,
+    /// Selection anchor (content space)
+    selection_anchor: Option<SelectionPoint>,
+    /// Selection head (content space)
+    selection_head: Option<SelectionPoint>,
+    /// Joiner string to insert before each wrapped line
+    joiner_before: Vec<Option<String>>,
+    /// Joiners for streaming cache (aligned to streaming_cache)
+    streaming_joiner_before: Option<Vec<Option<String>>>,
+    /// Selection scroll lock (offset from top)
+    selection_scroll_lock: Option<usize>,
 }
 
 impl ChatView {
@@ -247,6 +263,11 @@ impl ChatView {
             flat_cache_width: None,
             flat_cache_dirty: true,
             streaming_cache: None,
+            selection_anchor: None,
+            selection_head: None,
+            joiner_before: Vec::new(),
+            streaming_joiner_before: None,
+            selection_scroll_lock: None,
         }
     }
 
@@ -349,6 +370,7 @@ impl ChatView {
         }
         // Invalidate streaming cache so it gets rebuilt on next render
         self.streaming_cache = None;
+        self.streaming_joiner_before = None;
     }
 
     /// Finalize streaming message and add to history
@@ -356,6 +378,7 @@ impl ChatView {
         if let Some(content) = self.streaming_buffer.take() {
             // Clear streaming cache
             self.streaming_cache = None;
+            self.streaming_joiner_before = None;
 
             // Update previous message's spacing if needed
             if !self.messages.is_empty() && self.cache_width.is_some() {
@@ -382,12 +405,15 @@ impl ChatView {
         self.messages.clear();
         self.streaming_buffer = None;
         self.scroll_offset = 0;
+        self.clear_selection();
         // Clear all caches
         self.line_cache = LineCache::default();
         self.flat_cache.clear();
         self.flat_cache_width = self.cache_width;
         self.flat_cache_dirty = false;
         self.streaming_cache = None;
+        self.joiner_before.clear();
+        self.streaming_joiner_before = None;
         // Keep cache_width so we don't have to recalculate on next render
     }
 
@@ -417,6 +443,256 @@ impl ChatView {
         self.scroll_offset = max_scroll.saturating_sub(offset_from_top.min(max_scroll));
     }
 
+    fn ensure_streaming_cache(&mut self, width: u16) {
+        if let Some(ref buffer) = self.streaming_buffer {
+            if self.streaming_cache.is_none() {
+                let msg = ChatMessage::streaming(buffer.clone());
+                let mut streaming_lines = Vec::new();
+                let mut streaming_joiners = Vec::new();
+                self.format_message_with_joiners(
+                    &msg,
+                    width as usize,
+                    &mut streaming_lines,
+                    &mut streaming_joiners,
+                );
+                self.streaming_cache = Some(streaming_lines);
+                self.streaming_joiner_before = Some(streaming_joiners);
+            }
+        } else {
+            self.streaming_cache = None;
+            self.streaming_joiner_before = None;
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_head = None;
+        self.selection_scroll_lock = None;
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection_anchor.is_some()
+            && self.selection_head.is_some()
+            && self.selection_anchor != self.selection_head
+    }
+
+    pub fn begin_selection(
+        &mut self,
+        click_x: u16,
+        click_y: u16,
+        area: Rect,
+        _is_streaming: bool,
+    ) -> bool {
+        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area) else {
+            return false;
+        };
+        self.selection_anchor = Some(point);
+        self.selection_head = None;
+        self.selection_scroll_lock = None;
+        true
+    }
+
+    pub fn update_selection(
+        &mut self,
+        click_x: u16,
+        click_y: u16,
+        area: Rect,
+        is_streaming: bool,
+    ) -> bool {
+        if self.selection_anchor.is_none() {
+            return false;
+        }
+        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area) else {
+            return false;
+        };
+        self.selection_head = Some(point);
+
+        if is_streaming && self.selection_scroll_lock.is_none() {
+            let Some(content) = Self::content_area(area) else {
+                return true;
+            };
+            let cached_len = self.flat_cache.len();
+            let streaming_len = self
+                .streaming_cache
+                .as_ref()
+                .map(|lines| lines.len())
+                .unwrap_or(0);
+            let total_lines = cached_len + streaming_len;
+            let visible_height = content.height as usize;
+            let max_scroll = total_lines.saturating_sub(visible_height);
+            if self.scroll_offset == 0 && total_lines > visible_height {
+                let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset);
+                self.selection_scroll_lock = Some(scroll_from_top);
+            }
+        }
+
+        true
+    }
+
+    pub fn finalize_selection(&mut self) -> bool {
+        if self.selection_head.is_none() || self.selection_anchor == self.selection_head {
+            self.clear_selection();
+            return false;
+        }
+        true
+    }
+
+    pub fn copy_selection(&mut self) -> Option<String> {
+        let (start, end) = self.selection_ordered()?;
+        let width = self.cache_width?;
+        self.ensure_cache(width);
+        self.ensure_flat_cache();
+        self.ensure_streaming_cache(width);
+
+        let mut lines = self.flat_cache.clone();
+        let mut joiner_before = self.joiner_before.clone();
+
+        if let Some(ref streaming) = self.streaming_cache {
+            lines.extend(streaming.iter().cloned());
+            if let Some(ref streaming_joiners) = self.streaming_joiner_before {
+                joiner_before.extend(streaming_joiners.iter().cloned());
+            } else {
+                joiner_before.extend(std::iter::repeat(None).take(streaming.len()));
+            }
+        }
+
+        if lines.len() != joiner_before.len() {
+            return None;
+        }
+
+        selection_to_copy_text(&lines, &joiner_before, start, end, width)
+    }
+
+    fn selection_ordered(&self) -> Option<(SelectionPoint, SelectionPoint)> {
+        let (anchor, head) = self.selection_anchor.zip(self.selection_head)?;
+        if anchor == head {
+            return None;
+        }
+        Some(order_points(anchor, head))
+    }
+
+    fn selection_point_from_mouse(
+        &mut self,
+        click_x: u16,
+        click_y: u16,
+        area: Rect,
+    ) -> Option<SelectionPoint> {
+        let content = Self::content_area(area)?;
+        if click_x < content.x
+            || click_y < content.y
+            || click_x >= content.x + content.width
+            || click_y >= content.y + content.height
+        {
+            return None;
+        }
+
+        let rel_x = click_x.saturating_sub(content.x);
+        let rel_y = click_y.saturating_sub(content.y) as usize;
+
+        self.ensure_cache(content.width);
+        self.ensure_flat_cache();
+        self.ensure_streaming_cache(content.width);
+
+        let cached_len = self.flat_cache.len();
+        let streaming_len = self
+            .streaming_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let total_lines = cached_len + streaming_len;
+        if total_lines == 0 {
+            return None;
+        }
+
+        let visible_height = content.height as usize;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
+        let line_index = scroll_from_top.saturating_add(rel_y);
+        if line_index >= total_lines {
+            return None;
+        }
+
+        let line = if line_index < cached_len {
+            self.flat_cache.get(line_index)?
+        } else {
+            let idx = line_index.saturating_sub(cached_len);
+            self.streaming_cache.as_ref()?.get(idx)?
+        };
+
+        let base_x = line_gutter_cols(line);
+        let max_x = content.width.saturating_sub(1);
+        if base_x > max_x {
+            return Some(SelectionPoint {
+                line_index,
+                column: 0,
+            });
+        }
+        let content_width = max_x.saturating_sub(base_x);
+        let column = rel_x.saturating_sub(base_x).min(content_width);
+
+        Some(SelectionPoint { line_index, column })
+    }
+
+    fn apply_selection_highlight(
+        &self,
+        visible_lines: Vec<(Line<'static>, Option<usize>)>,
+        width: u16,
+    ) -> Vec<Line<'static>> {
+        let Some((start, end)) = self.selection_ordered() else {
+            return visible_lines.into_iter().map(|(line, _)| line).collect();
+        };
+
+        let mut out = Vec::with_capacity(visible_lines.len());
+        for (line, line_index) in visible_lines {
+            if let Some(idx) = line_index {
+                if idx >= start.line_index && idx <= end.line_index {
+                    if let Some((start_col, end_col)) =
+                        self.selection_bounds_for_line(idx, &line, start, end, width)
+                    {
+                        out.push(highlight_line_by_cols(&line, start_col, end_col));
+                        continue;
+                    }
+                }
+            }
+            out.push(line);
+        }
+        out
+    }
+
+    fn selection_bounds_for_line(
+        &self,
+        line_index: usize,
+        line: &Line<'static>,
+        start: SelectionPoint,
+        end: SelectionPoint,
+        width: u16,
+    ) -> Option<(u16, u16)> {
+        let base_x = line_gutter_cols(line);
+        let max_x = width.saturating_sub(1);
+        if base_x > max_x {
+            return None;
+        }
+        let content_width = max_x.saturating_sub(base_x);
+
+        let line_start_col = if line_index == start.line_index {
+            start.column
+        } else {
+            0
+        };
+        let line_end_col = if line_index == end.line_index {
+            end.column
+        } else {
+            content_width
+        };
+
+        let abs_start = base_x.saturating_add(line_start_col.min(content_width));
+        let abs_end = base_x.saturating_add(line_end_col.min(content_width));
+        if abs_start > abs_end {
+            return None;
+        }
+        Some((abs_start, abs_end))
+    }
+
     pub fn scrollbar_metrics(
         &mut self,
         area: Rect,
@@ -426,15 +702,7 @@ impl ChatView {
 
         self.ensure_cache(content.width);
         self.ensure_flat_cache();
-
-        if let Some(ref buffer) = self.streaming_buffer {
-            if self.streaming_cache.is_none() {
-                let msg = ChatMessage::streaming(buffer.clone());
-                let mut streaming_lines = Vec::new();
-                self.format_message(&msg, content.width as usize, &mut streaming_lines);
-                self.streaming_cache = Some(streaming_lines);
-            }
-        }
+        self.ensure_streaming_cache(content.width);
 
         let cached_len = self.flat_cache.len();
         let streaming_len = self
@@ -542,19 +810,33 @@ impl ChatView {
             .collect()
     }
 
-    fn format_message(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
+    fn format_message_with_joiners(
+        &self,
+        msg: &ChatMessage,
+        width: usize,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+    ) {
         match msg.role {
-            MessageRole::Tool => self.format_tool_message(msg, width, lines),
-            MessageRole::User => self.format_user_message(msg, width, lines),
-            MessageRole::Assistant => self.format_assistant_message(msg, width, lines),
-            MessageRole::System => self.format_system_message(msg, width, lines),
-            MessageRole::Error => self.format_error_message(msg, width, lines),
-            MessageRole::Summary => self.format_summary_message(msg, width, lines),
+            MessageRole::Tool => self.format_tool_message(msg, width, lines, joiner_before),
+            MessageRole::User => self.format_user_message(msg, width, lines, joiner_before),
+            MessageRole::Assistant => {
+                self.format_assistant_message(msg, width, lines, joiner_before)
+            }
+            MessageRole::System => self.format_system_message(msg, width, lines, joiner_before),
+            MessageRole::Error => self.format_error_message(msg, width, lines, joiner_before),
+            MessageRole::Summary => self.format_summary_message(msg, width, lines, joiner_before),
         }
     }
 
     /// Format user messages with chevron prefix
-    fn format_user_message(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
+    fn format_user_message(
+        &self,
+        msg: &ChatMessage,
+        width: usize,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+    ) {
         let content_lines: Vec<&str> = msg.content.lines().collect();
         let prefix_first = vec![Span::styled("❯ ", Style::default().fg(Color::Green))];
         let prefix_next = vec![Span::raw("  ")];
@@ -572,8 +854,10 @@ impl ChatView {
                 (prefix_next.clone(), prefix_next_width)
             };
             let content_width = width.saturating_sub(prefix_width).max(1);
-            let wrapped = wrap_spans(content_spans, content_width);
-            for (idx, wrapped_spans) in wrapped.into_iter().enumerate() {
+            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
+            for (idx, (wrapped_spans, joiner)) in
+                wrapped.into_iter().zip(wrapped_joiners).enumerate()
+            {
                 let mut line_spans = if idx == 0 {
                     prefix.clone()
                 } else {
@@ -581,6 +865,7 @@ impl ChatView {
                 };
                 line_spans.extend(wrapped_spans);
                 lines.push(Line::from(line_spans));
+                joiner_before.push(joiner);
             }
         }
     }
@@ -591,6 +876,7 @@ impl ChatView {
         msg: &ChatMessage,
         width: usize,
         lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
     ) {
         if msg.content.is_empty() {
             return;
@@ -609,6 +895,7 @@ impl ChatView {
         for line in md_text.lines {
             if line.spans.is_empty() {
                 lines.push(Line::from(""));
+                joiner_before.push(None);
                 continue;
             }
 
@@ -644,8 +931,10 @@ impl ChatView {
             };
 
             let content_width = width.saturating_sub(first_prefix_width).max(1);
-            let wrapped = wrap_spans(content_spans, content_width);
-            for (idx, wrapped_spans) in wrapped.into_iter().enumerate() {
+            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
+            for (idx, (wrapped_spans, joiner)) in
+                wrapped.into_iter().zip(wrapped_joiners).enumerate()
+            {
                 let prefix = if idx == 0 {
                     first_prefix.clone()
                 } else {
@@ -654,6 +943,7 @@ impl ChatView {
                 let mut line_spans = prefix;
                 line_spans.extend(wrapped_spans);
                 lines.push(Line::from(line_spans));
+                joiner_before.push(joiner);
             }
 
             if first_content_line {
@@ -672,6 +962,7 @@ impl ChatView {
                         .add_modifier(Modifier::SLOW_BLINK),
                 ),
             ]));
+            joiner_before.push(None);
         }
     }
 
@@ -681,6 +972,7 @@ impl ChatView {
         msg: &ChatMessage,
         width: usize,
         lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
     ) {
         let content_lines: Vec<&str> = msg.content.lines().collect();
         let prefix_first = vec![Span::styled("ℹ ", Style::default().fg(Color::Blue))];
@@ -697,8 +989,10 @@ impl ChatView {
                 (prefix_next.clone(), prefix_next_width)
             };
             let content_width = width.saturating_sub(prefix_width).max(1);
-            let wrapped = wrap_spans(content_spans, content_width);
-            for (idx, wrapped_spans) in wrapped.into_iter().enumerate() {
+            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
+            for (idx, (wrapped_spans, joiner)) in
+                wrapped.into_iter().zip(wrapped_joiners).enumerate()
+            {
                 let mut line_spans = if idx == 0 {
                     prefix.clone()
                 } else {
@@ -706,6 +1000,7 @@ impl ChatView {
                 };
                 line_spans.extend(wrapped_spans);
                 lines.push(Line::from(line_spans));
+                joiner_before.push(joiner);
             }
         }
     }
@@ -716,6 +1011,7 @@ impl ChatView {
         msg: &ChatMessage,
         width: usize,
         lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
     ) {
         let content_lines: Vec<&str> = msg.content.lines().collect();
         let prefix_first = vec![Span::styled("✗ ", Style::default().fg(Color::Red))];
@@ -732,8 +1028,10 @@ impl ChatView {
                 (prefix_next.clone(), prefix_next_width)
             };
             let content_width = width.saturating_sub(prefix_width).max(1);
-            let wrapped = wrap_spans(content_spans, content_width);
-            for (idx, wrapped_spans) in wrapped.into_iter().enumerate() {
+            let (wrapped, wrapped_joiners) = wrap_spans_with_joiners(content_spans, content_width);
+            for (idx, (wrapped_spans, joiner)) in
+                wrapped.into_iter().zip(wrapped_joiners).enumerate()
+            {
                 let mut line_spans = if idx == 0 {
                     prefix.clone()
                 } else {
@@ -741,17 +1039,24 @@ impl ChatView {
                 };
                 line_spans.extend(wrapped_spans);
                 lines.push(Line::from(line_spans));
+                joiner_before.push(joiner);
             }
         }
     }
 
     /// Format tool messages using Opencode-style blocks
-    fn format_tool_message(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
+    fn format_tool_message(
+        &self,
+        msg: &ChatMessage,
+        width: usize,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+    ) {
         let tool_name = msg.tool_name.as_deref().unwrap_or("Tool");
 
         // Special formatting for TodoWrite
         if tool_name == "TodoWrite" {
-            return self.format_todowrite(msg, width, lines);
+            return self.format_todowrite(msg, width, lines, joiner_before);
         }
 
         let tool_args = msg.tool_args.as_deref().unwrap_or("");
@@ -776,20 +1081,25 @@ impl ChatView {
 
         // === Top padding ===
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         // === Description line (# comment) ===
         let description = self.get_tool_description(tool_name, tool_args);
         lines.push(builder.comment(&description));
+        joiner_before.push(None);
 
         // === Blank line after description ===
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         // === Command line ($ command) ===
         let command_display = self.get_tool_command(tool_name, tool_args, width.saturating_sub(6));
         lines.push(builder.command(&command_display));
+        joiner_before.push(None);
 
         // === Blank line after title section ===
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         // === Output content ===
         let line_word = if line_count == 1 { "line" } else { "lines" };
@@ -801,6 +1111,7 @@ impl ChatView {
                 "▶ No output".to_string()
             };
             lines.push(builder.output(&summary));
+            joiner_before.push(None);
         } else {
             // Expanded: show output lines
             let max_display_lines = 50;
@@ -837,7 +1148,10 @@ impl ChatView {
                                 spans.push(Span::styled("", builder.bg_style()));
                             }
                             // Wrap ANSI-parsed lines
-                            lines.extend(builder.wrapped_custom(spans));
+                            for line in builder.wrapped_custom(spans) {
+                                lines.push(line);
+                                joiner_before.push(None);
+                            }
                             continue;
                         }
                         Err(_) => (TOOL_OUTPUT, line.to_string()),
@@ -845,7 +1159,10 @@ impl ChatView {
                 };
 
                 // Wrap long lines
-                lines.extend(builder.wrapped_output_colored(&line_text, line_color));
+                for line in builder.wrapped_output_colored(&line_text, line_color) {
+                    lines.push(line);
+                    joiner_before.push(None);
+                }
             }
 
             // Truncation notice
@@ -856,11 +1173,13 @@ impl ChatView {
                     &format!("... ({} more {})", remaining, more_word),
                     TOOL_COMMENT,
                 ));
+                joiner_before.push(None);
             }
         }
 
         // === Blank line before status ===
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         // === Status line ===
         let status_text = if is_error {
@@ -890,9 +1209,11 @@ impl ChatView {
             ACCENT_SUCCESS
         };
         lines.push(builder.output_colored(&status_text, status_color));
+        joiner_before.push(None);
 
         // === Bottom padding ===
         lines.push(builder.empty_line());
+        joiner_before.push(None);
     }
 
     /// Get a human-readable description for a tool invocation
@@ -1036,7 +1357,13 @@ impl ChatView {
     }
 
     /// Format TodoWrite tool message
-    fn format_todowrite(&self, msg: &ChatMessage, width: usize, lines: &mut Vec<Line<'static>>) {
+    fn format_todowrite(
+        &self,
+        msg: &ChatMessage,
+        width: usize,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+    ) {
         let tool_args = msg.tool_args.as_deref().unwrap_or("{}");
 
         // Parse todos
@@ -1070,12 +1397,15 @@ impl ChatView {
 
         // Top padding
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         // Description
         lines.push(builder.comment("Update todo list"));
+        joiner_before.push(None);
 
         // Blank line
         lines.push(builder.empty_line());
+        joiner_before.push(None);
 
         if msg.is_collapsed {
             // Collapsed view
@@ -1087,6 +1417,7 @@ impl ChatView {
                 total.saturating_sub(completed).saturating_sub(in_progress)
             );
             lines.push(builder.output(&summary));
+            joiner_before.push(None);
         } else {
             // Expanded view - show todo items
             let max_display = 15;
@@ -1111,6 +1442,7 @@ impl ChatView {
                         Style::default().fg(text_color).bg(TOOL_BLOCK_BG),
                     ),
                 ]));
+                joiner_before.push(None);
             }
 
             if todos.len() > max_display {
@@ -1118,6 +1450,7 @@ impl ChatView {
                 lines.push(
                     builder.output_colored(&format!("... (+{} more)", remaining), TOOL_COMMENT),
                 );
+                joiner_before.push(None);
             }
         }
 
@@ -1133,10 +1466,13 @@ impl ChatView {
         };
 
         lines.push(builder.empty_line());
+        joiner_before.push(None);
         lines.push(builder.output_colored(&status_text, status_color));
+        joiner_before.push(None);
 
         // Bottom padding
         lines.push(builder.empty_line());
+        joiner_before.push(None);
     }
 
     /// Format turn summary message
@@ -1145,11 +1481,15 @@ impl ChatView {
         msg: &ChatMessage,
         width: usize,
         lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
     ) {
         if let Some(ref summary) = msg.summary {
             lines.push(Line::from(Span::raw("")));
+            joiner_before.push(None);
             lines.push(self.render_summary_divider(summary, width));
+            joiner_before.push(None);
             lines.push(Line::from(Span::raw("")));
+            joiner_before.push(None);
         }
     }
 
@@ -1189,16 +1529,7 @@ impl ChatView {
         self.ensure_cache(content.width);
         self.ensure_flat_cache();
 
-        // Handle streaming buffer (not cached with messages, has its own cache)
-        if let Some(ref buffer) = self.streaming_buffer {
-            // Check if streaming cache needs update
-            if self.streaming_cache.is_none() {
-                let msg = ChatMessage::streaming(buffer.clone());
-                let mut streaming_lines = Vec::new();
-                self.format_message(&msg, content.width as usize, &mut streaming_lines);
-                self.streaming_cache = Some(streaming_lines);
-            }
-        }
+        self.ensure_streaming_cache(content.width);
 
         let cached_len = self.flat_cache.len();
         let streaming_len = self
@@ -1211,23 +1542,34 @@ impl ChatView {
         let total_lines = cached_len + streaming_len + indicator_len;
         let visible_height = content.height as usize;
 
-        // Clamp scroll offset
+        // Clamp scroll offset (respect selection lock if active)
         let max_scroll = total_lines.saturating_sub(visible_height);
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
-
-        // Convert scroll_offset (from bottom) to scroll position (from top)
-        // scroll_offset=0 means show bottom, so we want to scroll to max position
-        let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset);
+        let scroll_from_top = if let Some(lock) = self.selection_scroll_lock {
+            let locked = lock.min(max_scroll);
+            self.scroll_offset = max_scroll.saturating_sub(locked);
+            locked
+        } else {
+            self.scroll_offset = self.scroll_offset.min(max_scroll);
+            max_scroll.saturating_sub(self.scroll_offset)
+        };
 
         let start_line = total_lines.saturating_sub(self.scroll_offset + visible_height);
         let end_line = total_lines.saturating_sub(self.scroll_offset);
-        let mut visible_lines: Vec<Line<'static>> = Vec::with_capacity(visible_height);
+        let mut visible_lines: Vec<(Line<'static>, Option<usize>)> =
+            Vec::with_capacity(visible_height);
 
         // Cached lines range
         let cached_end = cached_len;
         if start_line < cached_end {
             let slice_end = end_line.min(cached_end);
-            visible_lines.extend(self.flat_cache[start_line..slice_end].iter().cloned());
+            for (idx, line) in self.flat_cache[start_line..slice_end]
+                .iter()
+                .cloned()
+                .enumerate()
+            {
+                let line_index = start_line + idx;
+                visible_lines.push((line, Some(line_index)));
+            }
         }
 
         // Streaming lines range
@@ -1237,7 +1579,14 @@ impl ChatView {
             if let Some(ref cached_streaming) = self.streaming_cache {
                 let range_start = start_line.max(streaming_start) - streaming_start;
                 let range_end = end_line.min(streaming_end) - streaming_start;
-                visible_lines.extend(cached_streaming[range_start..range_end].iter().cloned());
+                for (idx, line) in cached_streaming[range_start..range_end]
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                {
+                    let line_index = streaming_start + range_start + idx;
+                    visible_lines.push((line, Some(line_index)));
+                }
             }
         }
 
@@ -1246,13 +1595,14 @@ impl ChatView {
             let indicator_index = streaming_end;
             let blank_index = streaming_end + 1;
             if start_line <= indicator_index && end_line > indicator_index {
-                visible_lines.push(indicator);
+                visible_lines.push((indicator, None));
             }
             if start_line <= blank_index && end_line > blank_index {
-                visible_lines.push(Line::from(""));
+                visible_lines.push((Line::from(""), None));
             }
         }
-        Paragraph::new(visible_lines).render(content, buf);
+        let highlighted = self.apply_selection_highlight(visible_lines, content.width);
+        Paragraph::new(highlighted).render(content, buf);
 
         render_minimal_scrollbar(
             Self::scrollbar_area(area),
@@ -1333,6 +1683,399 @@ fn wrap_spans(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Vec<Span<'stat
         .into_iter()
         .map(|line_chars| chars_to_spans(line_chars))
         .collect()
+}
+
+fn wrap_spans_with_joiners(
+    spans: Vec<Span<'static>>,
+    max_width: usize,
+) -> (Vec<Vec<Span<'static>>>, Vec<Option<String>>) {
+    if spans.is_empty() {
+        return (vec![Vec::new()], vec![None]);
+    }
+
+    if max_width == 0 {
+        return (vec![Vec::new()], vec![None]);
+    }
+
+    let mut chars: Vec<(char, Style)> = Vec::new();
+    for span in spans {
+        let style = span.style;
+        for ch in span.content.chars() {
+            if ch.is_control() {
+                continue;
+            }
+            chars.push((ch, style));
+        }
+    }
+
+    if chars.is_empty() {
+        return (vec![Vec::new()], vec![None]);
+    }
+
+    let mut lines: Vec<Vec<(char, Style)>> = Vec::new();
+    let mut joiners: Vec<Option<String>> = Vec::new();
+    let mut current: Vec<(char, Style)> = Vec::new();
+    let mut line_width = 0usize;
+    let mut last_break: Option<(usize, usize)> = None;
+    let mut pending_joiner: Option<String> = None;
+
+    let trailing_whitespace = |line: &[(char, Style)]| -> String {
+        let mut rev = String::new();
+        for (ch, _) in line.iter().rev() {
+            if ch.is_whitespace() {
+                rev.push(*ch);
+            } else {
+                break;
+            }
+        }
+        rev.chars().rev().collect()
+    };
+
+    for (ch, style) in chars {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+
+        if line_width + ch_width > max_width && !current.is_empty() {
+            if let Some((break_idx, break_width)) = last_break {
+                let joiner = trailing_whitespace(&current);
+                let next_line = current.split_off(break_idx);
+                lines.push(current);
+                joiners.push(pending_joiner.take());
+                current = next_line;
+                pending_joiner = Some(joiner);
+                line_width = line_width.saturating_sub(break_width);
+                last_break = None;
+
+                let mut width = 0usize;
+                for (idx, (c, _)) in current.iter().enumerate() {
+                    let w = UnicodeWidthChar::width(*c).unwrap_or(0);
+                    width += w;
+                    if c.is_whitespace() {
+                        last_break = Some((idx + 1, width));
+                    }
+                }
+            } else {
+                lines.push(current);
+                joiners.push(pending_joiner.take());
+                current = Vec::new();
+                line_width = 0;
+                last_break = None;
+                pending_joiner = Some(String::new());
+            }
+        }
+
+        current.push((ch, style));
+        line_width += ch_width;
+        if ch.is_whitespace() {
+            last_break = Some((current.len(), line_width));
+        }
+    }
+
+    lines.push(current);
+    joiners.push(pending_joiner.take());
+
+    let out_lines = lines
+        .into_iter()
+        .map(|line_chars| chars_to_spans(line_chars))
+        .collect();
+    (out_lines, joiners)
+}
+
+fn line_gutter_cols(line: &Line<'_>) -> u16 {
+    let flat = line_to_flat(line);
+    if flat.starts_with("┃  ") {
+        3
+    } else if flat.starts_with("❯ ")
+        || flat.starts_with("• ")
+        || flat.starts_with("ℹ ")
+        || flat.starts_with("✗ ")
+        || flat.starts_with("  ")
+    {
+        2
+    } else {
+        0
+    }
+}
+
+fn highlight_line_by_cols(line: &Line<'static>, start_col: u16, end_col: u16) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buffer = String::new();
+    let mut current_style: Option<Style> = None;
+    let mut col: u16 = 0;
+
+    for span in &line.spans {
+        let base_style = span.style;
+        for ch in span.content.chars() {
+            let w = UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+            let end = col.saturating_add(w.saturating_sub(1));
+            let in_selection = end >= start_col && col <= end_col;
+            let style = if in_selection {
+                base_style.bg(BG_HIGHLIGHT)
+            } else {
+                base_style
+            };
+
+            if current_style.map(|s| s == style).unwrap_or(false) {
+                buffer.push(ch);
+            } else {
+                if !buffer.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut buffer),
+                        current_style.unwrap_or_default(),
+                    ));
+                }
+                current_style = Some(style);
+                buffer.push(ch);
+            }
+
+            col = col.saturating_add(w);
+        }
+    }
+
+    if !buffer.is_empty() {
+        spans.push(Span::styled(buffer, current_style.unwrap_or_default()));
+    }
+
+    Line::from(spans).style(line.style)
+}
+
+fn selection_to_copy_text(
+    lines: &[Line<'static>],
+    joiner_before: &[Option<String>],
+    start: SelectionPoint,
+    end: SelectionPoint,
+    width: u16,
+) -> Option<String> {
+    if width == 0 {
+        return None;
+    }
+
+    let (start, end) = order_points(start, end);
+    if start == end {
+        return None;
+    }
+
+    let max_x = width.saturating_sub(1);
+    let mut out = String::new();
+    let mut prev_selected_line: Option<usize> = None;
+    let mut in_code_run = false;
+    let mut wrote_any = false;
+
+    for line_index in start.line_index..=end.line_index {
+        let line = lines.get(line_index)?;
+        let base_x = line_gutter_cols(line);
+        if base_x > max_x {
+            continue;
+        }
+        let content_width = max_x.saturating_sub(base_x);
+
+        let line_start_col = if line_index == start.line_index {
+            start.column
+        } else {
+            0
+        };
+        let line_end_col = if line_index == end.line_index {
+            end.column
+        } else {
+            content_width
+        };
+
+        let row_sel_start = base_x
+            .saturating_add(line_start_col.min(content_width))
+            .min(max_x);
+        let mut row_sel_end = base_x
+            .saturating_add(line_end_col.min(content_width))
+            .min(max_x);
+        if row_sel_start > row_sel_end {
+            continue;
+        }
+
+        let is_code_block_line = is_code_block_line(line);
+        if is_code_block_line && line_end_col >= content_width {
+            row_sel_end = u16::MAX;
+        }
+
+        let flat = line_to_flat(line);
+        let text_end = if is_code_block_line {
+            last_non_space_col(flat.as_str())
+        } else {
+            last_non_space_col(flat.as_str()).map(|c| c.min(max_x))
+        };
+
+        let selected_line = if let Some(text_end) = text_end {
+            let from_col = row_sel_start.max(base_x);
+            let to_col = row_sel_end.min(text_end);
+            if from_col > to_col {
+                Line::default().style(line.style)
+            } else {
+                slice_line_by_cols(line, from_col, to_col)
+            }
+        } else {
+            Line::default().style(line.style)
+        };
+
+        let line_text = line_to_markdown(&selected_line, is_code_block_line);
+
+        if is_code_block_line && !in_code_run {
+            if wrote_any {
+                out.push('\n');
+            }
+            out.push_str("```");
+            out.push('\n');
+            in_code_run = true;
+            prev_selected_line = None;
+            wrote_any = true;
+        } else if !is_code_block_line && in_code_run {
+            out.push('\n');
+            out.push_str("```");
+            out.push('\n');
+            in_code_run = false;
+            prev_selected_line = None;
+            wrote_any = true;
+        }
+
+        if in_code_run {
+            if wrote_any && (!out.ends_with('\n') || prev_selected_line.is_some()) {
+                out.push('\n');
+            }
+            out.push_str(line_text.as_str());
+            prev_selected_line = Some(line_index);
+            wrote_any = true;
+            continue;
+        }
+
+        if wrote_any {
+            let joiner = joiner_before.get(line_index).cloned().unwrap_or(None);
+            if prev_selected_line == Some(line_index.saturating_sub(1)) {
+                if let Some(joiner) = joiner {
+                    out.push_str(joiner.as_str());
+                } else {
+                    out.push('\n');
+                }
+            } else {
+                out.push('\n');
+            }
+        }
+
+        out.push_str(line_text.as_str());
+        prev_selected_line = Some(line_index);
+        wrote_any = true;
+    }
+
+    if in_code_run {
+        out.push('\n');
+        out.push_str("```");
+    }
+
+    (!out.is_empty()).then_some(out)
+}
+
+fn order_points(a: SelectionPoint, b: SelectionPoint) -> (SelectionPoint, SelectionPoint) {
+    if (b.line_index < a.line_index) || (b.line_index == a.line_index && b.column < a.column) {
+        (b, a)
+    } else {
+        (a, b)
+    }
+}
+
+fn line_to_flat(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect::<String>()
+}
+
+fn is_code_block_line(line: &Line<'_>) -> bool {
+    use ratatui::style::Color;
+
+    line.style.bg == Some(TOOL_BLOCK_BG)
+        || line
+            .spans
+            .iter()
+            .any(|span| span.style.bg == Some(TOOL_BLOCK_BG))
+        || line
+            .spans
+            .iter()
+            .any(|span| span.style.bg == Some(Color::Rgb(30, 30, 30)))
+}
+
+fn last_non_space_col(flat: &str) -> Option<u16> {
+    let mut col: u16 = 0;
+    let mut last: Option<u16> = None;
+    for ch in flat.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+        if ch != ' ' {
+            let end = col.saturating_add(w.saturating_sub(1));
+            last = Some(end);
+        }
+        col = col.saturating_add(w);
+    }
+    last
+}
+
+fn byte_range_for_cols(flat: &str, start_col: u16, end_col: u16) -> Option<std::ops::Range<usize>> {
+    let mut col: u16 = 0;
+    let mut start_byte: Option<usize> = None;
+    let mut end_byte: Option<usize> = None;
+
+    for (idx, ch) in flat.char_indices() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+        let end = col.saturating_add(w.saturating_sub(1));
+
+        if start_byte.is_none() && end >= start_col {
+            start_byte = Some(idx);
+        }
+
+        if col <= end_col {
+            end_byte = Some(idx + ch.len_utf8());
+        }
+
+        col = col.saturating_add(w);
+        if col > end_col {
+            break;
+        }
+    }
+
+    let start = start_byte?;
+    let end = end_byte?;
+    if start > end {
+        None
+    } else {
+        Some(start..end)
+    }
+}
+
+fn slice_line_by_cols(line: &Line<'static>, start_col: u16, end_col: u16) -> Line<'static> {
+    let flat = line_to_flat(line);
+    let Some(range) = byte_range_for_cols(flat.as_str(), start_col, end_col) else {
+        return Line::default().style(line.style);
+    };
+
+    let mut out_spans: Vec<Span<'static>> = Vec::new();
+    let mut offset = 0usize;
+    for span in &line.spans {
+        let span_len = span.content.len();
+        let span_start = offset;
+        let span_end = offset + span_len;
+
+        if range.end <= span_start || range.start >= span_end {
+            offset = span_end;
+            continue;
+        }
+
+        let local_start = range.start.saturating_sub(span_start);
+        let local_end = range.end.min(span_end).saturating_sub(span_start);
+        if local_start < local_end {
+            let slice = span.content[local_start..local_end].to_string();
+            out_spans.push(Span::styled(slice, span.style));
+        }
+        offset = span_end;
+    }
+
+    Line::from(out_spans).style(line.style)
+}
+
+fn line_to_markdown(line: &Line<'static>, _is_code_block: bool) -> String {
+    line_to_flat(line)
 }
 
 fn chars_to_spans(chars: Vec<(char, Style)>) -> Vec<Span<'static>> {

@@ -34,7 +34,7 @@ use crate::data::{
 };
 use crate::git::{PrManager, WorktreeManager};
 use crate::ui::action::Action;
-use crate::ui::app_state::{AppState, ScrollDragTarget};
+use crate::ui::app_state::{AppState, ScrollDragTarget, SelectionDragTarget};
 use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
     scrollbar_offset_from_point, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage,
@@ -81,6 +81,7 @@ pub struct App {
 }
 
 impl App {
+    const AUTO_COPY_SELECTION: bool = false;
     pub fn new(config: Config) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
@@ -1194,6 +1195,28 @@ impl App {
                             Duration::from_secs(10),
                         );
                     }
+                }
+            }
+            Action::CopySelection => {
+                let mut copied_text = None;
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    if session.input_box.has_selection() {
+                        if let Some(text) = session.input_box.selected_text() {
+                            copied_text = Some(text);
+                            session.input_box.clear_selection();
+                        }
+                    } else if let Some(text) = session.chat_view.copy_selection() {
+                        copied_text = Some(text);
+                        session.chat_view.clear_selection();
+                    }
+                }
+
+                if let Some(text) = copied_text {
+                    effects.push(Effect::CopyToClipboard(text));
+                    self.state.set_timed_footer_message(
+                        "Copied selection".to_string(),
+                        Duration::from_secs(5),
+                    );
                 }
             }
 
@@ -3454,6 +3477,9 @@ impl App {
                 if self.handle_scrollbar_press(x, y) {
                     return Ok(Vec::new());
                 }
+                if self.handle_selection_start(x, y) {
+                    return Ok(Vec::new());
+                }
                 // Handle left clicks based on position
                 self.handle_mouse_click(x, y).await
             }
@@ -3461,10 +3487,16 @@ impl App {
                 if self.handle_scrollbar_drag(y) {
                     return Ok(Vec::new());
                 }
+                if self.handle_selection_drag(x, y) {
+                    return Ok(Vec::new());
+                }
                 Ok(Vec::new())
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.state.scroll_drag = None;
+                if let Some(effects) = self.handle_selection_end() {
+                    return Ok(effects);
+                }
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
@@ -3484,6 +3516,122 @@ impl App {
             return self.apply_scrollbar_drag(target, y);
         }
         false
+    }
+
+    fn handle_selection_start(&mut self, x: u16, y: u16) -> bool {
+        if self.state.view_mode != ViewMode::Chat {
+            return false;
+        }
+
+        let Some(session) = self.state.tab_manager.active_session_mut() else {
+            return false;
+        };
+
+        if let Some(input_area) = self.state.input_area {
+            if self.state.input_mode != InputMode::Command && Self::point_in_rect(x, y, input_area)
+            {
+                if self.state.input_mode == InputMode::SidebarNavigation {
+                    self.state.input_mode = InputMode::Normal;
+                    self.state.sidebar_state.set_focused(false);
+                }
+                session.chat_view.clear_selection();
+                if session.input_box.begin_selection(x, y, input_area) {
+                    self.state.selection_drag = Some(SelectionDragTarget::Input);
+                    return true;
+                }
+            }
+        }
+
+        if let Some(chat_area) = self.state.chat_area {
+            if Self::point_in_rect(x, y, chat_area) {
+                if self.state.input_mode == InputMode::SidebarNavigation {
+                    self.state.input_mode = InputMode::Normal;
+                    self.state.sidebar_state.set_focused(false);
+                }
+                session.input_box.clear_selection();
+                if session
+                    .chat_view
+                    .begin_selection(x, y, chat_area, session.is_processing)
+                {
+                    self.state.selection_drag = Some(SelectionDragTarget::Chat);
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn handle_selection_drag(&mut self, x: u16, y: u16) -> bool {
+        let Some(target) = self.state.selection_drag else {
+            return false;
+        };
+
+        let mut scrolled_lines = 0usize;
+        let mut handled = false;
+
+        {
+            let Some(session) = self.state.tab_manager.active_session_mut() else {
+                return false;
+            };
+
+            match target {
+                SelectionDragTarget::Input => {
+                    if let Some(input_area) = self.state.input_area {
+                        session.input_box.update_selection(x, y, input_area);
+                        handled = true;
+                    }
+                }
+                SelectionDragTarget::Chat => {
+                    if let Some(chat_area) = self.state.chat_area {
+                        if y <= chat_area.y {
+                            session.chat_view.scroll_up(1);
+                            scrolled_lines = scrolled_lines.saturating_add(1);
+                        } else if y >= chat_area.y + chat_area.height.saturating_sub(1) {
+                            session.chat_view.scroll_down(1);
+                            scrolled_lines = scrolled_lines.saturating_add(1);
+                        }
+                        session
+                            .chat_view
+                            .update_selection(x, y, chat_area, session.is_processing);
+                        handled = true;
+                    }
+                }
+            }
+        }
+
+        if scrolled_lines > 0 {
+            self.record_chat_scroll(scrolled_lines);
+        }
+
+        handled
+    }
+
+    fn handle_selection_end(&mut self) -> Option<Vec<Effect>> {
+        let target = self.state.selection_drag.take()?;
+        let mut copied_text = None;
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            let has_selection = match target {
+                SelectionDragTarget::Input => session.input_box.finalize_selection(),
+                SelectionDragTarget::Chat => session.chat_view.finalize_selection(),
+            };
+
+            if has_selection && Self::AUTO_COPY_SELECTION {
+                copied_text = match target {
+                    SelectionDragTarget::Input => session.input_box.selected_text(),
+                    SelectionDragTarget::Chat => session.chat_view.copy_selection(),
+                };
+            }
+        }
+
+        let mut effects = Vec::new();
+        if let Some(text) = copied_text {
+            effects.push(Effect::CopyToClipboard(text));
+            self.state
+                .set_timed_footer_message("Copied selection".to_string(), Duration::from_secs(5));
+        }
+
+        Some(effects)
     }
 
     fn scrollbar_target_at(&mut self, x: u16, y: u16) -> Option<ScrollDragTarget> {
