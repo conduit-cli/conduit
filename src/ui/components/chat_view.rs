@@ -43,8 +43,9 @@ impl ToolBlockBuilder {
 
     /// Create a line with ┃ prefix and full-width background
     fn line(&self, spans: Vec<Span<'static>>) -> Line<'static> {
-        let prefix = "┃  ";
-        let prefix_width = UnicodeWidthStr::width(prefix);
+        // Note: "┃" is a box-drawing character with ambiguous width.
+        // We treat it as width 1, plus 2 spaces = 3 total prefix width.
+        let prefix_width = 3; // "┃" (1) + "  " (2)
 
         let content_width: usize = spans
             .iter()
@@ -52,7 +53,8 @@ impl ToolBlockBuilder {
             .sum();
 
         let total_used = prefix_width + content_width;
-        let padding_needed = self.width.saturating_sub(total_used);
+        // Add 1 extra for edge padding to ensure full coverage
+        let padding_needed = self.width.saturating_sub(total_used).saturating_add(1);
 
         let mut line_spans = vec![
             Span::styled("┃", self.block_style),
@@ -60,18 +62,16 @@ impl ToolBlockBuilder {
         ];
         line_spans.extend(spans);
 
-        if padding_needed > 0 {
-            line_spans.push(Span::styled(" ".repeat(padding_needed), self.bg_style));
-        }
+        line_spans.push(Span::styled(" ".repeat(padding_needed), self.bg_style));
 
         Line::from(line_spans)
     }
 
     /// Create an empty line for padding (fills entire width)
     fn empty_line(&self) -> Line<'static> {
-        let prefix = "┃  ";
-        let prefix_width = UnicodeWidthStr::width(prefix);
-        let padding = self.width.saturating_sub(prefix_width);
+        let prefix_width = 3; // "┃" (1) + "  " (2)
+                              // Add 1 extra for edge padding to ensure full coverage
+        let padding = self.width.saturating_sub(prefix_width).saturating_add(1);
         Line::from(vec![
             Span::styled("┃", self.block_style),
             Span::styled("  ", self.bg_style),
