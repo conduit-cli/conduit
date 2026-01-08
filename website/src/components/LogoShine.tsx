@@ -133,13 +133,14 @@ export default function LogoShine({ className = '' }: LogoShineProps) {
       : BAND_WIDTH + 1
 
     const color = getColorForDistance(distance)
+    const colorStyle = rgbToStyle(color)
 
     return (
       <span
         key={`${x}-${y}`}
         style={{
-          color: rgbToStyle(color),
-          transition: 'color 0.05s ease-out',
+          color: colorStyle,
+          textShadow: `1px 0 0 ${colorStyle}, -1px 0 0 ${colorStyle}, 0 1px 0 ${colorStyle}, 0 -1px 0 ${colorStyle}`,
         }}
       >
         {char}
@@ -151,13 +152,15 @@ export default function LogoShine({ className = '' }: LogoShineProps) {
     <div
       className={`font-mono leading-none select-none ${className}`}
       style={{
-        fontSize: 'clamp(6px, 1.2vw, 14px)',
+        fontSize: 'clamp(8px, 1.4vw, 16px)',
         whiteSpace: 'pre',
+        letterSpacing: '-0.08em',
+        lineHeight: '1.05',
       }}
       aria-label="Conduit logo"
     >
       {LOGO_LINES.map((line, y) => (
-        <div key={y} className="flex">
+        <div key={y}>
           {line.split('').map((char, x) => renderChar(char, x, y))}
         </div>
       ))}
