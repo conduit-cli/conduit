@@ -3809,11 +3809,39 @@ impl App {
     }
 
     /// Handle click in sidebar area
-    fn handle_sidebar_click(&mut self, _x: u16, y: u16, sidebar_area: Rect) -> Option<Effect> {
+    fn handle_sidebar_click(&mut self, x: u16, y: u16, sidebar_area: Rect) -> Option<Effect> {
         // Account for title area (3 rows) + separator (1 row) = 4 rows
         let tree_start_y = sidebar_area.y + 4;
         if y < tree_start_y {
             return None; // Clicked on title or separator
+        }
+
+        // Check if clicking on "Add Project" button (when sidebar is empty)
+        if let Some(button_area) = self.state.sidebar_state.add_project_button_area {
+            if Self::point_in_rect(x, y, button_area) {
+                // Trigger new project dialog (same logic as Action::NewProject)
+                let base_dir = self
+                    .app_state_dao
+                    .as_ref()
+                    .and_then(|dao| dao.get("projects_base_dir").ok().flatten());
+
+                self.state.close_overlays();
+                if let Some(base_dir_str) = base_dir {
+                    let base_path = if base_dir_str.starts_with('~') {
+                        dirs::home_dir()
+                            .map(|h| h.join(base_dir_str[1..].trim_start_matches('/')))
+                            .unwrap_or_else(|| PathBuf::from(&base_dir_str))
+                    } else {
+                        PathBuf::from(&base_dir_str)
+                    };
+                    self.state.project_picker_state.show(base_path);
+                    self.state.input_mode = InputMode::PickingProject;
+                } else {
+                    self.state.base_dir_dialog_state.show();
+                    self.state.input_mode = InputMode::SettingBaseDir;
+                }
+                return None;
+            }
         }
 
         // Always focus sidebar when clicking on it

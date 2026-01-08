@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::ui::components::{BG_BASE, BORDER_DEFAULT, TEXT_PRIMARY};
+use crate::ui::components::{ACCENT_PRIMARY, BG_BASE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY};
 
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
 use super::{SELECTED_BG, SELECTED_BG_DIM};
@@ -73,6 +73,8 @@ pub struct SidebarState {
     pub visible: bool,
     /// Whether the sidebar is focused
     pub focused: bool,
+    /// Area of the "Add Project" button (when sidebar is empty)
+    pub add_project_button_area: Option<Rect>,
 }
 
 impl SidebarState {
@@ -81,6 +83,7 @@ impl SidebarState {
             tree_state: TreeViewState::new(),
             visible: false, // Hidden by default
             focused: false,
+            add_project_button_area: None,
         }
     }
 
@@ -156,22 +159,65 @@ impl StatefulWidget for Sidebar<'_> {
                 .set_bg(BG_BASE);
         }
 
-        let block = Block::default()
-            .borders(Borders::NONE)
-            .style(Style::default().bg(BG_BASE));
+        let content_area = chunks[2];
 
-        // Create and render tree view
-        let tree = TreeView::new(&self.data.nodes).block(block).selected_style(
-            Style::default()
-                .bg(if state.focused {
-                    SELECTED_BG
-                } else {
-                    SELECTED_BG_DIM
-                })
-                .fg(Color::White),
-        );
+        // Fill content area background
+        for y in content_area.y..content_area.y + content_area.height {
+            for x in content_area.x..content_area.x + content_area.width {
+                buf[(x, y)].set_bg(BG_BASE);
+            }
+        }
 
-        StatefulWidget::render(tree, chunks[2], buf, &mut state.tree_state);
+        // Check if sidebar is empty
+        if self.data.nodes.is_empty() {
+            // Render centered "Add Project" button
+            let button_text = "+ Add Project";
+            let button_width = button_text.len() as u16 + 4; // padding on each side
+
+            // Center horizontally
+            let button_x = content_area
+                .x
+                .saturating_add((content_area.width.saturating_sub(button_width)) / 2);
+
+            // Center vertically
+            let button_y = content_area
+                .y
+                .saturating_add(content_area.height.saturating_sub(1) / 2);
+
+            // Store button area for click detection
+            let button_area = Rect::new(button_x, button_y, button_width, 1);
+            state.add_project_button_area = Some(button_area);
+
+            // Render button with styling
+            let button_style = if state.focused {
+                Style::default().fg(ACCENT_PRIMARY)
+            } else {
+                Style::default().fg(TEXT_MUTED)
+            };
+
+            let button = Paragraph::new(format!("  {}  ", button_text)).style(button_style);
+            button.render(button_area, buf);
+        } else {
+            // Clear button area when not empty
+            state.add_project_button_area = None;
+
+            let block = Block::default()
+                .borders(Borders::NONE)
+                .style(Style::default().bg(BG_BASE));
+
+            // Create and render tree view
+            let tree = TreeView::new(&self.data.nodes).block(block).selected_style(
+                Style::default()
+                    .bg(if state.focused {
+                        SELECTED_BG
+                    } else {
+                        SELECTED_BG_DIM
+                    })
+                    .fg(Color::White),
+            );
+
+            StatefulWidget::render(tree, content_area, buf, &mut state.tree_state);
+        }
     }
 }
 
