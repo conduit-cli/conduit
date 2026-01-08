@@ -158,6 +158,8 @@ impl ToolBlockBuilder {
 
 use self::chat_view_cache::LineCache;
 
+const MARKDOWN_CODE_BG: Color = Color::Rgb(30, 30, 30);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SelectionPoint {
     line_index: usize,
@@ -476,13 +478,7 @@ impl ChatView {
             && self.selection_anchor != self.selection_head
     }
 
-    pub fn begin_selection(
-        &mut self,
-        click_x: u16,
-        click_y: u16,
-        area: Rect,
-        _is_streaming: bool,
-    ) -> bool {
+    pub fn begin_selection(&mut self, click_x: u16, click_y: u16, area: Rect) -> bool {
         let Some(point) = self.selection_point_from_mouse(click_x, click_y, area) else {
             return false;
         };
@@ -507,6 +503,8 @@ impl ChatView {
         };
         self.selection_head = Some(point);
 
+        // Lock scroll position during streaming to prevent auto-scroll from
+        // disrupting the active selection.
         if is_streaming && self.selection_scroll_lock.is_none() {
             let Some(content) = Self::content_area(area) else {
                 return true;
@@ -1987,8 +1985,6 @@ fn line_to_flat(line: &Line<'_>) -> String {
 }
 
 fn is_code_block_line(line: &Line<'_>) -> bool {
-    use ratatui::style::Color;
-
     line.style.bg == Some(TOOL_BLOCK_BG)
         || line
             .spans
@@ -1997,7 +1993,7 @@ fn is_code_block_line(line: &Line<'_>) -> bool {
         || line
             .spans
             .iter()
-            .any(|span| span.style.bg == Some(Color::Rgb(30, 30, 30)))
+            .any(|span| span.style.bg == Some(MARKDOWN_CODE_BG))
 }
 
 fn last_non_space_col(flat: &str) -> Option<u16> {

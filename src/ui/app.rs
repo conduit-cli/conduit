@@ -82,6 +82,9 @@ pub struct App {
 
 impl App {
     const AUTO_COPY_SELECTION: bool = false;
+    // When true, selection drag auto-scrolls as soon as the cursor hits the first/last row.
+    // When false, auto-scroll only starts after the cursor leaves the chat area.
+    const AUTO_SCROLL_ON_EDGE_INCLUSIVE: bool = true;
     pub fn new(config: Config) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
@@ -1199,10 +1202,13 @@ impl App {
             }
             Action::CopySelection => {
                 let mut copied_text = None;
+                let mut had_selection = false;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if session.input_box.has_selection() {
+                        had_selection = true;
                         copied_text = session.input_box.selected_text();
-                    } else {
+                    } else if session.chat_view.has_selection() {
+                        had_selection = true;
                         copied_text = session.chat_view.copy_selection();
                     }
                 }
@@ -1212,6 +1218,11 @@ impl App {
                     self.state.set_timed_footer_message(
                         "Copied selection".to_string(),
                         Duration::from_secs(5),
+                    );
+                } else if !had_selection {
+                    self.state.set_timed_footer_message(
+                        "No selection to copy".to_string(),
+                        Duration::from_secs(3),
                     );
                 }
             }
@@ -3548,10 +3559,7 @@ impl App {
                     self.state.sidebar_state.set_focused(false);
                 }
                 session.input_box.clear_selection();
-                if session
-                    .chat_view
-                    .begin_selection(x, y, chat_area, session.is_processing)
-                {
+                if session.chat_view.begin_selection(x, y, chat_area) {
                     self.state.selection_drag = Some(SelectionDragTarget::Chat);
                     return true;
                 }
@@ -3583,10 +3591,26 @@ impl App {
                 }
                 SelectionDragTarget::Chat => {
                     if let Some(chat_area) = self.state.chat_area {
-                        if y <= chat_area.y {
+                        let top_edge = chat_area.y;
+                        let bottom_edge_inclusive = chat_area
+                            .y
+                            .saturating_add(chat_area.height.saturating_sub(1));
+                        let bottom_edge_exclusive = chat_area.y.saturating_add(chat_area.height);
+                        let should_scroll_up = if Self::AUTO_SCROLL_ON_EDGE_INCLUSIVE {
+                            y <= top_edge
+                        } else {
+                            y < top_edge
+                        };
+                        let should_scroll_down = if Self::AUTO_SCROLL_ON_EDGE_INCLUSIVE {
+                            y >= bottom_edge_inclusive
+                        } else {
+                            y >= bottom_edge_exclusive
+                        };
+
+                        if should_scroll_up {
                             session.chat_view.scroll_up(1);
                             scrolled_lines = scrolled_lines.saturating_add(1);
-                        } else if y >= chat_area.y + chat_area.height.saturating_sub(1) {
+                        } else if should_scroll_down {
                             session.chat_view.scroll_down(1);
                             scrolled_lines = scrolled_lines.saturating_add(1);
                         }
