@@ -157,20 +157,26 @@ export default function LogoShine({ className = '' }: LogoShineProps) {
 
   return (
     <div
-      className={`font-mono leading-none select-none ${className}`}
-      style={{
-        fontSize: 'clamp(8px, 1.4vw, 16px)',
-        whiteSpace: 'pre',
-        letterSpacing: '-0.08em',
-        lineHeight: '1.05',
-      }}
+      className={`font-mono leading-none select-none w-full flex justify-center ${className}`}
       aria-label="Conduit logo"
     >
-      {LOGO_LINES.map((line, y) => (
-        <div key={y}>
-          {line.split('').map((char, x) => renderChar(char, x, y))}
-        </div>
-      ))}
+      <div
+        style={{
+          fontSize: 'clamp(6px, 2vw, 16px)',
+          whiteSpace: 'pre',
+          letterSpacing: '-0.08em',
+          lineHeight: '1.05',
+          transform: 'scale(var(--logo-scale, 1))',
+          transformOrigin: 'center center',
+        }}
+        className="logo-text"
+      >
+        {LOGO_LINES.map((line, y) => (
+          <div key={y}>
+            {line.split('').map((char, x) => renderChar(char, x, y))}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

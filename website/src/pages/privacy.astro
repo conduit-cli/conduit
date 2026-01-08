@@ -1,0 +1,131 @@
+---
+import Layout from '../layouts/Layout.astro'
+---
+
+<Layout title="Privacy Policy - Conduit">
+  <div class="min-h-screen flex flex-col">
+    <!-- Navigation -->
+    <nav class="border-b border-[var(--color-border-dim)] bg-[var(--color-bg-hero)]/80 backdrop-blur-md">
+      <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
+        <a href="/" class="flex items-center gap-3 text-[var(--color-text-primary)] hover:text-[var(--color-text-bright)] transition-colors">
+          <span class="font-display text-xl font-semibold">Conduit</span>
+        </a>
+        <div class="flex gap-6">
+          <a href="/" class="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors font-mono text-sm">Home</a>
+          <a href="/terms" class="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors font-mono text-sm">Terms</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Content -->
+    <main class="flex-1 py-12 px-4">
+      <div class="max-w-3xl mx-auto">
+        <div class="terminal-frame p-8 md:p-12">
+          <h1 class="font-display text-3xl md:text-4xl text-[var(--color-text-bright)] mb-2">Privacy Policy</h1>
+          <p class="text-[var(--color-text-muted)] text-sm font-mono mb-8 pb-8 border-b border-[var(--color-border-dim)]">
+            Last updated: January 2025
+          </p>
+
+          <div class="space-y-8 text-[var(--color-text-secondary)]">
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Overview</h2>
+              <p class="leading-relaxed">
+                Conduit is a terminal-based tool for orchestrating AI coding assistants. We are committed to protecting your privacy. This policy explains how we handle your data.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Data We Collect</h2>
+
+              <h3 class="font-mono text-[var(--color-accent-primary)] text-sm mb-2 mt-4">Waitlist Information</h3>
+              <p class="leading-relaxed mb-4">
+                When you join our waitlist, we collect your email address. If you choose to connect your X (Twitter) account, we also collect your X handle and user ID to verify your identity and prioritize your position.
+              </p>
+
+              <h3 class="font-mono text-[var(--color-accent-primary)] text-sm mb-2">Local Application Data</h3>
+              <p class="leading-relaxed">
+                Conduit stores all session data, configurations, and conversation histories locally on your device. We do not transmit this data to our servers.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Data We Don't Collect</h2>
+              <ul class="list-disc list-inside space-y-2 ml-2">
+                <li>We do not access or store your code or project files</li>
+                <li>We do not store your AI provider API keys</li>
+                <li>We do not track your AI conversations or prompts</li>
+                <li>We do not use analytics or tracking services in the application</li>
+                <li>We do not sell or share personal data with third parties</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Third-Party Services</h2>
+              <p class="leading-relaxed mb-4">
+                Conduit connects directly to AI providers using your API credentials. Your conversations are sent directly to these providers and are subject to their privacy policies:
+              </p>
+              <ul class="list-disc list-inside space-y-2 ml-2">
+                <li><a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener" class="text-[var(--color-accent-primary)] hover:underline">Anthropic Privacy Policy</a> (Claude)</li>
+                <li><a href="https://openai.com/policies/privacy-policy" target="_blank" rel="noopener" class="text-[var(--color-accent-primary)] hover:underline">OpenAI Privacy Policy</a> (Codex)</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">X (Twitter) Integration</h2>
+              <p class="leading-relaxed">
+                If you choose to connect your X account during waitlist signup, we use OAuth 2.0 for secure authentication. We only request read access to verify your account identity. We do not post on your behalf or access your direct messages.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Data Storage</h2>
+              <p class="leading-relaxed">
+                Waitlist data is stored securely using Supabase with encryption at rest. Application data is stored locally on your device and never transmitted to us.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Your Rights</h2>
+              <p class="leading-relaxed">
+                You have complete control over your data. You can request deletion of your waitlist entry at any time by contacting us. Local application data can be removed by uninstalling Conduit and deleting its configuration directory.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Cookies</h2>
+              <p class="leading-relaxed">
+                Our website uses essential cookies only for X OAuth authentication flow. We do not use tracking cookies or third-party analytics.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Changes to This Policy</h2>
+              <p class="leading-relaxed">
+                We may update this privacy policy from time to time. We will notify waitlist subscribers of any material changes via email.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Contact</h2>
+              <p class="leading-relaxed">
+                If you have questions about this privacy policy, please contact us at <a href="mailto:privacy@getconduit.sh" class="text-[var(--color-accent-primary)] hover:underline">privacy@getconduit.sh</a>.
+              </p>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-[var(--color-border-dim)] bg-[var(--color-bg-hero)]">
+      <div class="max-w-4xl mx-auto px-4 py-6 text-center">
+        <p class="text-[var(--color-text-muted)] text-sm font-mono mb-2">&copy; 2025 Conduit. All rights reserved.</p>
+        <div class="flex justify-center gap-4">
+          <a href="/" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Home</a>
+          <a href="/privacy" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Privacy</a>
+          <a href="/terms" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Terms</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+</Layout>

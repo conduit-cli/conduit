@@ -259,6 +259,7 @@ h1, h2, h3 {
   outline: none;
   transition: all 0.2s ease;
   min-width: 0; /* Allow flex shrinking */
+  width: 100%;
 }
 
 .waitlist-input::placeholder {
@@ -464,6 +465,41 @@ h1, h2, h3 {
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
+}
+
+/* ============================================================================
+   Mobile Responsive Fixes
+   ============================================================================ */
+
+/* Logo scaling for mobile */
+:root {
+  --logo-scale: 1;
+}
+
+@media (max-width: 480px) {
+  :root {
+    --logo-scale: 0.85;
+  }
+}
+
+@media (max-width: 380px) {
+  :root {
+    --logo-scale: 0.7;
+  }
+}
+
+@media (max-width: 320px) {
+  :root {
+    --logo-scale: 0.6;
+  }
+}
+
+/* Ensure terminal frame doesn't overflow on mobile */
+@media (max-width: 480px) {
+  .terminal-frame {
+    max-width: 100%;
+    overflow: hidden;
+  }
 }
 
 /* Reduced Motion */

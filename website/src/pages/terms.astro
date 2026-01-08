@@ -1,0 +1,128 @@
+---
+import Layout from '../layouts/Layout.astro'
+---
+
+<Layout title="Terms of Service - Conduit">
+  <div class="min-h-screen flex flex-col">
+    <!-- Navigation -->
+    <nav class="border-b border-[var(--color-border-dim)] bg-[var(--color-bg-hero)]/80 backdrop-blur-md">
+      <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
+        <a href="/" class="flex items-center gap-3 text-[var(--color-text-primary)] hover:text-[var(--color-text-bright)] transition-colors">
+          <span class="font-display text-xl font-semibold">Conduit</span>
+        </a>
+        <div class="flex gap-6">
+          <a href="/" class="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors font-mono text-sm">Home</a>
+          <a href="/privacy" class="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors font-mono text-sm">Privacy</a>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Content -->
+    <main class="flex-1 py-12 px-4">
+      <div class="max-w-3xl mx-auto">
+        <div class="terminal-frame p-8 md:p-12">
+          <h1 class="font-display text-3xl md:text-4xl text-[var(--color-text-bright)] mb-2">Terms of Service</h1>
+          <p class="text-[var(--color-text-muted)] text-sm font-mono mb-8 pb-8 border-b border-[var(--color-border-dim)]">
+            Last updated: January 2025
+          </p>
+
+          <div class="space-y-8 text-[var(--color-text-secondary)]">
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Agreement to Terms</h2>
+              <p class="leading-relaxed">
+                By downloading, installing, or using Conduit ("the Software"), you agree to be bound by these Terms of Service. If you do not agree to these terms, do not use the Software.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">License</h2>
+              <p class="leading-relaxed">
+                Conduit grants you a limited, non-exclusive, non-transferable, revocable license to use the Software for personal or commercial purposes on devices you own or control.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Restrictions</h2>
+              <p class="leading-relaxed mb-3">You agree not to:</p>
+              <ul class="list-disc list-inside space-y-2 ml-2">
+                <li>Reverse engineer, decompile, or disassemble the Software</li>
+                <li>Modify, adapt, or create derivative works based on the Software</li>
+                <li>Distribute, license, or sell the Software to third parties</li>
+                <li>Use the Software for any unlawful purpose</li>
+                <li>Attempt to circumvent any security features of the Software</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Third-Party AI Services</h2>
+              <p class="leading-relaxed">
+                Conduit integrates with third-party AI services including Anthropic's Claude and OpenAI's Codex. Your use of these services through Conduit is subject to their respective terms of service. You are responsible for obtaining and maintaining valid API credentials and complying with their usage policies.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Waitlist</h2>
+              <p class="leading-relaxed">
+                By joining our waitlist, you consent to receive email communications about Conduit's launch and updates. You may connect your X (Twitter) account to verify your identity; this is optional and used solely for waitlist prioritization.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Disclaimer of Warranties</h2>
+              <p class="leading-relaxed uppercase text-sm">
+                The Software is provided "as is" without warranty of any kind. We disclaim all warranties, express or implied, including merchantability, fitness for a particular purpose, and non-infringement.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Limitation of Liability</h2>
+              <p class="leading-relaxed uppercase text-sm">
+                To the maximum extent permitted by law, Conduit shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or any loss of data, use, or profits arising from your use of the Software or any AI-generated outputs.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Changes to Terms</h2>
+              <p class="leading-relaxed">
+                We may update these terms from time to time. Continued use of the Software after changes constitutes acceptance of the new terms.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Termination</h2>
+              <p class="leading-relaxed">
+                We may terminate or suspend your access to the Software at any time, without prior notice, for any reason. You may stop using the Software at any time by uninstalling it.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Governing Law</h2>
+              <p class="leading-relaxed">
+                These terms shall be governed by the laws of the State of California, without regard to conflict of law principles.
+              </p>
+            </section>
+
+            <section>
+              <h2 class="font-display text-xl text-[var(--color-text-bright)] mb-3">Contact</h2>
+              <p class="leading-relaxed">
+                For questions about these terms, please contact us at <a href="mailto:legal@getconduit.sh" class="text-[var(--color-accent-primary)] hover:underline">legal@getconduit.sh</a>.
+              </p>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-[var(--color-border-dim)] bg-[var(--color-bg-hero)]">
+      <div class="max-w-4xl mx-auto px-4 py-6 text-center">
+        <p class="text-[var(--color-text-muted)] text-sm font-mono mb-2">&copy; 2025 Conduit. All rights reserved.</p>
+        <div class="flex justify-center gap-4">
+          <a href="/" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Home</a>
+          <a href="/privacy" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Privacy</a>
+          <a href="/terms" class="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] text-sm font-mono transition-colors">Terms</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+</Layout>
