@@ -1,0 +1,182 @@
+---
+const features = [
+  {
+    title: "Multi-Agent Support",
+    description: "Run Claude Code and Codex CLI in the same interface. Switch agents with a single keystroke.",
+    icon: "agents",
+    color: "var(--color-accent-primary)",
+  },
+  {
+    title: "Tab-Based Sessions",
+    description: "Up to 10 concurrent sessions. Each tab maintains its own context and history.",
+    icon: "tabs",
+    color: "var(--color-accent-secondary)",
+  },
+  {
+    title: "Real-Time Streaming",
+    description: "Watch AI responses as they're generated. No waiting for complete outputs.",
+    icon: "stream",
+    color: "var(--color-phosphor)",
+  },
+  {
+    title: "Token Tracking",
+    description: "Monitor input/output tokens and estimated costs in real-time.",
+    icon: "tokens",
+    color: "var(--color-accent-warning)",
+  },
+  {
+    title: "Session Persistence",
+    description: "Resume previous sessions with full context. Never lose your work.",
+    icon: "save",
+    color: "var(--color-accent-success)",
+  },
+  {
+    title: "Git Integration",
+    description: "PR status, branch tracking, and worktree management built-in.",
+    icon: "git",
+    color: "var(--color-accent-error)",
+  },
+]
+---
+
+<section id="features" class="py-24 px-4">
+  <div class="max-w-6xl mx-auto">
+    <!-- Section Header -->
+    <div class="text-center mb-16">
+      <p class="text-[var(--color-text-muted)] font-mono text-sm mb-2">
+        <span class="text-[var(--color-accent-primary)]">//</span> THE CONTROL ROOM
+      </p>
+      <h2 class="font-display text-3xl md:text-4xl text-[var(--color-text-bright)] mb-4">
+        Everything You Need to Orchestrate AI
+      </h2>
+      <p class="text-[var(--color-text-secondary)] max-w-2xl mx-auto">
+        A purpose-built TUI for running multiple AI coding assistants with the power
+        and flexibility of your terminal.
+      </p>
+    </div>
+
+    <!-- Feature Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {features.map((feature, index) => (
+        <div
+          class="group relative p-6 rounded-lg bg-[var(--color-bg-surface)] border border-[var(--color-border-dim)] hover:border-[var(--color-border-default)] transition-all duration-300"
+          style={`animation-delay: ${index * 100}ms`}
+        >
+          <!-- Icon -->
+          <div
+            class="w-10 h-10 rounded-lg flex items-center justify-center mb-4 transition-transform duration-300 group-hover:scale-110"
+            style={`background: ${feature.color}20; color: ${feature.color}`}
+          >
+            {feature.icon === "agents" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            )}
+            {feature.icon === "tabs" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+              </svg>
+            )}
+            {feature.icon === "stream" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            )}
+            {feature.icon === "tokens" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            )}
+            {feature.icon === "save" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+            )}
+            {feature.icon === "git" && (
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+              </svg>
+            )}
+          </div>
+
+          <!-- Content -->
+          <h3 class="font-display text-lg text-[var(--color-text-bright)] mb-2">
+            {feature.title}
+          </h3>
+          <p class="text-[var(--color-text-secondary)] text-sm leading-relaxed">
+            {feature.description}
+          </p>
+
+          <!-- Blinking cursor indicator -->
+          <div class="absolute bottom-4 right-4 text-[var(--color-text-faint)] text-xs font-mono">
+            <span class="cursor-blink">_</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- Agent Showcase Section -->
+<section class="py-24 px-4 bg-[var(--color-bg-base)]">
+  <div class="max-w-6xl mx-auto">
+    <div class="text-center mb-16">
+      <p class="text-[var(--color-text-muted)] font-mono text-sm mb-2">
+        <span class="text-[var(--color-accent-secondary)]">//</span> SUPPORTED AGENTS
+      </p>
+      <h2 class="font-display text-3xl md:text-4xl text-[var(--color-text-bright)]">
+        Your AI Agents, Side by Side
+      </h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <!-- Claude Code -->
+      <div class="terminal-frame overflow-hidden">
+        <div class="terminal-buttons">
+          <div class="terminal-button terminal-button-close"></div>
+          <div class="terminal-button terminal-button-minimize"></div>
+          <div class="terminal-button terminal-button-maximize"></div>
+          <span class="ml-4 text-[var(--color-agent-claude)] text-xs font-mono">Claude Code</span>
+        </div>
+        <div class="p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-3 h-3 rounded-full bg-[var(--color-agent-claude)]"></div>
+            <span class="text-[var(--color-text-bright)] font-mono text-sm">Claude</span>
+          </div>
+          <p class="text-[var(--color-text-secondary)] text-sm font-mono leading-relaxed">
+            Anthropic's powerful coding assistant with deep reasoning capabilities,
+            multi-file editing, and sophisticated code understanding.
+          </p>
+          <div class="mt-4 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <span class="px-2 py-1 rounded bg-[var(--color-bg-elevated)]">claude-3.5-sonnet</span>
+            <span class="px-2 py-1 rounded bg-[var(--color-bg-elevated)]">claude-3-opus</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Codex CLI -->
+      <div class="terminal-frame overflow-hidden">
+        <div class="terminal-buttons">
+          <div class="terminal-button terminal-button-close"></div>
+          <div class="terminal-button terminal-button-minimize"></div>
+          <div class="terminal-button terminal-button-maximize"></div>
+          <span class="ml-4 text-[var(--color-agent-codex)] text-xs font-mono">Codex CLI</span>
+        </div>
+        <div class="p-6">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-3 h-3 rounded-full bg-[var(--color-agent-codex)]"></div>
+            <span class="text-[var(--color-text-bright)] font-mono text-sm">Codex</span>
+          </div>
+          <p class="text-[var(--color-text-secondary)] text-sm font-mono leading-relaxed">
+            OpenAI's terminal-native coding agent with fast iteration speed,
+            shell integration, and autonomous task execution.
+          </p>
+          <div class="mt-4 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <span class="px-2 py-1 rounded bg-[var(--color-bg-elevated)]">o4-mini</span>
+            <span class="px-2 py-1 rounded bg-[var(--color-bg-elevated)]">gpt-4.1</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,377 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   Conduit Website - Terminal Cinema Theme
+   CRT-inspired aesthetic with phosphor glow and scanline effects
+   ============================================================================ */
+
+/* Fonts loaded via Google Fonts in Layout.astro */
+
+/* Theme Variables - from Conduit's theme.rs */
+@theme {
+  /* Background Layers */
+  --color-bg-terminal: rgb(16, 16, 16);
+  --color-bg-base: rgb(22, 22, 30);
+  --color-bg-surface: rgb(30, 30, 40);
+  --color-bg-elevated: rgb(40, 40, 52);
+  --color-bg-highlight: rgb(50, 55, 70);
+
+  /* Deep black for website hero */
+  --color-bg-deep: rgb(8, 8, 12);
+  --color-bg-hero: rgb(12, 12, 16);
+
+  /* Text Hierarchy */
+  --color-text-bright: rgb(250, 250, 255);
+  --color-text-primary: rgb(220, 220, 230);
+  --color-text-secondary: rgb(160, 160, 180);
+  --color-text-muted: rgb(100, 100, 120);
+  --color-text-faint: rgb(70, 70, 85);
+
+  /* Accent Colors */
+  --color-accent-primary: rgb(130, 170, 255);
+  --color-accent-secondary: rgb(180, 140, 255);
+  --color-accent-success: rgb(130, 200, 140);
+  --color-accent-warning: rgb(230, 180, 100);
+  --color-accent-error: rgb(230, 120, 120);
+
+  /* Phosphor Green (for active/glow elements) */
+  --color-phosphor: rgb(130, 255, 170);
+  --color-phosphor-dim: rgb(80, 180, 120);
+
+  /* Agent Colors */
+  --color-agent-claude: rgb(130, 180, 220);
+  --color-agent-codex: rgb(180, 140, 200);
+
+  /* Shine Animation Colors */
+  --color-shine-peak: rgb(255, 255, 255);
+  --color-shine-center: rgb(230, 230, 245);
+  --color-shine-mid: rgb(180, 180, 200);
+  --color-shine-edge: rgb(130, 130, 150);
+
+  /* Border Colors */
+  --color-border-default: rgb(50, 50, 65);
+  --color-border-focused: rgb(130, 170, 255);
+  --color-border-dim: rgb(35, 35, 45);
+
+  /* Fonts */
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
+  --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+}
+
+/* Base Styles */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-mono);
+  background-color: var(--color-bg-deep);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-elevated);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-bg-highlight);
+}
+
+/* Selection */
+::selection {
+  background: var(--color-accent-primary);
+  color: var(--color-bg-deep);
+}
+
+/* ============================================================================
+   CRT Effects
+   ============================================================================ */
+
+/* Scanline Overlay */
+.crt-scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.08),
+    rgba(0, 0, 0, 0.08) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  opacity: 0.5;
+}
+
+/* Phosphor Glow */
+.phosphor-glow {
+  text-shadow:
+    0 0 5px rgba(130, 170, 255, 0.5),
+    0 0 10px rgba(130, 170, 255, 0.3),
+    0 0 20px rgba(130, 170, 255, 0.1);
+}
+
+.phosphor-glow-green {
+  text-shadow:
+    0 0 5px rgba(130, 255, 170, 0.5),
+    0 0 10px rgba(130, 255, 170, 0.3),
+    0 0 20px rgba(130, 255, 170, 0.1);
+}
+
+/* Box Glow */
+.box-glow {
+  box-shadow:
+    0 0 10px rgba(130, 170, 255, 0.2),
+    0 0 20px rgba(130, 170, 255, 0.1),
+    inset 0 0 20px rgba(130, 170, 255, 0.05);
+}
+
+/* Terminal Frame */
+.terminal-frame {
+  background: var(--color-bg-hero);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.5),
+    0 0 40px rgba(130, 170, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* Terminal Window Buttons */
+.terminal-buttons {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-dim);
+}
+
+.terminal-button {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.terminal-button-close {
+  background: var(--color-accent-error);
+}
+
+.terminal-button-minimize {
+  background: var(--color-accent-warning);
+}
+
+.terminal-button-maximize {
+  background: var(--color-accent-success);
+}
+
+/* ============================================================================
+   Typography
+   ============================================================================ */
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ============================================================================
+   Button Styles
+   ============================================================================ */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: var(--color-accent-primary);
+  color: var(--color-bg-deep);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: var(--color-text-bright);
+  box-shadow: 0 0 20px rgba(130, 170, 255, 0.4);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-default);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+}
+
+/* ============================================================================
+   Animations
+   ============================================================================ */
+
+/* Blinking Cursor */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Typewriter Effect */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+.typewriter {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: typewriter 2s steps(40) forwards;
+}
+
+/* Fade In Up */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease forwards;
+}
+
+/* CRT Flicker (one-time on page load) */
+@keyframes crt-flicker {
+  0% { opacity: 0; }
+  10% { opacity: 0.8; }
+  15% { opacity: 0.3; }
+  20% { opacity: 0.9; }
+  25% { opacity: 0.5; }
+  30% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.crt-flicker {
+  animation: crt-flicker 0.5s ease forwards;
+}
+
+/* Glow Pulse */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(130, 170, 255, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(130, 170, 255, 0.4);
+  }
+}
+
+.glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* ============================================================================
+   Utility Classes
+   ============================================================================ */
+
+/* Noise Texture Overlay */
+.noise-overlay {
+  position: relative;
+}
+
+.noise-overlay::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.03;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+/* Gradient Border */
+.gradient-border {
+  position: relative;
+  background: var(--color-bg-surface);
+  border-radius: 8px;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-primary) 0%,
+    var(--color-accent-secondary) 50%,
+    var(--color-accent-primary) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .crt-scanlines {
+    display: none;
+  }
+}

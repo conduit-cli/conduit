@@ -1,0 +1,148 @@
+---
+---
+
+<section id="install" class="py-24 px-4">
+  <div class="max-w-4xl mx-auto">
+    <!-- Section Header -->
+    <div class="text-center mb-12">
+      <p class="text-[var(--color-text-muted)] font-mono text-sm mb-2">
+        <span class="text-[var(--color-phosphor)]">//</span> GET STARTED
+      </p>
+      <h2 class="font-display text-3xl md:text-4xl text-[var(--color-text-bright)] mb-4">
+        Install in Seconds
+      </h2>
+      <p class="text-[var(--color-text-secondary)]">
+        One command to start orchestrating AI agents in your terminal.
+      </p>
+    </div>
+
+    <!-- Install Command -->
+    <div class="terminal-frame max-w-2xl mx-auto mb-8">
+      <div class="terminal-buttons">
+        <div class="terminal-button terminal-button-close"></div>
+        <div class="terminal-button terminal-button-minimize"></div>
+        <div class="terminal-button terminal-button-maximize"></div>
+        <span class="ml-4 text-[var(--color-text-muted)] text-xs font-mono">Terminal</span>
+      </div>
+      <div class="p-6">
+        <div class="flex items-center justify-between gap-4">
+          <code class="text-[var(--color-text-bright)] font-mono text-lg">
+            <span class="text-[var(--color-accent-success)]">$</span>
+            <span class="text-[var(--color-text-primary)]"> cargo install conduit-tui</span>
+          </code>
+          <button
+            id="copy-button"
+            class="p-2 rounded hover:bg-[var(--color-bg-elevated)] transition-colors"
+            title="Copy to clipboard"
+            aria-label="Copy install command"
+          >
+            <svg id="copy-icon" class="w-5 h-5 text-[var(--color-text-muted)] hover:text-[var(--color-accent-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <svg id="check-icon" class="w-5 h-5 text-[var(--color-accent-success)] hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prerequisites -->
+    <div class="max-w-2xl mx-auto">
+      <h3 class="font-mono text-sm text-[var(--color-text-muted)] mb-4 text-center">Prerequisites</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="p-4 rounded-lg bg-[var(--color-bg-surface)] border border-[var(--color-border-dim)]">
+          <div class="flex items-center gap-3 mb-2">
+            <svg class="w-5 h-5 text-[var(--color-accent-warning)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            <span class="text-[var(--color-text-bright)] font-mono text-sm">Rust toolchain</span>
+          </div>
+          <p class="text-[var(--color-text-secondary)] text-xs font-mono">
+            Install via <a href="https://rustup.rs" class="text-[var(--color-accent-primary)] hover:underline" target="_blank" rel="noopener">rustup.rs</a>
+          </p>
+        </div>
+        <div class="p-4 rounded-lg bg-[var(--color-bg-surface)] border border-[var(--color-border-dim)]">
+          <div class="flex items-center gap-3 mb-2">
+            <svg class="w-5 h-5 text-[var(--color-accent-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span class="text-[var(--color-text-bright)] font-mono text-sm">AI CLI tools</span>
+          </div>
+          <p class="text-[var(--color-text-secondary)] text-xs font-mono">
+            Claude Code or Codex CLI installed
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Start -->
+    <div class="max-w-2xl mx-auto mt-12">
+      <h3 class="font-mono text-sm text-[var(--color-text-muted)] mb-4 text-center">Quick Start</h3>
+      <div class="terminal-frame">
+        <div class="terminal-buttons">
+          <div class="terminal-button terminal-button-close"></div>
+          <div class="terminal-button terminal-button-minimize"></div>
+          <div class="terminal-button terminal-button-maximize"></div>
+        </div>
+        <div class="p-4 font-mono text-sm space-y-2">
+          <p>
+            <span class="text-[var(--color-text-muted)]"># Start conduit in your project</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-success)]">$</span>
+            <span class="text-[var(--color-text-primary)]"> cd ~/my-project</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-success)]">$</span>
+            <span class="text-[var(--color-text-primary)]"> conduit</span>
+          </p>
+          <p class="pt-2">
+            <span class="text-[var(--color-text-muted)]"># Keyboard shortcuts</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-primary)]">Ctrl+T</span>
+            <span class="text-[var(--color-text-secondary)]"> — New tab</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-primary)]">Ctrl+W</span>
+            <span class="text-[var(--color-text-secondary)]"> — Close tab</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-primary)]">Tab / Shift+Tab</span>
+            <span class="text-[var(--color-text-secondary)]"> — Switch tabs</span>
+          </p>
+          <p>
+            <span class="text-[var(--color-accent-primary)]">?</span>
+            <span class="text-[var(--color-text-secondary)]"> — Help</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const copyButton = document.getElementById('copy-button')
+  const copyIcon = document.getElementById('copy-icon')
+  const checkIcon = document.getElementById('check-icon')
+  const command = 'cargo install conduit-tui'
+
+  copyButton?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(command)
+
+      // Show check icon
+      copyIcon?.classList.add('hidden')
+      checkIcon?.classList.remove('hidden')
+
+      // Reset after 2 seconds
+      setTimeout(() => {
+        copyIcon?.classList.remove('hidden')
+        checkIcon?.classList.add('hidden')
+      }, 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  })
+</script>
