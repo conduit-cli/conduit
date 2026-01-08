@@ -1,78 +1,49 @@
 /**
  * CRTBoot - CRT Monitor Power-On Animation
  *
- * Unified animation where content is always visible but transforms
- * from "phosphor warming up" (bright/washed out) to stable image.
+ * Single unified animation where the content itself transforms from
+ * a bright dot → line → rectangle → stable image.
  *
- * The ignition beam overlay fades out as content "burns in".
+ * No separate overlay - the content IS the CRT beam.
  */
 
 import { useEffect, useState } from 'react'
 
 interface CRTBootProps {
   children: React.ReactNode
-  ignitionDuration?: number // Phase 1: dot → line → square (ms)
-  revealDuration?: number   // Phase 2: overlay fades, content stabilizes (ms)
+  duration?: number // Total animation duration (ms)
   onComplete?: () => void
 }
 
-type Phase = 'ignition' | 'reveal' | 'complete'
+type Phase = 'booting' | 'complete'
 
 export default function CRTBoot({
   children,
-  ignitionDuration = 1800,
-  revealDuration = 1200,
+  duration = 2500,
   onComplete,
 }: CRTBootProps) {
-  const [phase, setPhase] = useState<Phase>('ignition')
+  const [phase, setPhase] = useState<Phase>('booting')
 
   useEffect(() => {
-    // Phase 1→2: Ignition complete, start reveal
-    const ignitionTimer = setTimeout(() => {
-      setPhase('reveal')
-    }, ignitionDuration)
-
-    // Phase 2→3: Animation complete
-    const revealTimer = setTimeout(() => {
+    const timer = setTimeout(() => {
       setPhase('complete')
       onComplete?.()
-    }, ignitionDuration + revealDuration)
+    }, duration)
 
-    return () => {
-      clearTimeout(ignitionTimer)
-      clearTimeout(revealTimer)
-    }
-  }, [ignitionDuration, revealDuration, onComplete])
+    return () => clearTimeout(timer)
+  }, [duration, onComplete])
 
-  const isIgnition = phase === 'ignition'
-  const isRevealing = phase === 'reveal'
-  const isComplete = phase === 'complete'
+  const isBooting = phase === 'booting'
 
   return (
-    <>
-      {/* Ignition overlay - fades out during reveal phase */}
-      {!isComplete && (
-        <div
-          className={`crt-ignition-overlay ${isRevealing ? 'crt-ignition-fading' : ''}`}
-          aria-hidden="true"
-        >
-          {/* The bright dot/line/square beam */}
-          <div className={`crt-ignition-beam ${isRevealing ? 'crt-beam-fading' : ''}`} />
-          {/* Noise texture */}
-          <div className={`crt-ignition-noise ${isRevealing ? 'crt-noise-fading' : ''}`} />
-        </div>
-      )}
+    <div className="crt-boot-wrapper">
+      {/* Scanline sweep effect during boot */}
+      {isBooting && <div className="crt-boot-scanline" aria-hidden="true" />}
 
-      {/* Terminal content - always rendered, with burn-in effect during ignition */}
-      <div className={`crt-boot-wrapper ${isIgnition ? 'crt-burnin-phase' : ''} ${isRevealing ? 'crt-reveal-phase' : ''}`}>
-        {/* Scanline sweep during reveal */}
-        {isRevealing && <div className="crt-boot-scanline" aria-hidden="true" />}
-
-        {/* Content with burn-in animation */}
-        <div className={`crt-boot-content ${isIgnition ? 'crt-content-burnin' : ''} ${isRevealing ? 'crt-content-stabilizing' : ''}`}>
-          {children}
-        </div>
+      {/* Content with unified CRT boot animation */}
+      <div className={`crt-boot-content ${isBooting ? 'crt-unified-boot' : ''}`}>
+        {children}
       </div>
-    </>
+    </div>
   )
 }

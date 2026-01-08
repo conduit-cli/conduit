@@ -316,304 +316,111 @@ h1, h2, h3 {
 }
 
 /* ============================================================================
-   CRT Ignition Phase - Full-page dot → line → square animation
+   CRT Unified Boot Animation - Content IS the beam
    ============================================================================ */
 
-/* Ignition overlay - covers entire viewport */
-.crt-ignition-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  background: var(--color-bg-deep);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Unified boot animation - content transforms from dot → line → full */
+.crt-unified-boot {
+  animation: crt-unified 2.5s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
 }
 
-/* The beam element - animates from dot → line → square */
-.crt-ignition-beam {
-  position: absolute;
-  background: white;
-  border-radius: 50%;
-  box-shadow:
-    0 0 20px rgba(255, 255, 255, 1),
-    0 0 40px rgba(130, 170, 255, 0.8),
-    0 0 80px rgba(130, 170, 255, 0.6),
-    0 0 120px rgba(130, 170, 255, 0.4);
-  animation: crt-ignition-beam 1.8s ease-out forwards;
-}
-
-@keyframes crt-ignition-beam {
-  /* Start as bright dot */
-  0% {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    opacity: 0;
-    box-shadow:
-      0 0 20px rgba(255, 255, 255, 1),
-      0 0 40px rgba(130, 170, 255, 0.8),
-      0 0 80px rgba(130, 170, 255, 0.6);
-  }
-  /* Dot appears with flash */
-  5% {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    opacity: 1;
-    box-shadow:
-      0 0 30px rgba(255, 255, 255, 1),
-      0 0 60px rgba(130, 170, 255, 1),
-      0 0 100px rgba(130, 170, 255, 0.8);
-  }
-  /* Dot pulses */
-  10% {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    opacity: 0.8;
-  }
-  15% {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    opacity: 1;
-  }
-  /* Begin horizontal expansion */
-  25% {
-    width: 100px;
-    height: 6px;
-    border-radius: 3px;
-    opacity: 1;
-  }
-  35% {
-    width: 300px;
-    height: 4px;
-    border-radius: 2px;
-  }
-  /* Full horizontal line */
-  45% {
-    width: min(80vw, 900px);
-    height: 3px;
-    border-radius: 2px;
-    box-shadow:
-      0 0 20px rgba(255, 255, 255, 0.9),
-      0 0 40px rgba(130, 170, 255, 0.7),
-      0 0 80px rgba(130, 170, 255, 0.5);
-  }
-  /* Begin vertical expansion */
-  55% {
-    width: min(80vw, 900px);
-    height: 50px;
-    border-radius: 4px;
-  }
-  65% {
-    width: min(80vw, 900px);
-    height: 150px;
-    border-radius: 6px;
-  }
-  75% {
-    width: min(80vw, 900px);
-    height: 300px;
-    border-radius: 8px;
-    box-shadow:
-      0 0 15px rgba(255, 255, 255, 0.6),
-      0 0 30px rgba(130, 170, 255, 0.4),
-      0 0 60px rgba(130, 170, 255, 0.2);
-  }
-  /* Expand to approximate terminal size */
-  90% {
-    width: min(85vw, 950px);
-    height: min(70vh, 550px);
-    border-radius: 8px;
-    opacity: 0.9;
-    box-shadow:
-      0 0 10px rgba(255, 255, 255, 0.4),
-      0 0 20px rgba(130, 170, 255, 0.3);
-  }
-  /* Final state - fade slightly before transition */
-  100% {
-    width: min(85vw, 950px);
-    height: min(70vh, 550px);
-    border-radius: 8px;
-    opacity: 0.7;
-    box-shadow:
-      0 0 5px rgba(255, 255, 255, 0.2),
-      0 0 10px rgba(130, 170, 255, 0.1);
-  }
-}
-
-/* Noise overlay that appears as square forms */
-.crt-ignition-noise {
-  position: absolute;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  opacity: 0;
-  mix-blend-mode: overlay;
-  pointer-events: none;
-  animation: crt-ignition-noise 1.8s ease-out forwards;
-}
-
-@keyframes crt-ignition-noise {
-  0%, 45% {
-    width: 0;
-    height: 0;
-    opacity: 0;
-  }
-  55% {
-    width: min(80vw, 900px);
-    height: 50px;
-    opacity: 0.3;
-  }
-  75% {
-    width: min(80vw, 900px);
-    height: 300px;
-    opacity: 0.25;
-  }
-  100% {
-    width: min(85vw, 950px);
-    height: min(70vh, 550px);
-    opacity: 0.2;
-  }
-}
-
-/* ============================================================================
-   Phosphor Burn-In Effect - Content visible throughout with glow treatment
-   ============================================================================ */
-
-/* Content burn-in during ignition - visible but washed out */
-.crt-content-burnin {
-  animation: crt-phosphor-burnin 1.8s ease-out forwards;
-}
-
-@keyframes crt-phosphor-burnin {
+@keyframes crt-unified {
+  /* ===== PHASE 1: DOT (0-15%) - ~375ms ===== */
   /* Start invisible */
   0% {
+    clip-path: inset(50% 50% 50% 50% round 50%);
+    filter: brightness(5) saturate(0) blur(3px) drop-shadow(0 0 20px white);
     opacity: 0;
-    filter: brightness(0) saturate(0) blur(8px);
   }
-  /* Faint glow appears with dot */
-  5% {
-    opacity: 0.1;
-    filter: brightness(3) saturate(0) blur(6px);
+  /* Dot appears with bright flash */
+  3% {
+    clip-path: inset(48% 48% 48% 48% round 50%);
+    filter: brightness(8) saturate(0) blur(2px) drop-shadow(0 0 40px white) drop-shadow(0 0 60px rgba(130, 170, 255, 0.8));
+    opacity: 1;
   }
-  /* Still very faint during early ignition */
-  15% {
-    opacity: 0.15;
-    filter: brightness(2.5) saturate(0) blur(5px);
-  }
-  /* Ghostly image during horizontal line phase */
-  30% {
-    opacity: 0.25;
-    filter: brightness(2.5) saturate(0) blur(4px);
-  }
-  /* Content becoming visible during vertical expansion */
-  45% {
-    opacity: 0.4;
-    filter: brightness(2.2) saturate(0.1) blur(3px);
-  }
-  /* More defined as rectangle forms */
-  60% {
+  /* Dot pulses/flickers */
+  6% {
+    clip-path: inset(48.5% 48.5% 48.5% 48.5% round 50%);
+    filter: brightness(4) saturate(0) blur(3px) drop-shadow(0 0 30px white);
     opacity: 0.6;
-    filter: brightness(2) saturate(0.2) blur(2px);
   }
-  /* Nearly visible at end of ignition */
-  75% {
-    opacity: 0.75;
-    filter: brightness(1.8) saturate(0.3) blur(1px);
+  9% {
+    clip-path: inset(47.5% 47.5% 47.5% 47.5% round 50%);
+    filter: brightness(7) saturate(0) blur(2px) drop-shadow(0 0 50px white) drop-shadow(0 0 70px rgba(130, 170, 255, 0.6));
+    opacity: 1;
   }
-  /* Ready for reveal transition */
-  90% {
-    opacity: 0.85;
-    filter: brightness(1.5) saturate(0.5) blur(0.5px);
-  }
-  100% {
-    opacity: 0.9;
-    filter: brightness(1.4) saturate(0.6) blur(0);
-  }
-}
-
-/* Content stabilizing during reveal phase */
-.crt-content-stabilizing {
-  animation: crt-phosphor-stabilize 1.2s ease-out forwards;
-}
-
-@keyframes crt-phosphor-stabilize {
-  0% {
-    filter: brightness(1.4) saturate(0.6);
+  12% {
+    clip-path: inset(47% 47% 47% 47% round 50%);
+    filter: brightness(5) saturate(0) blur(2px) drop-shadow(0 0 35px white);
     opacity: 0.9;
   }
+  15% {
+    clip-path: inset(46.5% 46.5% 46.5% 46.5% round 50%);
+    filter: brightness(6) saturate(0) blur(1px) drop-shadow(0 0 40px white);
+    opacity: 1;
+  }
+
+  /* ===== PHASE 2: HORIZONTAL LINE (15-35%) - ~500ms ===== */
+  /* Begin horizontal expansion */
   20% {
-    filter: brightness(1.3) saturate(0.7);
-    opacity: 0.95;
-  }
-  40% {
-    filter: brightness(1.2) saturate(0.8);
-    opacity: 0.97;
-  }
-  60% {
-    filter: brightness(1.1) saturate(0.9);
-    opacity: 0.99;
-  }
-  80% {
-    filter: brightness(1.05) saturate(0.95);
+    clip-path: inset(46% 35% 46% 35% round 4px);
+    filter: brightness(5) saturate(0) blur(1px) drop-shadow(0 0 30px white);
     opacity: 1;
   }
-  100% {
-    filter: brightness(1) saturate(1);
-    opacity: 1;
+  25% {
+    clip-path: inset(45.5% 20% 45.5% 20% round 4px);
+    filter: brightness(4) saturate(0.05) blur(0.5px) drop-shadow(0 0 25px white);
   }
-}
-
-/* Ignition overlay fading out during reveal */
-.crt-ignition-fading {
-  animation: crt-overlay-fadeout 1.2s ease-out forwards;
-}
-
-@keyframes crt-overlay-fadeout {
-  0% {
-    opacity: 1;
+  30% {
+    clip-path: inset(45% 10% 45% 10% round 4px);
+    filter: brightness(3.5) saturate(0.1) blur(0.5px) drop-shadow(0 0 20px rgba(255,255,255,0.9));
   }
-  100% {
-    opacity: 0;
-    visibility: hidden;
+  35% {
+    clip-path: inset(44% 3% 44% 3% round 4px);
+    filter: brightness(3) saturate(0.15) blur(0.3px) drop-shadow(0 0 15px rgba(255,255,255,0.8));
   }
-}
 
-/* Beam fading during reveal */
-.crt-beam-fading {
-  animation: crt-beam-fadeout 0.8s ease-out forwards !important;
-}
-
-@keyframes crt-beam-fadeout {
-  0% {
-    opacity: 0.7;
-    box-shadow:
-      0 0 5px rgba(255, 255, 255, 0.2),
-      0 0 10px rgba(130, 170, 255, 0.1);
+  /* ===== PHASE 3: VERTICAL EXPANSION (35-70%) - ~875ms ===== */
+  /* Begin vertical expansion - content starts becoming visible */
+  42% {
+    clip-path: inset(35% 2% 35% 2% round 6px);
+    filter: brightness(2.5) saturate(0.2) blur(0.2px) drop-shadow(0 0 12px rgba(255,255,255,0.6));
   }
   50% {
-    opacity: 0.3;
-    box-shadow:
-      0 0 3px rgba(255, 255, 255, 0.1),
-      0 0 5px rgba(130, 170, 255, 0.05);
+    clip-path: inset(25% 1% 25% 1% round 6px);
+    filter: brightness(2.2) saturate(0.3) blur(0.1px) drop-shadow(0 0 10px rgba(255,255,255,0.5));
   }
-  100% {
-    opacity: 0;
-    box-shadow: none;
+  58% {
+    clip-path: inset(15% 0.5% 15% 0.5% round 8px);
+    filter: brightness(1.9) saturate(0.45) blur(0) drop-shadow(0 0 8px rgba(255,255,255,0.4));
   }
-}
+  65% {
+    clip-path: inset(8% 0% 8% 0% round 8px);
+    filter: brightness(1.6) saturate(0.6) drop-shadow(0 0 5px rgba(255,255,255,0.3));
+  }
+  70% {
+    clip-path: inset(4% 0% 4% 0% round 8px);
+    filter: brightness(1.4) saturate(0.7) drop-shadow(0 0 3px rgba(255,255,255,0.2));
+  }
 
-/* Noise fading during reveal */
-.crt-noise-fading {
-  animation: crt-noise-fadeout 0.6s ease-out forwards !important;
-}
-
-@keyframes crt-noise-fadeout {
-  0% {
-    opacity: 0.2;
+  /* ===== PHASE 4: SETTLE & STABILIZE (70-100%) - ~750ms ===== */
+  78% {
+    clip-path: inset(2% 0% 2% 0% round 8px);
+    filter: brightness(1.25) saturate(0.8);
   }
+  86% {
+    clip-path: inset(1% 0% 1% 0%);
+    filter: brightness(1.12) saturate(0.9);
+  }
+  94% {
+    clip-path: inset(0.3% 0% 0.3% 0%);
+    filter: brightness(1.05) saturate(0.96);
+  }
+  /* Full reveal - stable */
   100% {
-    opacity: 0;
+    clip-path: inset(0% 0% 0% 0%);
+    filter: brightness(1) saturate(1);
+    opacity: 1;
   }
 }
 
@@ -831,9 +638,9 @@ h1, h2, h3 {
   }
 
   /* Skip CRT boot animation */
-  .crt-content-burnin,
-  .crt-content-stabilizing {
+  .crt-unified-boot {
     animation: none !important;
+    clip-path: none !important;
     filter: none !important;
     opacity: 1 !important;
   }
