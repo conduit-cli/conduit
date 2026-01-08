@@ -4645,6 +4645,13 @@ impl App {
                     session.chat_view.push(display.to_chat_message());
                 }
                 AgentEvent::ToolCompleted(tool) => {
+                    tracing::info!(
+                        "ToolCompleted event: tool_id={}, success={}, result_len={}",
+                        tool.tool_id,
+                        tool.success,
+                        tool.result.as_ref().map(|r| r.len()).unwrap_or(0)
+                    );
+
                     // Return to thinking state
                     session.set_processing_state(ProcessingState::Thinking);
 

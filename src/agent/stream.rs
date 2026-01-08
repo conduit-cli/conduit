@@ -22,6 +22,9 @@ impl JsonlStreamParser {
                 continue;
             }
 
+            // Log raw JSONL lines at trace level for debugging
+            tracing::trace!("JSONL raw line: {}", &line);
+
             match serde_json::from_str::<T>(&line) {
                 Ok(event) => {
                     if tx.send(event).await.is_err() {
@@ -58,6 +61,10 @@ pub enum ClaudeRawEvent {
 
     #[serde(rename = "tool_result")]
     ToolResult(ClaudeToolResultEvent),
+
+    /// User events contain tool results from Claude Code CLI
+    #[serde(rename = "user")]
+    User(ClaudeUserEvent),
 
     #[serde(rename = "result")]
     Result(ClaudeResultEvent),
@@ -175,6 +182,89 @@ pub struct ClaudeToolResultEvent {
     pub tool_use_id: Option<String>,
     pub content: Option<String>,
     pub is_error: Option<bool>,
+}
+
+/// User event that contains tool results in Claude Code CLI output
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeUserEvent {
+    pub message: Option<ClaudeUserMessage>,
+    pub tool_use_result: Option<ClaudeToolUseResultData>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeUserMessage {
+    pub role: Option<String>,
+    pub content: Option<Vec<ClaudeUserContentBlock>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+pub enum ClaudeUserContentBlock {
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        tool_use_id: String,
+        content: serde_json::Value,
+        #[serde(default)]
+        is_error: bool,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// Additional tool result data from Claude Code CLI
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeToolUseResultData {
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub interrupted: Option<bool>,
+    #[serde(rename = "isImage")]
+    pub is_image: Option<bool>,
+}
+
+impl ClaudeUserEvent {
+    /// Extract tool results from this user event
+    pub fn extract_tool_results(&self) -> Vec<(String, String, bool)> {
+        let mut results = Vec::new();
+
+        if let Some(ref msg) = self.message {
+            if let Some(ref content) = msg.content {
+                for block in content {
+                    if let ClaudeUserContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    } = block
+                    {
+                        // Content can be a string or array of text blocks
+                        let content_str = match content {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Array(arr) => arr
+                                .iter()
+                                .filter_map(|v| {
+                                    v.get("text").and_then(|t| t.as_str()).map(String::from)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                            _ => String::new(),
+                        };
+                        results.push((tool_use_id.clone(), content_str, *is_error));
+                    }
+                }
+            }
+        }
+
+        // Also check tool_use_result for stdout/stderr
+        if results.is_empty() {
+            if let Some(ref tur) = self.tool_use_result {
+                if let Some(ref stdout) = tur.stdout {
+                    // We don't have tool_use_id from this path, so this is a fallback
+                    results.push((String::new(), stdout.clone(), false));
+                }
+            }
+        }
+
+        results
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

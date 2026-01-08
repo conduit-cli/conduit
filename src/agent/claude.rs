@@ -75,6 +75,7 @@ impl ClaudeCodeRunner {
     /// Convert Claude-specific event to unified AgentEvent(s)
     /// Returns a Vec because Assistant events can contain both text and tool_use blocks
     fn convert_event(raw: ClaudeRawEvent) -> Vec<AgentEvent> {
+        tracing::debug!("Claude raw event: {:?}", raw);
         match raw {
             ClaudeRawEvent::System(sys) => {
                 if sys.subtype.as_deref() == Some("init") {
@@ -130,8 +131,14 @@ impl ClaudeCodeRunner {
                 })]
             }
             ClaudeRawEvent::ToolResult(result) => {
-                let tool_id = result.tool_use_id.unwrap_or_default();
+                let tool_id = result.tool_use_id.clone().unwrap_or_default();
                 let is_error = result.is_error.unwrap_or(false);
+                tracing::info!(
+                    "ToolResult received: tool_id={}, is_error={}, content_len={}",
+                    tool_id,
+                    is_error,
+                    result.content.as_ref().map(|c| c.len()).unwrap_or(0)
+                );
                 vec![AgentEvent::ToolCompleted(ToolCompletedEvent {
                     tool_id,
                     success: !is_error,
@@ -157,6 +164,29 @@ impl ClaudeCodeRunner {
                     .unwrap_or_default();
 
                 vec![AgentEvent::TurnCompleted(TurnCompletedEvent { usage })]
+            }
+            ClaudeRawEvent::User(user) => {
+                // User events contain tool results from Claude Code CLI
+                let mut events = Vec::new();
+                for (tool_id, content, is_error) in user.extract_tool_results() {
+                    tracing::info!(
+                        "User event tool result: tool_id={}, is_error={}, content_len={}",
+                        tool_id,
+                        is_error,
+                        content.len()
+                    );
+                    events.push(AgentEvent::ToolCompleted(ToolCompletedEvent {
+                        tool_id,
+                        success: !is_error,
+                        result: if !is_error {
+                            Some(content.clone())
+                        } else {
+                            None
+                        },
+                        error: if is_error { Some(content) } else { None },
+                    }));
+                }
+                events
             }
             ClaudeRawEvent::Unknown => vec![],
         }
