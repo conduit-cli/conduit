@@ -308,6 +308,20 @@ impl ChatView {
             self.messages[idx].content = content;
             self.messages[idx].exit_code = exit_code;
 
+            // For Read tool on images, cache file size now (while file still exists)
+            if self.messages[idx].file_size.is_none() {
+                if let Some(ref tool_name) = self.messages[idx].tool_name {
+                    if tool_name == "Read" {
+                        if let Some(ref tool_args) = self.messages[idx].tool_args {
+                            if Self::is_image_file(tool_args) {
+                                self.messages[idx].file_size =
+                                    Self::get_file_size_from_args_as_u64(tool_args);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Invalidate cache for this message
             if self.cache_width.is_some() {
                 self.invalidate_cache_entry(idx);
@@ -981,18 +995,26 @@ impl ChatView {
         image_extensions.iter().any(|ext| args_lower.contains(ext))
     }
 
-    /// Get file size from tool_args for display
+    /// Get file size from tool_args for display (returns formatted string)
     fn get_file_size_from_args(tool_args: &str) -> String {
+        if let Some(size) = Self::get_file_size_from_args_as_u64(tool_args) {
+            Self::format_file_size(size)
+        } else {
+            "unknown size".to_string()
+        }
+    }
+
+    /// Get file size from tool_args as u64 (returns None if file doesn't exist)
+    fn get_file_size_from_args_as_u64(tool_args: &str) -> Option<u64> {
         // Try to extract file_path and get its size
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(tool_args) {
             if let Some(path) = json.get("file_path").and_then(|p| p.as_str()) {
                 if let Ok(metadata) = std::fs::metadata(path) {
-                    let size = metadata.len();
-                    return Self::format_file_size(size);
+                    return Some(metadata.len());
                 }
             }
         }
-        "unknown size".to_string()
+        None
     }
 
     /// Format file size in human-readable form
