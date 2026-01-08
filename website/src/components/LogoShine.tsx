@@ -20,9 +20,9 @@ const LOGO_LINES = [
   "  ░██████   ░███████  ░██    ░██  ░█████░██  ░█████░██ ░██    ░████",
 ]
 
-// Animation constants - matched to Rust implementation
+// Animation constants
 const BAND_WIDTH = 5
-const SPEED = 4 // diagonal units per frame
+const SPEED = 3 // diagonal units per frame (slower sweep)
 
 // Colors from theme.rs (RGB values)
 const COLORS = {
@@ -39,11 +39,11 @@ const LOGO_HEIGHT = LOGO_LINES.length
 const TOTAL_DIAGONAL = LOGO_WIDTH + LOGO_HEIGHT + BAND_WIDTH
 const SWEEP_FRAMES = Math.ceil(TOTAL_DIAGONAL / SPEED)
 
-// Timing (in ms) - matched to Rust at ~50ms per tick
+// Timing (in ms)
 const TICK_MS = 50
-const MIN_INTERVAL_TICKS = 60 // ~3 seconds
-const MAX_INTERVAL_TICKS = 100 // ~5 seconds
-const INITIAL_DELAY_TICKS = 20 // ~1 second
+const MIN_INTERVAL_TICKS = 120 // ~6 seconds between shines
+const MAX_INTERVAL_TICKS = 200 // ~10 seconds between shines
+const INITIAL_DELAY_TICKS = 5 // ~0.25 seconds - shine appears quickly on load
 
 function randomInterval(): number {
   return MIN_INTERVAL_TICKS + Math.floor(Math.random() * (MAX_INTERVAL_TICKS - MIN_INTERVAL_TICKS + 1))
