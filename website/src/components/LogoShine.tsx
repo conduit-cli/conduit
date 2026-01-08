@@ -24,13 +24,13 @@ const LOGO_LINES = [
 const BAND_WIDTH = 5
 const SPEED = 3 // diagonal units per frame (slower sweep)
 
-// Colors from theme.rs (RGB values)
+// Colors - brighter base with enhanced shine effect
 const COLORS = {
   SHINE_PEAK: [255, 255, 255] as const,
-  SHINE_CENTER: [230, 230, 245] as const,
-  SHINE_MID: [180, 180, 200] as const,
-  SHINE_EDGE: [130, 130, 150] as const,
-  TEXT_MUTED: [100, 100, 120] as const,
+  SHINE_CENTER: [240, 245, 255] as const,
+  SHINE_MID: [210, 220, 245] as const,
+  SHINE_EDGE: [170, 185, 220] as const,
+  TEXT_MUTED: [145, 160, 195] as const, // Brighter blue-gray base
 }
 
 // Calculate logo dimensions
@@ -135,12 +135,19 @@ export default function LogoShine({ className = '' }: LogoShineProps) {
     const color = getColorForDistance(distance)
     const colorStyle = rgbToStyle(color)
 
+    // Add glow effect during shine (when distance is small)
+    const isShining = distance <= BAND_WIDTH
+    const glowIntensity = isShining ? Math.max(0, 1 - distance / BAND_WIDTH) : 0
+    const glowColor = `rgba(180, 200, 255, ${glowIntensity * 0.6})`
+
     return (
       <span
         key={`${x}-${y}`}
         style={{
           color: colorStyle,
-          textShadow: `1px 0 0 ${colorStyle}, -1px 0 0 ${colorStyle}, 0 1px 0 ${colorStyle}, 0 -1px 0 ${colorStyle}`,
+          textShadow: isShining
+            ? `1px 0 0 ${colorStyle}, -1px 0 0 ${colorStyle}, 0 1px 0 ${colorStyle}, 0 -1px 0 ${colorStyle}, 0 0 ${8 + glowIntensity * 12}px ${glowColor}, 0 0 ${4 + glowIntensity * 8}px ${glowColor}`
+            : `1px 0 0 ${colorStyle}, -1px 0 0 ${colorStyle}, 0 1px 0 ${colorStyle}, 0 -1px 0 ${colorStyle}`,
         }}
       >
         {char}
