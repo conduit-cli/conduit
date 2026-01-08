@@ -315,6 +315,177 @@ h1, h2, h3 {
   animation: glow-pulse 2s ease-in-out infinite;
 }
 
+/* ============================================================================
+   CRT Ignition Phase - Full-page dot → line → square animation
+   ============================================================================ */
+
+/* Ignition overlay - covers entire viewport */
+.crt-ignition-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: var(--color-bg-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The beam element - animates from dot → line → square */
+.crt-ignition-beam {
+  position: absolute;
+  background: white;
+  border-radius: 50%;
+  box-shadow:
+    0 0 20px rgba(255, 255, 255, 1),
+    0 0 40px rgba(130, 170, 255, 0.8),
+    0 0 80px rgba(130, 170, 255, 0.6),
+    0 0 120px rgba(130, 170, 255, 0.4);
+  animation: crt-ignition-beam 1.8s ease-out forwards;
+}
+
+@keyframes crt-ignition-beam {
+  /* Start as bright dot */
+  0% {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    opacity: 0;
+    box-shadow:
+      0 0 20px rgba(255, 255, 255, 1),
+      0 0 40px rgba(130, 170, 255, 0.8),
+      0 0 80px rgba(130, 170, 255, 0.6);
+  }
+  /* Dot appears with flash */
+  5% {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    opacity: 1;
+    box-shadow:
+      0 0 30px rgba(255, 255, 255, 1),
+      0 0 60px rgba(130, 170, 255, 1),
+      0 0 100px rgba(130, 170, 255, 0.8);
+  }
+  /* Dot pulses */
+  10% {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    opacity: 0.8;
+  }
+  15% {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    opacity: 1;
+  }
+  /* Begin horizontal expansion */
+  25% {
+    width: 100px;
+    height: 6px;
+    border-radius: 3px;
+    opacity: 1;
+  }
+  35% {
+    width: 300px;
+    height: 4px;
+    border-radius: 2px;
+  }
+  /* Full horizontal line */
+  45% {
+    width: min(80vw, 900px);
+    height: 3px;
+    border-radius: 2px;
+    box-shadow:
+      0 0 20px rgba(255, 255, 255, 0.9),
+      0 0 40px rgba(130, 170, 255, 0.7),
+      0 0 80px rgba(130, 170, 255, 0.5);
+  }
+  /* Begin vertical expansion */
+  55% {
+    width: min(80vw, 900px);
+    height: 50px;
+    border-radius: 4px;
+  }
+  65% {
+    width: min(80vw, 900px);
+    height: 150px;
+    border-radius: 6px;
+  }
+  75% {
+    width: min(80vw, 900px);
+    height: 300px;
+    border-radius: 8px;
+    box-shadow:
+      0 0 15px rgba(255, 255, 255, 0.6),
+      0 0 30px rgba(130, 170, 255, 0.4),
+      0 0 60px rgba(130, 170, 255, 0.2);
+  }
+  /* Expand to approximate terminal size */
+  90% {
+    width: min(85vw, 950px);
+    height: min(70vh, 550px);
+    border-radius: 8px;
+    opacity: 0.9;
+    box-shadow:
+      0 0 10px rgba(255, 255, 255, 0.4),
+      0 0 20px rgba(130, 170, 255, 0.3);
+  }
+  /* Final state - fade slightly before transition */
+  100% {
+    width: min(85vw, 950px);
+    height: min(70vh, 550px);
+    border-radius: 8px;
+    opacity: 0.7;
+    box-shadow:
+      0 0 5px rgba(255, 255, 255, 0.2),
+      0 0 10px rgba(130, 170, 255, 0.1);
+  }
+}
+
+/* Noise overlay that appears as square forms */
+.crt-ignition-noise {
+  position: absolute;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  animation: crt-ignition-noise 1.8s ease-out forwards;
+}
+
+@keyframes crt-ignition-noise {
+  0%, 45% {
+    width: 0;
+    height: 0;
+    opacity: 0;
+  }
+  55% {
+    width: min(80vw, 900px);
+    height: 50px;
+    opacity: 0.3;
+  }
+  75% {
+    width: min(80vw, 900px);
+    height: 300px;
+    opacity: 0.25;
+  }
+  100% {
+    width: min(85vw, 950px);
+    height: min(70vh, 550px);
+    opacity: 0.2;
+  }
+}
+
+/* Hide content during ignition phase */
+.crt-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* ============================================================================
+   CRT Reveal Phase - Terminal content animation
+   ============================================================================ */
+
 /* CRT Boot Animation - Monitor power-on effect */
 @keyframes crt-boot {
   /* Start completely black */

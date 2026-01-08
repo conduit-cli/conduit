@@ -1,51 +1,77 @@
 /**
  * CRTBoot - CRT Monitor Power-On Animation
  *
- * Wraps content and reveals it with an authentic CRT turn-on effect:
- * 1. Bright dot appears at center (electron gun warming up)
- * 2. Horizontal expansion into a line
- * 3. Vertical expansion with glitch artifacts
- * 4. Stabilizes to show full content
+ * Two-phase animation:
+ * Phase 1 (Ignition): Full-page overlay with dot → line → square
+ * Phase 2 (Reveal): Terminal frame content reveal
  */
 
 import { useEffect, useState } from 'react'
 
 interface CRTBootProps {
   children: React.ReactNode
-  duration?: number // Total boot duration in ms
+  ignitionDuration?: number // Phase 1: dot → line → square (ms)
+  revealDuration?: number   // Phase 2: terminal reveal (ms)
   onComplete?: () => void
 }
 
+type Phase = 'ignition' | 'reveal' | 'complete'
+
 export default function CRTBoot({
   children,
-  duration = 1800,
+  ignitionDuration = 1800,
+  revealDuration = 1500,
   onComplete,
 }: CRTBootProps) {
-  const [phase, setPhase] = useState<'booting' | 'complete'>('booting')
+  const [phase, setPhase] = useState<Phase>('ignition')
 
   useEffect(() => {
-    const timer = setTimeout(() => {
+    // Phase 1: Ignition (dot → line → square)
+    const ignitionTimer = setTimeout(() => {
+      setPhase('reveal')
+    }, ignitionDuration)
+
+    // Phase 2: Reveal (terminal content)
+    const revealTimer = setTimeout(() => {
       setPhase('complete')
       onComplete?.()
-    }, duration)
+    }, ignitionDuration + revealDuration)
 
-    return () => clearTimeout(timer)
-  }, [duration, onComplete])
+    return () => {
+      clearTimeout(ignitionTimer)
+      clearTimeout(revealTimer)
+    }
+  }, [ignitionDuration, revealDuration, onComplete])
 
-  const isBooting = phase === 'booting'
+  const isIgnition = phase === 'ignition'
+  const isRevealing = phase === 'reveal'
+  const isBooting = isIgnition || isRevealing
 
   return (
-    <div className={`crt-boot-wrapper ${isBooting ? 'crt-booting' : ''}`}>
-      {/* Rolling scanline effect during boot */}
-      {isBooting && <div className="crt-boot-scanline" aria-hidden="true" />}
+    <>
+      {/* Phase 1: Full-page ignition overlay */}
+      {isIgnition && (
+        <div className="crt-ignition-overlay" aria-hidden="true">
+          {/* The bright dot/line/square */}
+          <div className="crt-ignition-beam" />
+          {/* Noise that appears as square forms */}
+          <div className="crt-ignition-noise" />
+        </div>
+      )}
 
-      {/* Static noise overlay during boot */}
-      {isBooting && <div className="crt-boot-noise" aria-hidden="true" />}
+      {/* Terminal content wrapper */}
+      <div className={`crt-boot-wrapper ${isRevealing ? 'crt-revealing' : ''} ${isBooting ? 'crt-booting' : ''}`}>
+        {/* Rolling scanline effect during reveal */}
+        {isRevealing && <div className="crt-boot-scanline" aria-hidden="true" />}
 
-      {/* Content with clip-path reveal animation */}
-      <div className="crt-boot-content">
-        {children}
+        {/* Static noise overlay during reveal */}
+        {isRevealing && <div className="crt-boot-noise" aria-hidden="true" />}
+
+        {/* Content - hidden during ignition, revealed during reveal phase */}
+        <div className={`crt-boot-content ${isIgnition ? 'crt-hidden' : ''}`}>
+          {children}
+        </div>
       </div>
-    </div>
+    </>
   )
 }

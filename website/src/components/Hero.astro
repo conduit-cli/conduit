@@ -10,7 +10,7 @@ import CRTBoot from './CRTBoot.tsx'
   </div>
 
   <!-- Terminal Window with CRT Boot Animation -->
-  <CRTBoot client:load duration={2500}>
+  <CRTBoot client:load ignitionDuration={1800} revealDuration={1200}>
     <div class="terminal-frame w-full max-w-5xl mx-auto relative z-10">
       <!-- Window Chrome -->
       <div class="terminal-buttons">
