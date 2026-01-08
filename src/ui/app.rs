@@ -4671,13 +4671,8 @@ impl App {
                     } else {
                         format!("Error: {}", tool.error.unwrap_or_default())
                     };
-                    let display = MessageDisplay::Tool {
-                        name: MessageDisplay::tool_display_name_owned(&tool.tool_id),
-                        args: String::new(),
-                        output,
-                        exit_code: None,
-                    };
-                    session.chat_view.push(display.to_chat_message());
+                    // Update the existing "Running..." message instead of pushing a new one
+                    session.chat_view.update_last_tool(output, None);
                 }
                 AgentEvent::CommandOutput(cmd) => {
                     // Check for PR URL in command output (e.g., from gh pr create)
@@ -4687,13 +4682,10 @@ impl App {
                         }
                     }
 
-                    let display = MessageDisplay::Tool {
-                        name: "Bash".to_string(),
-                        args: cmd.command.clone(),
-                        output: cmd.output.clone(),
-                        exit_code: cmd.exit_code,
-                    };
-                    session.chat_view.push(display.to_chat_message());
+                    // Update the existing "Running..." message instead of pushing a new one
+                    session
+                        .chat_view
+                        .update_last_tool(cmd.output.clone(), cmd.exit_code);
                 }
                 AgentEvent::Error(err) => {
                     let display = MessageDisplay::Error {

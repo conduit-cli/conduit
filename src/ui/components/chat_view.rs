@@ -296,6 +296,29 @@ impl ChatView {
         // When scroll_offset > 0, user has scrolled up - preserve their position
     }
 
+    /// Update the last tool message with new content and exit code.
+    /// Returns true if update was successful, false if no matching tool message was found.
+    pub fn update_last_tool(&mut self, content: String, exit_code: Option<i32>) -> bool {
+        // Find the last tool message
+        if let Some(idx) = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == MessageRole::Tool)
+        {
+            self.messages[idx].content = content;
+            self.messages[idx].exit_code = exit_code;
+
+            // Invalidate cache for this message
+            if self.cache_width.is_some() {
+                self.invalidate_cache_entry(idx);
+                self.update_cache_entry(idx, self.cache_width.unwrap());
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Start or append to streaming message
     pub fn stream_append(&mut self, text: &str) {
         match &mut self.streaming_buffer {
