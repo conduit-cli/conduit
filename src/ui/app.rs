@@ -1201,14 +1201,7 @@ impl App {
                 }
             }
             Action::CopySelection => {
-                let mut copied_text = None;
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    if session.input_box.has_selection() {
-                        copied_text = session.input_box.selected_text();
-                    } else if session.chat_view.has_selection() {
-                        copied_text = session.chat_view.copy_selection();
-                    }
-                }
+                let copied_text = self.current_selection_text();
 
                 if let Some(text) = copied_text {
                     effects.push(Effect::CopyToClipboard(text));
@@ -3637,10 +3630,7 @@ impl App {
             };
 
             if has_selection && Self::AUTO_COPY_SELECTION {
-                copied_text = match target {
-                    SelectionDragTarget::Input => session.input_box.selected_text(),
-                    SelectionDragTarget::Chat => session.chat_view.copy_selection(),
-                };
+                copied_text = Self::selection_text_for_target(session, target);
             }
         }
 
@@ -3652,6 +3642,27 @@ impl App {
         }
 
         Some(effects)
+    }
+
+    fn selection_text_for_target(
+        session: &mut AgentSession,
+        target: SelectionDragTarget,
+    ) -> Option<String> {
+        match target {
+            SelectionDragTarget::Input => session.input_box.selected_text(),
+            SelectionDragTarget::Chat => session.chat_view.copy_selection(),
+        }
+    }
+
+    fn current_selection_text(&mut self) -> Option<String> {
+        let session = self.state.tab_manager.active_session_mut()?;
+        if session.input_box.has_selection() {
+            return Self::selection_text_for_target(session, SelectionDragTarget::Input);
+        }
+        if session.chat_view.has_selection() {
+            return Self::selection_text_for_target(session, SelectionDragTarget::Chat);
+        }
+        None
     }
 
     fn scrollbar_target_at(&mut self, x: u16, y: u16) -> Option<ScrollDragTarget> {

@@ -4,7 +4,7 @@ use ratatui::{
     text::{Line, Span, Text},
 };
 
-use super::theme::MARKDOWN_CODE_BG;
+use super::theme::{MARKDOWN_CODE_BG, MARKDOWN_INLINE_CODE_BG};
 
 /// Custom markdown renderer with table support
 pub struct MarkdownRenderer {
@@ -226,7 +226,7 @@ impl MarkdownRenderer {
                             format!("`{}`", code),
                             Style::default()
                                 .fg(Color::Yellow)
-                                .bg(Color::Rgb(40, 40, 40)),
+                                .bg(MARKDOWN_INLINE_CODE_BG),
                         ));
                     }
                 }

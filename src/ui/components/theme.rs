@@ -21,6 +21,8 @@ pub const BG_ELEVATED: Color = Color::Rgb(40, 40, 52);
 pub const BG_HIGHLIGHT: Color = Color::Rgb(50, 55, 70);
 /// Markdown code block background.
 pub const MARKDOWN_CODE_BG: Color = Color::Rgb(30, 30, 30);
+/// Markdown inline code background.
+pub const MARKDOWN_INLINE_CODE_BG: Color = Color::Rgb(40, 40, 40);
 
 // =============================================================================
 // Text Hierarchy

@@ -2121,6 +2121,17 @@ impl Default for ChatView {
 mod tests {
     use super::*;
 
+    fn line(text: &str) -> Line<'static> {
+        Line::from(Span::raw(text.to_string()))
+    }
+
+    fn code_line(text: &str) -> Line<'static> {
+        Line::from(Span::styled(
+            text.to_string(),
+            Style::default().bg(MARKDOWN_CODE_BG),
+        ))
+    }
+
     #[test]
     fn test_push_scrolls_to_bottom_when_already_at_bottom() {
         let mut view = ChatView::new();
@@ -2333,5 +2344,74 @@ mod tests {
         view.push(tool_msg);
 
         assert_eq!(view.messages[0].exit_code, Some(0));
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_wraps_code_blocks() {
+        let lines = vec![
+            line("before"),
+            code_line("code1"),
+            code_line("code2"),
+            line("after"),
+        ];
+        let joiners = vec![None, None, None, None];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 0,
+        };
+        let end = SelectionPoint {
+            line_index: 3,
+            column: 10,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "before\n```\ncode1\ncode2\n```\nafter");
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_uses_joiner_whitespace() {
+        let lines = vec![line("hello"), line("world")];
+        let joiners = vec![None, Some(" ".to_string())];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 0,
+        };
+        let end = SelectionPoint {
+            line_index: 1,
+            column: 10,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_uses_empty_joiner_for_mid_word_wrap() {
+        let lines = vec![line("hello"), line("world")];
+        let joiners = vec![None, Some(String::new())];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 0,
+        };
+        let end = SelectionPoint {
+            line_index: 1,
+            column: 10,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "helloworld");
+    }
+
+    #[test]
+    fn test_selection_to_copy_text_preserves_empty_lines() {
+        let lines = vec![line("first"), line(""), line("third")];
+        let joiners = vec![None, None, None];
+        let start = SelectionPoint {
+            line_index: 0,
+            column: 0,
+        };
+        let end = SelectionPoint {
+            line_index: 2,
+            column: 10,
+        };
+        let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
+        assert_eq!(out, "first\n\nthird");
     }
 }
