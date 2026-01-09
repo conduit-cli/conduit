@@ -49,6 +49,20 @@ pub fn default_keybindings() -> KeybindingConfig {
     // Close tab with Alt+Shift+W (Ctrl+Shift doesn't work reliably in terminals)
     bind(&mut config.global, "M-S-w", Action::CloseTab);
 
+    // Tab/workspace switching with Alt+Tab and Alt+Shift+Tab
+    config.global.insert(
+        KeyCombo::new(KeyCode::Tab, KeyModifiers::ALT),
+        Action::NextTab,
+    );
+    config.global.insert(
+        KeyCombo::new(KeyCode::BackTab, KeyModifiers::ALT),
+        Action::PrevTab,
+    );
+    config.global.insert(
+        KeyCombo::new(KeyCode::BackTab, KeyModifiers::ALT | KeyModifiers::SHIFT),
+        Action::PrevTab,
+    );
+
     // Alt key shortcuts
     bind(&mut config.global, "M-b", Action::MoveWordLeft);
     bind(&mut config.global, "M-f", Action::MoveWordRight);
@@ -157,19 +171,19 @@ pub fn default_keybindings() -> KeybindingConfig {
         Action::ScrollToBottom,
     );
 
-    // Tab cycling
+    // Tab toggles Plan/Build mode
     chat.insert(
         KeyCombo::new(KeyCode::Tab, KeyModifiers::NONE),
-        Action::NextTab,
+        Action::ToggleAgentMode,
     );
-    // BackTab (Shift+Tab) - some terminals send SHIFT modifier, some don't
+    // BackTab (Shift+Tab) also toggles Plan/Build mode - some terminals send SHIFT modifier, some don't
     chat.insert(
         KeyCombo::new(KeyCode::BackTab, KeyModifiers::NONE),
-        Action::PrevTab,
+        Action::ToggleAgentMode,
     );
     chat.insert(
         KeyCombo::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-        Action::PrevTab,
+        Action::ToggleAgentMode,
     );
 
     // ========== Scrolling Mode ==========
@@ -241,18 +255,19 @@ pub fn default_keybindings() -> KeybindingConfig {
         KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE),
         Action::ExitSidebarMode,
     );
+    // Tab toggles Plan/Build mode (Alt+Tab for workspace switching)
     sidebar.insert(
         KeyCombo::new(KeyCode::Tab, KeyModifiers::NONE),
-        Action::NextTab,
+        Action::ToggleAgentMode,
     );
-    // BackTab (Shift+Tab) - some terminals send SHIFT modifier, some don't
+    // BackTab (Shift+Tab) also toggles Plan/Build mode - some terminals send SHIFT modifier, some don't
     sidebar.insert(
         KeyCombo::new(KeyCode::BackTab, KeyModifiers::NONE),
-        Action::PrevTab,
+        Action::ToggleAgentMode,
     );
     sidebar.insert(
         KeyCombo::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-        Action::PrevTab,
+        Action::ToggleAgentMode,
     );
     bind(sidebar, "r", Action::AddRepository);
     bind(sidebar, "s", Action::OpenSettings);
