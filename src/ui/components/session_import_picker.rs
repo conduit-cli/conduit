@@ -399,9 +399,9 @@ impl SessionImportPicker {
             format!("Search: {}", state.list.search.value())
         };
         let search_style = if state.list.search.is_empty() {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(text_muted())
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(text_primary())
         };
         let search_label = Paragraph::new(search_display).style(search_style);
         search_label.render(chunks[1], buf);

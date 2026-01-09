@@ -43,29 +43,29 @@ struct PendingPreview {
 #[derive(Debug, Clone)]
 pub struct ThemePickerState {
     /// Whether the dialog is visible
-    pub visible: bool,
+    visible: bool,
     /// All items (headers + themes)
-    pub items: Vec<ThemePickerItem>,
+    items: Vec<ThemePickerItem>,
     /// Indices of selectable items (themes only)
-    pub selectable_indices: Vec<usize>,
+    selectable_indices: Vec<usize>,
     /// Currently selected index (among selectable items)
-    pub selected: usize,
+    selected: usize,
     /// Search input
-    pub search: String,
+    search: String,
     /// Cursor position in search
     search_cursor: usize,
     /// Filtered selectable indices
-    pub filtered: Vec<usize>,
+    filtered: Vec<usize>,
     /// Scroll offset for the list
-    pub scroll_offset: usize,
+    scroll_offset: usize,
     /// Maximum visible items
-    pub max_visible: usize,
+    max_visible: usize,
     /// Theme name when dialog was opened (for cancel/restore)
-    pub original_theme_name: Option<String>,
+    original_theme_name: Option<String>,
     /// Theme path when dialog was opened (for cancel/restore)
-    pub original_theme_path: Option<PathBuf>,
+    original_theme_path: Option<PathBuf>,
     /// Currently previewing theme name
-    pub preview_theme: Option<String>,
+    preview_theme: Option<String>,
     /// Pending preview request (debounced)
     pending_preview: Option<PendingPreview>,
     /// Last preview error (for footer message)
@@ -196,38 +196,55 @@ impl ThemePickerState {
         let mut seen_vscode: HashSet<String> = HashSet::new();
         let mut seen_custom: HashSet<String> = HashSet::new();
 
-        let normalize_key = |name: &str| name.trim().to_lowercase();
+        let dedupe_key = |theme: &ThemeInfo| -> String {
+            match &theme.source {
+                ThemeSource::Builtin => format!("builtin:{}", theme.name.trim().to_lowercase()),
+                ThemeSource::VsCodeExtension { path } => format!(
+                    "vscode:{}:{}",
+                    path.display(),
+                    theme.name.trim().to_lowercase()
+                ),
+                ThemeSource::CustomPath { path } => format!(
+                    "custom:{}:{}",
+                    path.display(),
+                    theme.name.trim().to_lowercase()
+                ),
+            }
+        };
 
         for theme in &themes {
             match &theme.source {
                 ThemeSource::Builtin => {
-                    let key = normalize_key(&theme.display_name);
-                    if seen_builtin.insert(key) {
+                    let key = dedupe_key(theme);
+                    if seen_builtin.insert(key.clone()) {
                         builtin.push(theme);
                     } else {
                         tracing::debug!(
+                            key = %key,
                             display = %theme.display_name,
                             "Skipping duplicate built-in theme"
                         );
                     }
                 }
                 ThemeSource::VsCodeExtension { .. } => {
-                    let key = normalize_key(&theme.display_name);
-                    if seen_vscode.insert(key) {
+                    let key = dedupe_key(theme);
+                    if seen_vscode.insert(key.clone()) {
                         vscode.push(theme);
                     } else {
                         tracing::debug!(
+                            key = %key,
                             display = %theme.display_name,
                             "Skipping duplicate VS Code theme"
                         );
                     }
                 }
                 ThemeSource::CustomPath { .. } => {
-                    let key = normalize_key(&theme.display_name);
-                    if seen_custom.insert(key) {
+                    let key = dedupe_key(theme);
+                    if seen_custom.insert(key.clone()) {
                         custom.push(theme);
                     } else {
                         tracing::debug!(
+                            key = %key,
                             display = %theme.display_name,
                             "Skipping duplicate custom theme"
                         );
@@ -515,6 +532,16 @@ impl ThemePickerState {
                 .map(|(i, _)| self.search_cursor + i)
                 .unwrap_or(self.search.len());
         }
+    }
+
+    /// Move cursor to start
+    pub fn move_to_start(&mut self) {
+        self.search_cursor = 0;
+    }
+
+    /// Move cursor to end
+    pub fn move_to_end(&mut self) {
+        self.search_cursor = self.search.len();
     }
 
     /// Update filtered list based on search

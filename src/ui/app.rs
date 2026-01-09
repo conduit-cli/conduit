@@ -1436,22 +1436,30 @@ impl App {
                 }
             }
             Action::MoveCursorLeft => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if self.state.input_mode == InputMode::SelectingTheme {
+                    self.state.theme_picker_state.move_left();
+                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_left();
                 }
             }
             Action::MoveCursorRight => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if self.state.input_mode == InputMode::SelectingTheme {
+                    self.state.theme_picker_state.move_right();
+                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_right();
                 }
             }
             Action::MoveCursorStart => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if self.state.input_mode == InputMode::SelectingTheme {
+                    self.state.theme_picker_state.move_to_start();
+                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_start();
                 }
             }
             Action::MoveCursorEnd => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if self.state.input_mode == InputMode::SelectingTheme {
+                    self.state.theme_picker_state.move_to_end();
+                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_end();
                 }
             }
@@ -1623,6 +1631,8 @@ impl App {
                 }
                 InputMode::SelectingTheme => {
                     let selected_theme = self.state.theme_picker_state.selected_theme().cloned();
+                    let previous_theme_name = self.config.theme_name.clone();
+                    let previous_theme_path = self.config.theme_path.clone();
                     let confirmed = self.state.theme_picker_state.confirm();
                     if let Some(error) = self.state.theme_picker_state.take_error() {
                         self.state
@@ -1630,8 +1640,7 @@ impl App {
                         return Ok(Vec::new());
                     }
 
-                    if let Some(theme_name) = confirmed {
-                        let mut save_ok = true;
+                    if confirmed.is_some() {
                         if let Some(theme) = selected_theme {
                             let (name, path) = match &theme.source {
                                 crate::ui::components::ThemeSource::CustomPath { path } => {
@@ -1639,26 +1648,27 @@ impl App {
                                 }
                                 _ => (Some(theme.name.clone()), None),
                             };
+                            let display_name = theme.display_name.clone();
                             if let Err(err) =
                                 crate::config::save_theme_config(name.as_deref(), path.as_deref())
                             {
-                                save_ok = false;
+                                self.config.theme_name = previous_theme_name;
+                                self.config.theme_path = previous_theme_path;
+                                self.state.theme_picker_state.hide(true); // Restore original theme
+                                self.state.input_mode = InputMode::Normal;
                                 self.state.set_timed_footer_message(
                                     format!("Failed to save theme: {err}"),
                                     Duration::from_secs(5),
                                 );
-                            } else {
-                                self.config.theme_name = name;
-                                self.config.theme_path = path;
+                                return Ok(Vec::new());
                             }
+                            self.config.theme_name = name;
+                            self.config.theme_path = path;
+                            self.state.set_timed_footer_message(
+                                format!("Theme: {}", display_name),
+                                Duration::from_secs(3),
+                            );
                         }
-                        if !save_ok {
-                            return Ok(Vec::new());
-                        }
-                        self.state.set_timed_footer_message(
-                            format!("Theme: {}", theme_name),
-                            Duration::from_secs(3),
-                        );
                     }
                     self.state.theme_picker_state.hide(false); // Not cancelled
                     self.state.input_mode = InputMode::Normal;

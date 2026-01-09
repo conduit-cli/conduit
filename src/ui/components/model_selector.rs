@@ -225,6 +225,8 @@ impl ModelSelector {
         }
 
         let selected_item_idx = state.selected_item_index();
+        let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 3.0);
+        let selected_fg_color = ensure_contrast_fg(text_primary(), selected_bg_color, 4.5);
 
         // Render items
         let mut y = inner.y;
@@ -266,10 +268,6 @@ impl ModelSelector {
                         .as_ref()
                         .map(|id| id == &model.id)
                         .unwrap_or(false);
-
-                    let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 3.0);
-                    let selected_fg_color =
-                        ensure_contrast_fg(text_primary(), selected_bg_color, 4.5);
 
                     // Build the line
                     let icon = ModelRegistry::agent_icon(model.agent_type);

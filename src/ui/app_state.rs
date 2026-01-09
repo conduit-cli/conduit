@@ -351,7 +351,7 @@ mod tests {
         state.project_picker_state.visible = true;
         state.session_import_state.visible = true;
         state.model_selector_state.visible = true;
-        state.theme_picker_state.visible = true;
+        state.theme_picker_state.show(None);
         state.agent_selector_state.visible = true;
         state.confirmation_dialog_state.visible = true;
         state.error_dialog_state.visible = true;
@@ -365,7 +365,7 @@ mod tests {
         assert!(!state.project_picker_state.visible);
         assert!(!state.session_import_state.visible);
         assert!(!state.model_selector_state.visible);
-        assert!(!state.theme_picker_state.visible);
+        assert!(!state.theme_picker_state.is_visible());
         assert!(!state.agent_selector_state.visible);
         assert!(!state.confirmation_dialog_state.visible);
         assert!(!state.error_dialog_state.visible);
