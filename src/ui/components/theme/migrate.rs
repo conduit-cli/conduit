@@ -89,14 +89,8 @@ fn generate_toml(
     let mut output = String::new();
 
     // Header comment
-    output.push_str(&format!(
-        "# Conduit Theme: {}\n",
-        name.replace('\n', " ")
-    ));
-    output.push_str(&format!(
-        "# Migrated from: {}\n",
-        source_path.display()
-    ));
+    output.push_str(&format!("# Conduit Theme: {}\n", name.replace('\n', " ")));
+    output.push_str(&format!("# Migrated from: {}\n", source_path.display()));
     output.push_str("#\n");
     output.push_str("# This theme was auto-generated from a VSCode theme.\n");
     output.push_str("# You can customize it by editing the values below.\n");
@@ -140,11 +134,23 @@ fn generate_toml(
 
     // Background section
     output.push_str("[background]\n");
-    output.push_str(&format!("terminal = \"{}\"\n", color_value(theme.bg_terminal)));
+    output.push_str(&format!(
+        "terminal = \"{}\"\n",
+        color_value(theme.bg_terminal)
+    ));
     output.push_str(&format!("base = \"{}\"\n", color_value(theme.bg_base)));
-    output.push_str(&format!("surface = \"{}\"\n", color_value(theme.bg_surface)));
-    output.push_str(&format!("elevated = \"{}\"\n", color_value(theme.bg_elevated)));
-    output.push_str(&format!("highlight = \"{}\"\n", color_value(theme.bg_highlight)));
+    output.push_str(&format!(
+        "surface = \"{}\"\n",
+        color_value(theme.bg_surface)
+    ));
+    output.push_str(&format!(
+        "elevated = \"{}\"\n",
+        color_value(theme.bg_elevated)
+    ));
+    output.push_str(&format!(
+        "highlight = \"{}\"\n",
+        color_value(theme.bg_highlight)
+    ));
     output.push_str(&format!(
         "markdown_code = \"{}\"\n",
         color_value(theme.markdown_code_bg)
@@ -157,8 +163,14 @@ fn generate_toml(
 
     // Text section
     output.push_str("[text]\n");
-    output.push_str(&format!("bright = \"{}\"\n", color_value(theme.text_bright)));
-    output.push_str(&format!("primary = \"{}\"\n", color_value(theme.text_primary)));
+    output.push_str(&format!(
+        "bright = \"{}\"\n",
+        color_value(theme.text_bright)
+    ));
+    output.push_str(&format!(
+        "primary = \"{}\"\n",
+        color_value(theme.text_primary)
+    ));
     output.push_str(&format!(
         "secondary = \"{}\"\n",
         color_value(theme.text_secondary)
@@ -185,22 +197,37 @@ fn generate_toml(
         "warning = \"{}\"\n",
         color_value(theme.accent_warning)
     ));
-    output.push_str(&format!("error = \"{}\"\n", color_value(theme.accent_error)));
+    output.push_str(&format!(
+        "error = \"{}\"\n",
+        color_value(theme.accent_error)
+    ));
     output.push('\n');
 
     // Agent section
     output.push_str("[agent]\n");
-    output.push_str(&format!("claude = \"{}\"\n", color_value(theme.agent_claude)));
+    output.push_str(&format!(
+        "claude = \"{}\"\n",
+        color_value(theme.agent_claude)
+    ));
     output.push_str(&format!("codex = \"{}\"\n", color_value(theme.agent_codex)));
     output.push('\n');
 
     // PR section
     output.push_str("[pr]\n");
     output.push_str(&format!("open = \"{}\"\n", color_value(theme.pr_open_bg)));
-    output.push_str(&format!("merged = \"{}\"\n", color_value(theme.pr_merged_bg)));
-    output.push_str(&format!("closed = \"{}\"\n", color_value(theme.pr_closed_bg)));
+    output.push_str(&format!(
+        "merged = \"{}\"\n",
+        color_value(theme.pr_merged_bg)
+    ));
+    output.push_str(&format!(
+        "closed = \"{}\"\n",
+        color_value(theme.pr_closed_bg)
+    ));
     output.push_str(&format!("draft = \"{}\"\n", color_value(theme.pr_draft_bg)));
-    output.push_str(&format!("unknown = \"{}\"\n", color_value(theme.pr_unknown_bg)));
+    output.push_str(&format!(
+        "unknown = \"{}\"\n",
+        color_value(theme.pr_unknown_bg)
+    ));
     output.push('\n');
 
     // Spinner section
@@ -255,7 +282,10 @@ fn generate_toml(
     output.push_str("[shine]\n");
     output.push_str(&format!("edge = \"{}\"\n", color_value(theme.shine_edge)));
     output.push_str(&format!("mid = \"{}\"\n", color_value(theme.shine_mid)));
-    output.push_str(&format!("center = \"{}\"\n", color_value(theme.shine_center)));
+    output.push_str(&format!(
+        "center = \"{}\"\n",
+        color_value(theme.shine_center)
+    ));
     output.push_str(&format!("peak = \"{}\"\n", color_value(theme.shine_peak)));
     output.push('\n');
 
@@ -273,7 +303,10 @@ fn generate_toml(
         "command = \"{}\"\n",
         color_value(theme.tool_command)
     ));
-    output.push_str(&format!("output = \"{}\"\n", color_value(theme.tool_output)));
+    output.push_str(&format!(
+        "output = \"{}\"\n",
+        color_value(theme.tool_output)
+    ));
     output.push_str(&format!("diff_add = \"{}\"\n", color_value(theme.diff_add)));
     output.push_str(&format!(
         "diff_remove = \"{}\"\n",
