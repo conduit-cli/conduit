@@ -575,6 +575,13 @@ pub struct ThemePicker<'a> {
     state: &'a ThemePickerState,
 }
 
+struct RenderListContext {
+    area: Rect,
+    line_width: u16,
+    selected_bg: Color,
+    selected_fg: Color,
+}
+
 impl<'a> ThemePicker<'a> {
     pub fn new(state: &'a ThemePickerState) -> Self {
         Self { state }
@@ -660,18 +667,15 @@ impl ThemePicker<'_> {
     fn render_list_item(
         &self,
         buf: &mut Buffer,
-        area: Rect,
         y: u16,
-        line_width: u16,
         text: &str,
         is_header: bool,
         is_selected: bool,
-        selected_bg: Color,
-        selected_fg: Color,
+        ctx: &RenderListContext,
     ) {
         if is_selected {
-            let fill_style = Style::default().bg(selected_bg);
-            for x in area.x..area.x.saturating_add(line_width) {
+            let fill_style = Style::default().bg(ctx.selected_bg);
+            for x in ctx.area.x..ctx.area.x.saturating_add(ctx.line_width) {
                 buf[(x, y)].set_style(fill_style);
             }
         }
@@ -681,7 +685,7 @@ impl ThemePicker<'_> {
                 .fg(text_secondary())
                 .add_modifier(Modifier::BOLD)
         } else if is_selected {
-            Style::default().fg(selected_fg).bg(selected_bg)
+            Style::default().fg(ctx.selected_fg).bg(ctx.selected_bg)
         } else {
             Style::default().fg(text_primary())
         };
@@ -689,9 +693,9 @@ impl ThemePicker<'_> {
         let line = Line::from(Span::styled(text, style));
         Paragraph::new(line).render(
             Rect {
-                x: area.x,
+                x: ctx.area.x,
                 y,
-                width: line_width,
+                width: ctx.line_width,
                 height: 1,
             },
             buf,
@@ -768,29 +772,20 @@ impl ThemePicker<'_> {
             .min(total_items.saturating_sub(list_height));
 
         // Render visible items
-        let line_width = area.width.saturating_sub(1); // Leave room for scrollbar
-        let mut y = area.y;
-        let mut rendered = 0;
-        for (_idx, (is_header, text, is_selected, _is_current)) in
-            render_items.iter().enumerate().skip(scroll)
+        let ctx = RenderListContext {
+            area,
+            line_width: area.width.saturating_sub(1), // Leave room for scrollbar
+            selected_bg,
+            selected_fg,
+        };
+        for (rendered, (_idx, (is_header, text, is_selected, _is_current))) in
+            render_items.iter().enumerate().skip(scroll).enumerate()
         {
             if rendered >= list_height {
                 break;
             }
-            self.render_list_item(
-                buf,
-                area,
-                y,
-                line_width,
-                text,
-                *is_header,
-                *is_selected,
-                selected_bg,
-                selected_fg,
-            );
-
-            y += 1;
-            rendered += 1;
+            let y = area.y + rendered as u16;
+            self.render_list_item(buf, y, text, *is_header, *is_selected, &ctx);
         }
 
         // Render scrollbar if needed
