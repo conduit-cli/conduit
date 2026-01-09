@@ -254,7 +254,9 @@ fn run_blocking_tool_dialog(tool: Tool, _tools: &ToolAvailability) -> Result<Opt
 
 /// Run the theme migration command
 fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool) -> Result<()> {
-    use conduit::ui::components::theme::migrate::{migrate_vscode_theme, write_theme_file, MigrateOptions};
+    use conduit::ui::components::theme::migrate::{
+        migrate_vscode_theme, write_theme_file, MigrateOptions,
+    };
 
     // Check input file exists
     if !input.exists() {
@@ -282,7 +284,13 @@ fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool)
         let sanitized_name: String = result
             .name
             .chars()
-            .map(|c: char| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .map(|c: char| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>()
             .to_lowercase();
         themes_dir.join(format!("{}.toml", sanitized_name))
@@ -299,7 +307,13 @@ fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool)
     println!();
     println!("To use this theme, add to your ~/.conduit/config.toml:");
     println!("  [theme]");
-    println!("  name = \"{}\"", output_path.file_stem().unwrap_or_default().to_string_lossy());
+    println!(
+        "  name = \"{}\"",
+        output_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+    );
 
     Ok(())
 }
