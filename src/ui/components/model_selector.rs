@@ -267,7 +267,7 @@ impl ModelSelector {
                         .map(|id| id == &model.id)
                         .unwrap_or(false);
 
-                    let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+                    let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 3.0);
                     let selected_fg_color =
                         ensure_contrast_fg(text_primary(), selected_bg_color, 4.5);
 

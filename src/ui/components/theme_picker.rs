@@ -5,7 +5,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -141,30 +141,7 @@ impl ThemePickerState {
     /// Hide the dialog and restore original theme if cancelled
     pub fn hide(&mut self, cancelled: bool) {
         if cancelled {
-            let mut restored = false;
-            if let Some(path) = self.original_theme_path.as_ref() {
-                if !crate::ui::components::load_theme_from_path(path) {
-                    tracing::warn!(
-                        path = %path.display(),
-                        "Failed to restore original theme after cancel"
-                    );
-                } else {
-                    restored = true;
-                }
-            }
-            if !restored {
-                if let Some(name) = self.original_theme_name.as_ref() {
-                    if !load_theme_by_name(name) {
-                        tracing::warn!(
-                            theme = %name,
-                            "Failed to restore original theme after cancel"
-                        );
-                        self.last_error = Some(format!("Failed to restore theme: {name}"));
-                    }
-                } else {
-                    self.last_error = Some("Failed to restore theme".to_string());
-                }
-            }
+            self.restore_original_theme();
         }
         self.visible = false;
         self.preview_theme = None;
@@ -177,6 +154,33 @@ impl ThemePickerState {
     /// Check if visible
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    fn restore_original_theme(&mut self) -> bool {
+        if let Some(path) = self.original_theme_path.as_ref() {
+            if load_theme_from_path(path) {
+                return true;
+            }
+            tracing::warn!(
+                path = %path.display(),
+                "Failed to restore original theme from path"
+            );
+        }
+
+        if let Some(name) = self.original_theme_name.as_ref() {
+            if load_theme_by_name(name) {
+                return true;
+            }
+            tracing::warn!(
+                theme = %name,
+                "Failed to restore original theme by name"
+            );
+            self.last_error = Some(format!("Failed to restore theme: {name}"));
+        } else {
+            self.last_error = Some("Failed to restore theme".to_string());
+        }
+
+        false
     }
 
     /// Build the list of items grouped by source
@@ -515,6 +519,7 @@ impl ThemePickerState {
 
     /// Update filtered list based on search
     fn update_filter(&mut self) {
+        let previous_key = self.selected_theme().map(Self::theme_key);
         let query = self.search.to_lowercase();
         if query.is_empty() {
             self.filtered = self.selectable_indices.clone();
@@ -534,9 +539,21 @@ impl ThemePickerState {
                 .collect();
         }
 
-        // Reset selection
+        // Preserve selection when possible
         self.selected = 0;
+        if let Some(key) = previous_key {
+            if let Some((idx, _)) = self.filtered.iter().enumerate().find(|(_, &item_idx)| {
+                if let ThemePickerItem::Theme(info) = &self.items[item_idx] {
+                    Self::theme_key(info) == key
+                } else {
+                    false
+                }
+            }) {
+                self.selected = idx;
+            }
+        }
         self.scroll_offset = 0;
+        self.ensure_visible();
 
         // Apply preview for new selection
         self.queue_preview();
@@ -611,6 +628,76 @@ impl Widget for ThemePicker<'_> {
 }
 
 impl ThemePicker<'_> {
+    fn build_render_items(&self, current_theme: &str) -> Vec<(bool, String, bool, bool)> {
+        let mut render_items = Vec::new();
+        let mut seen_headers: HashSet<String> = HashSet::new();
+
+        for (filter_idx, &item_idx) in self.state.filtered.iter().enumerate() {
+            if let ThemePickerItem::Theme(ref info) = self.state.items[item_idx] {
+                for i in (0..item_idx).rev() {
+                    if let ThemePickerItem::SectionHeader(ref header) = self.state.items[i] {
+                        if seen_headers.insert(header.clone()) {
+                            render_items.push((true, header.clone(), false, false));
+                        }
+                        break;
+                    }
+                }
+
+                let is_selected = filter_idx == self.state.selected;
+                let is_current = theme_matches_current(current_theme, info);
+                let display = if is_current {
+                    format!("\u{2713} {}", info.display_name)
+                } else {
+                    format!("  {}", info.display_name)
+                };
+                render_items.push((false, display, is_selected, is_current));
+            }
+        }
+
+        render_items
+    }
+
+    fn render_list_item(
+        &self,
+        buf: &mut Buffer,
+        area: Rect,
+        y: u16,
+        line_width: u16,
+        text: &str,
+        is_header: bool,
+        is_selected: bool,
+        selected_bg: Color,
+        selected_fg: Color,
+    ) {
+        if is_selected {
+            let fill_style = Style::default().bg(selected_bg);
+            for x in area.x..area.x.saturating_add(line_width) {
+                buf[(x, y)].set_style(fill_style);
+            }
+        }
+
+        let style = if is_header {
+            Style::default()
+                .fg(text_secondary())
+                .add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::default().fg(selected_fg).bg(selected_bg)
+        } else {
+            Style::default().fg(text_primary())
+        };
+
+        let line = Line::from(Span::styled(text, style));
+        Paragraph::new(line).render(
+            Rect {
+                x: area.x,
+                y,
+                width: line_width,
+                height: 1,
+            },
+            buf,
+        );
+    }
+
     fn render_search(&self, area: Rect, buf: &mut Buffer) {
         let prompt = "> ";
         let input = &self.state.search;
@@ -671,42 +758,7 @@ impl ThemePicker<'_> {
         let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
         let list_height = area.height as usize;
 
-        // Build visible items with section context
-        let mut y = area.y;
-        let mut rendered = 0;
-
-        // We need to show items with their section headers
-        // First, build a flat list of what to render
-        let mut render_items: Vec<(bool, String, bool, bool)> = Vec::new(); // (is_header, text, is_selected, is_current)
-
-        for (filter_idx, &item_idx) in self.state.filtered.iter().enumerate() {
-            // Check if we need to show a section header before this item
-            if let ThemePickerItem::Theme(ref info) = self.state.items[item_idx] {
-                // Find the section header for this theme
-                for i in (0..item_idx).rev() {
-                    if let ThemePickerItem::SectionHeader(ref header) = self.state.items[i] {
-                        // Check if this header was already added
-                        let header_text = header.clone();
-                        let already_added = render_items
-                            .iter()
-                            .any(|(is_h, text, _, _)| *is_h && text == &header_text);
-                        if !already_added {
-                            render_items.push((true, header_text, false, false));
-                        }
-                        break;
-                    }
-                }
-
-                let is_selected = filter_idx == self.state.selected;
-                let is_current = theme_matches_current(&current_theme, info);
-                let display = if is_current {
-                    format!("\u{2713} {}", info.display_name)
-                } else {
-                    format!("  {}", info.display_name)
-                };
-                render_items.push((false, display, is_selected, is_current));
-            }
-        }
+        let render_items = self.build_render_items(&current_theme);
 
         // Calculate scroll offset considering headers
         let total_items = render_items.len();
@@ -717,40 +769,24 @@ impl ThemePicker<'_> {
 
         // Render visible items
         let line_width = area.width.saturating_sub(1); // Leave room for scrollbar
+        let mut y = area.y;
+        let mut rendered = 0;
         for (_idx, (is_header, text, is_selected, _is_current)) in
             render_items.iter().enumerate().skip(scroll)
         {
             if rendered >= list_height {
                 break;
             }
-
-            if *is_selected {
-                let fill_style = Style::default().bg(selected_bg);
-                for x in area.x..area.x.saturating_add(line_width) {
-                    buf[(x, y)].set_style(fill_style);
-                }
-            }
-
-            let style = if *is_header {
-                Style::default()
-                    .fg(text_secondary())
-                    .add_modifier(Modifier::BOLD)
-            } else if *is_selected {
-                Style::default().fg(selected_fg).bg(selected_bg)
-            } else {
-                Style::default().fg(text_primary())
-            };
-
-            let line = Line::from(Span::styled(text.as_str(), style));
-            let para = Paragraph::new(line);
-            para.render(
-                Rect {
-                    x: area.x,
-                    y,
-                    width: line_width,
-                    height: 1,
-                },
+            self.render_list_item(
                 buf,
+                area,
+                y,
+                line_width,
+                text,
+                *is_header,
+                *is_selected,
+                selected_bg,
+                selected_fg,
             );
 
             y += 1;

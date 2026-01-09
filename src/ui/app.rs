@@ -5969,6 +5969,7 @@ impl App {
         // Draw theme picker dialog if open
         if self.state.theme_picker_state.is_visible() {
             use ratatui::widgets::Widget;
+            self.state.theme_picker_state.update_viewport(size);
             let picker = ThemePicker::new(&self.state.theme_picker_state);
             picker.render(size, f.buffer_mut());
         }
@@ -6066,7 +6067,7 @@ impl App {
 
     /// Render command mode prompt
     fn render_command_prompt(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        use ratatui::style::{Color, Style};
+        use ratatui::style::Style;
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Clear, Paragraph, Widget};
         use unicode_width::UnicodeWidthStr;
@@ -6113,7 +6114,10 @@ impl App {
                     Style::default().fg(crate::ui::components::text_muted()),
                 ),
                 Span::raw("…"),
-                Span::styled(truncated, Style::default().fg(Color::White)),
+                Span::styled(
+                    truncated,
+                    Style::default().fg(crate::ui::components::text_primary()),
+                ),
             ])
         } else {
             Line::from(vec![
@@ -6123,7 +6127,7 @@ impl App {
                 ),
                 Span::styled(
                     &self.state.command_buffer,
-                    Style::default().fg(Color::White),
+                    Style::default().fg(crate::ui::components::text_primary()),
                 ),
             ])
         };

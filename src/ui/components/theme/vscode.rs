@@ -42,7 +42,7 @@ impl VsCodeTheme {
         let parse_start = Instant::now();
         let theme = Self::load_from_str(&content)?;
         let parse_ms = parse_start.elapsed().as_millis();
-        tracing::info!(
+        tracing::debug!(
             path = %path.display(),
             bytes = size,
             read_ms,
@@ -80,9 +80,9 @@ impl VsCodeTheme {
         mapper.build_theme()
     }
 
-    /// Check if this is a light theme.
+    /// Check if this is a light theme ("light" or "hc-light").
     pub fn is_light(&self) -> bool {
-        matches!(self.theme_type.as_deref(), Some("light") | Some("hcLight"))
+        matches!(self.theme_type.as_deref(), Some("light") | Some("hc-light"))
     }
 }
 
@@ -134,6 +134,12 @@ impl<'a> VsCodeMapper<'a> {
         for (key, value) in &vscode.colors {
             if let Some(color) = parse_hex_color(value) {
                 colors.insert(key.as_str(), color);
+            } else {
+                tracing::debug!(
+                    key = %key,
+                    value = %value,
+                    "Unparsed VS Code theme color"
+                );
             }
         }
 

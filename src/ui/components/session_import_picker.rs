@@ -460,7 +460,7 @@ impl SessionImportPicker {
 
     fn render_tab_bar(&self, area: Rect, buf: &mut Buffer, state: &SessionImportPickerState) {
         let mut x = area.x;
-        let selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
+        let tab_selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
 
         for filter in [AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex] {
             let is_selected = state.agent_filter == filter;
@@ -473,8 +473,8 @@ impl SessionImportPicker {
                 AgentFilter::Codex => agent_codex(),
             };
             let style = if is_selected {
-                let fg = ensure_contrast_fg(base_fg, selected_bg, 4.5);
-                Style::default().fg(fg).bg(selected_bg)
+                let fg = ensure_contrast_fg(base_fg, tab_selected_bg, 4.5);
+                Style::default().fg(fg).bg(tab_selected_bg)
             } else {
                 Style::default().fg(text_muted())
             };
@@ -542,8 +542,8 @@ impl SessionImportPicker {
                 AgentType::Codex => "X",
             };
             let agent_color = match session.agent_type {
-                AgentType::Claude => Color::Cyan,
-                AgentType::Codex => Color::Green,
+                AgentType::Claude => agent_claude(),
+                AgentType::Codex => agent_codex(),
             };
 
             // Calculate widths
@@ -572,7 +572,7 @@ impl SessionImportPicker {
                     let fg = if is_selected {
                         row_selected_fg
                     } else {
-                        Color::White
+                        text_primary()
                     };
                     buf[(x, y)].set_char(c).set_style(bg_style.fg(fg));
                     x += 1;
@@ -581,9 +581,12 @@ impl SessionImportPicker {
 
             // Render agent icon
             if x < area.x + area.width {
-                buf[(x, y)]
-                    .set_char('[')
-                    .set_style(bg_style.fg(Color::DarkGray));
+                let fg = if is_selected {
+                    row_selected_fg
+                } else {
+                    text_muted()
+                };
+                buf[(x, y)].set_char('[').set_style(bg_style.fg(fg));
                 x += 1;
             }
             if x < area.x + area.width {
@@ -598,9 +601,12 @@ impl SessionImportPicker {
                 x += 1;
             }
             if x < area.x + area.width {
-                buf[(x, y)]
-                    .set_char(']')
-                    .set_style(bg_style.fg(Color::DarkGray));
+                let fg = if is_selected {
+                    row_selected_fg
+                } else {
+                    text_muted()
+                };
+                buf[(x, y)].set_char(']').set_style(bg_style.fg(fg));
                 x += 1;
             }
             if x < area.x + area.width {
@@ -614,7 +620,7 @@ impl SessionImportPicker {
                     let fg = if is_selected {
                         row_selected_fg
                     } else {
-                        Color::White
+                        text_primary()
                     };
                     buf[(x, y)].set_char(c).set_style(bg_style.fg(fg));
                     x += 1;
@@ -640,9 +646,12 @@ impl SessionImportPicker {
                 for (j, c) in meta.chars().enumerate() {
                     let mx = meta_x + j as u16;
                     if mx < area.x + area.width {
-                        buf[(mx, y)]
-                            .set_char(c)
-                            .set_style(bg_style.fg(Color::DarkGray));
+                        let fg = if is_selected {
+                            row_selected_fg
+                        } else {
+                            text_muted()
+                        };
+                        buf[(mx, y)].set_char(c).set_style(bg_style.fg(fg));
                     }
                 }
             }
