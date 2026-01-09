@@ -1,6 +1,6 @@
 //! Theme registry for discovery and loading.
 //!
-//! Manages built-in themes, discovered VS Code themes, and custom theme paths.
+//! Manages built-in themes, discovered VS Code themes, TOML themes, and custom theme paths.
 
 use std::collections::HashMap;
 use std::fs;
@@ -9,14 +9,28 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::builtin::{builtin_themes, get_builtin};
+use super::toml::TomlTheme;
 use super::types::{Theme, ThemeInfo, ThemeSource};
 use super::vscode::VsCodeTheme;
+use crate::util;
 
 /// Theme registry that manages all available themes.
 #[derive(Debug, Default)]
 pub struct ThemeRegistry {
     /// Discovered VS Code themes (name -> path to JSON)
     vscode_themes: HashMap<String, VsCodeThemeEntry>,
+    /// Discovered TOML themes (name -> path to TOML)
+    toml_themes: HashMap<String, TomlThemeEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct TomlThemeEntry {
+    /// Display name
+    display_name: String,
+    /// Path to theme TOML file
+    path: PathBuf,
+    /// Whether this is a light theme
+    is_light: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -51,11 +65,54 @@ struct ThemeContribution {
 }
 
 impl ThemeRegistry {
-    /// Create a new theme registry and discover VS Code themes.
+    /// Create a new theme registry and discover themes.
     pub fn new() -> Self {
         let mut registry = Self::default();
+        registry.discover_toml_themes();
         registry.discover_vscode_themes();
         registry
+    }
+
+    /// Discover TOML themes from ~/.conduit/themes/.
+    pub fn discover_toml_themes(&mut self) {
+        let themes_dir = util::data_dir().join("themes");
+        if !themes_dir.exists() {
+            return;
+        }
+
+        let Ok(entries) = fs::read_dir(&themes_dir) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "toml") {
+                self.scan_toml_theme(&path);
+            }
+        }
+    }
+
+    /// Scan a single TOML theme file.
+    fn scan_toml_theme(&mut self, path: &Path) {
+        let Ok(theme) = TomlTheme::load_from_file(path) else {
+            tracing::warn!(path = %path.display(), "Failed to parse TOML theme");
+            return;
+        };
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        self.toml_themes.insert(
+            name,
+            TomlThemeEntry {
+                display_name: theme.meta.name.clone(),
+                path: path.to_path_buf(),
+                is_light: theme.is_light(),
+            },
+        );
     }
 
     /// Discover VS Code themes from ~/.vscode/extensions/.
@@ -159,6 +216,18 @@ impl ThemeRegistry {
             });
         }
 
+        // Add discovered TOML themes
+        for (key, entry) in &self.toml_themes {
+            themes.push(ThemeInfo {
+                name: key.clone(),
+                display_name: entry.display_name.clone(),
+                source: ThemeSource::ConduitToml {
+                    path: entry.path.clone(),
+                },
+                is_light: entry.is_light,
+            });
+        }
+
         // Add discovered VS Code themes
         for (key, entry) in &self.vscode_themes {
             themes.push(ThemeInfo {
@@ -179,7 +248,7 @@ impl ThemeRegistry {
 
     /// Load a theme by name.
     ///
-    /// Tries built-in themes first, then VS Code themes.
+    /// Tries built-in themes first, then TOML themes, then VS Code themes.
     pub fn load_theme(&self, name: &str) -> Option<Theme> {
         // Try built-in first
         if let Some(theme) = get_builtin(name) {
@@ -190,6 +259,34 @@ impl ThemeRegistry {
         for (_, theme) in builtin_themes() {
             if theme.name.eq_ignore_ascii_case(name) {
                 return Some(theme);
+            }
+        }
+
+        // Try TOML theme by key
+        if let Some(entry) = self.toml_themes.get(name) {
+            let loaded = self.load_toml_theme(&entry.path);
+            if loaded.is_none() {
+                tracing::warn!(
+                    theme = name,
+                    path = %entry.path.display(),
+                    "TOML theme failed to load by key"
+                );
+            }
+            return loaded;
+        }
+
+        // Try TOML theme by display name (case-insensitive)
+        for entry in self.toml_themes.values() {
+            if entry.display_name.eq_ignore_ascii_case(name) {
+                let loaded = self.load_toml_theme(&entry.path);
+                if loaded.is_none() {
+                    tracing::warn!(
+                        theme = name,
+                        path = %entry.path.display(),
+                        "TOML theme failed to load by display name"
+                    );
+                }
+                return loaded;
             }
         }
 
@@ -224,29 +321,69 @@ impl ThemeRegistry {
         None
     }
 
-    /// Load a theme from a file path.
-    pub fn load_from_path(&self, path: &Path) -> Option<Theme> {
-        match VsCodeTheme::load_from_file(path) {
-            Ok(vscode) => Some(vscode.to_theme()),
+    /// Load a TOML theme from a file path.
+    fn load_toml_theme(&self, path: &Path) -> Option<Theme> {
+        match TomlTheme::load_from_file(path) {
+            Ok(toml) => match toml.to_theme() {
+                Ok(theme) => Some(theme),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        "Failed to build theme from TOML"
+                    );
+                    None
+                }
+            },
             Err(err) => {
                 tracing::warn!(
                     path = %path.display(),
                     error = %err,
-                    "Failed to load VS Code theme file"
+                    "Failed to load TOML theme file"
                 );
                 None
             }
         }
     }
 
+    /// Load a theme from a file path.
+    ///
+    /// Automatically detects TOML vs JSON format based on file extension.
+    pub fn load_from_path(&self, path: &Path) -> Option<Theme> {
+        // Check file extension to determine format
+        let is_toml = path.extension().is_some_and(|ext| ext == "toml");
+
+        if is_toml {
+            self.load_toml_theme(path)
+        } else {
+            // Assume JSON/VS Code format
+            match VsCodeTheme::load_from_file(path) {
+                Ok(vscode) => Some(vscode.to_theme()),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        "Failed to load VS Code theme file"
+                    );
+                    None
+                }
+            }
+        }
+    }
+
     /// Get the number of available themes.
     pub fn theme_count(&self) -> usize {
-        builtin_themes().len() + self.vscode_themes.len()
+        builtin_themes().len() + self.toml_themes.len() + self.vscode_themes.len()
     }
 
     /// Check if a theme exists.
     pub fn has_theme(&self, name: &str) -> bool {
         get_builtin(name).is_some()
+            || self.toml_themes.contains_key(name)
+            || self
+                .toml_themes
+                .values()
+                .any(|e| e.display_name.eq_ignore_ascii_case(name))
             || self.vscode_themes.contains_key(name)
             || self
                 .vscode_themes
