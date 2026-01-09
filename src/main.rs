@@ -7,7 +7,7 @@ use conduit::{
     App, Config,
 };
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "conduit")]
@@ -25,6 +25,21 @@ struct Cli {
 enum Commands {
     /// Debug keyboard input - shows raw key events as you press them
     DebugKeys,
+
+    /// Migrate a VSCode theme to Conduit TOML format
+    MigrateTheme {
+        /// Path to VSCode theme JSON file
+        #[arg(value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Output path (default: ~/.conduit/themes/<name>.toml)
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: Option<PathBuf>,
+
+        /// Extract common colors into a palette section
+        #[arg(long)]
+        palette: bool,
+    },
 }
 
 #[tokio::main]
@@ -37,6 +52,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::DebugKeys) => {
             run_debug_keys()?;
+        }
+        Some(Commands::MigrateTheme {
+            input,
+            output,
+            palette,
+        }) => {
+            run_migrate_theme(&input, output.as_deref(), palette)?;
         }
         None => {
             run_app().await?;
@@ -228,6 +250,58 @@ fn run_blocking_tool_dialog(tool: Tool, _tools: &ToolAvailability) -> Result<Opt
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
     Ok(result)
+}
+
+/// Run the theme migration command
+fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool) -> Result<()> {
+    use conduit::ui::components::theme::migrate::{migrate_vscode_theme, write_theme_file, MigrateOptions};
+
+    // Check input file exists
+    if !input.exists() {
+        anyhow::bail!("Input file not found: {}", input.display());
+    }
+
+    println!("Migrating VSCode theme: {}", input.display());
+
+    // Configure migration options
+    let options = MigrateOptions {
+        extract_palette,
+        verbose: false,
+    };
+
+    // Perform migration
+    let result = migrate_vscode_theme(input, &options)
+        .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+
+    // Determine output path
+    let output_path = if let Some(path) = output {
+        path.to_path_buf()
+    } else {
+        // Default to ~/.conduit/themes/<sanitized-name>.toml
+        let themes_dir = util::data_dir().join("themes");
+        let sanitized_name: String = result
+            .name
+            .chars()
+            .map(|c: char| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect::<String>()
+            .to_lowercase();
+        themes_dir.join(format!("{}.toml", sanitized_name))
+    };
+
+    // Write output file
+    write_theme_file(&output_path, &result.toml)
+        .map_err(|e| anyhow::anyhow!("Failed to write output: {}", e))?;
+
+    println!("Theme migrated successfully!");
+    println!("  Name: {}", result.name);
+    println!("  Type: {}", if result.is_light { "light" } else { "dark" });
+    println!("  Output: {}", output_path.display());
+    println!();
+    println!("To use this theme, add to your ~/.conduit/config.toml:");
+    println!("  [theme]");
+    println!("  name = \"{}\"", output_path.file_stem().unwrap_or_default().to_string_lossy());
+
+    Ok(())
 }
 
 /// Run the keyboard debug mode

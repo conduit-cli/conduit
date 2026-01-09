@@ -313,9 +313,14 @@ pub enum ThemeSource {
         /// Path to the theme JSON file
         path: std::path::PathBuf,
     },
+    /// Conduit native TOML theme
+    ConduitToml {
+        /// Path to the theme TOML file
+        path: std::path::PathBuf,
+    },
     /// Custom path specified by user
     CustomPath {
-        /// Path to the theme JSON file
+        /// Path to the theme file (JSON or TOML)
         path: std::path::PathBuf,
     },
 }

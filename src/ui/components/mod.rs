@@ -28,7 +28,7 @@ mod spinner;
 mod status_bar;
 mod tab_bar;
 mod text_input;
-mod theme;
+pub mod theme;
 mod theme_picker;
 mod thinking_indicator;
 mod tree_view;

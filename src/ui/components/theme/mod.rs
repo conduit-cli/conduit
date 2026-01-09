@@ -17,7 +17,9 @@
 
 mod builtin;
 mod colors;
+pub mod migrate;
 mod registry;
+pub mod toml;
 mod types;
 mod vscode;
 

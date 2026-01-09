@@ -192,9 +192,11 @@ impl ThemePickerState {
 
         // Group themes by source
         let mut builtin: Vec<&ThemeInfo> = Vec::new();
+        let mut conduit_toml: Vec<&ThemeInfo> = Vec::new();
         let mut vscode: Vec<&ThemeInfo> = Vec::new();
         let mut custom: Vec<&ThemeInfo> = Vec::new();
         let mut seen_builtin: HashSet<String> = HashSet::new();
+        let mut seen_conduit_toml: HashSet<String> = HashSet::new();
         let mut seen_vscode: HashSet<String> = HashSet::new();
         let mut seen_custom: HashSet<String> = HashSet::new();
 
@@ -202,6 +204,17 @@ impl ThemePickerState {
             match &theme.source {
                 ThemeSource::Builtin => {
                     Self::add_theme_to_group(theme, &mut builtin, &mut seen_builtin, "built-in");
+                }
+                ThemeSource::ConduitToml { .. } => {
+                    let key = normalize_key(&theme.display_name);
+                    if seen_conduit_toml.insert(key) {
+                        conduit_toml.push(theme);
+                    } else {
+                        tracing::debug!(
+                            display = %theme.display_name,
+                            "Skipping duplicate Conduit TOML theme"
+                        );
+                    }
                 }
                 ThemeSource::VsCodeExtension { .. } => {
                     Self::add_theme_to_group(theme, &mut vscode, &mut seen_vscode, "VS Code");
@@ -216,6 +229,14 @@ impl ThemePickerState {
         if !builtin.is_empty() {
             items.push(ThemePickerItem::SectionHeader("Built-in".to_string()));
             for theme in builtin {
+                items.push(ThemePickerItem::Theme(theme.clone()));
+            }
+        }
+
+        // Add Conduit TOML section
+        if !conduit_toml.is_empty() {
+            items.push(ThemePickerItem::SectionHeader("User Themes".to_string()));
+            for theme in conduit_toml {
                 items.push(ThemePickerItem::Theme(theme.clone()));
             }
         }
