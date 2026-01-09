@@ -11,7 +11,10 @@ use ratatui::{
 use crate::agent::AgentType;
 use crate::util::{Tool, ToolAvailability};
 
-use super::{DialogFrame, InstructionBar, SELECTED_BG};
+use super::{
+    dialog_bg, ensure_contrast_bg, ensure_contrast_fg, selected_bg, text_muted, text_primary,
+    DialogFrame, InstructionBar,
+};
 
 /// State for the agent selector dialog
 #[derive(Debug, Clone)]
@@ -190,10 +193,12 @@ impl AgentSelector {
         .split(inner);
 
         // Render header
-        let header = Paragraph::new("Choose an agent:").style(Style::default().fg(Color::White));
+        let header = Paragraph::new("Choose an agent:").style(Style::default().fg(text_primary()));
         header.render(chunks[0], buf);
 
         // Render agent options
+        let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+        let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
         for (i, agent) in state.agents.iter().enumerate() {
             let chunk_idx = i + 2; // Skip header and spacing
             if chunk_idx >= chunks.len() - 1 {
@@ -212,10 +217,10 @@ impl AgentSelector {
                     agent.name,
                     if is_selected {
                         Style::default()
-                            .fg(Color::White)
+                            .fg(selected_fg)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(text_primary())
                     },
                 ),
             ]);
@@ -223,7 +228,7 @@ impl AgentSelector {
             // Description line
             let desc_line = Line::from(vec![
                 Span::raw("     "),
-                Span::styled(agent.description, Style::default().fg(Color::DarkGray)),
+                Span::styled(agent.description, Style::default().fg(text_muted())),
             ]);
 
             let option = Paragraph::new(vec![name_line, desc_line]);
@@ -235,7 +240,7 @@ impl AgentSelector {
                     let row_y = chunks[chunk_idx].y + dy;
                     if row_y < chunks[chunk_idx].y + chunks[chunk_idx].height {
                         for dx in 0..chunks[chunk_idx].width {
-                            buf[(chunks[chunk_idx].x + dx, row_y)].set_bg(SELECTED_BG);
+                            buf[(chunks[chunk_idx].x + dx, row_y)].set_bg(selected_bg);
                         }
                     }
                 }

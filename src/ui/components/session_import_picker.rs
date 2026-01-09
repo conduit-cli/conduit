@@ -10,8 +10,8 @@ use ratatui::{
 };
 
 use super::{
-    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
-    SELECTED_BG,
+    dialog_bg, ensure_contrast_bg, ensure_contrast_fg, render_minimal_scrollbar, selected_bg,
+    text_primary, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
 };
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
@@ -512,6 +512,9 @@ impl SessionImportPicker {
     fn render_session_list(&self, area: Rect, buf: &mut Buffer, state: &SessionImportPickerState) {
         let visible_count = area.height as usize;
 
+        let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+        let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
+
         for (i, &session_idx) in state
             .list
             .filtered
@@ -546,7 +549,7 @@ impl SessionImportPicker {
 
             // Background for selected row
             let bg_style = if is_selected {
-                Style::default().bg(SELECTED_BG)
+                Style::default().bg(selected_bg)
             } else {
                 Style::default()
             };
@@ -562,7 +565,12 @@ impl SessionImportPicker {
             let mut x = area.x;
             for c in prefix.chars() {
                 if x < area.x + area.width {
-                    buf[(x, y)].set_char(c).set_style(bg_style.fg(Color::White));
+                    let fg = if is_selected {
+                        selected_fg
+                    } else {
+                        Color::White
+                    };
+                    buf[(x, y)].set_char(c).set_style(bg_style.fg(fg));
                     x += 1;
                 }
             }
@@ -575,9 +583,14 @@ impl SessionImportPicker {
                 x += 1;
             }
             if x < area.x + area.width {
+                let fg = if is_selected {
+                    selected_fg
+                } else {
+                    agent_color
+                };
                 buf[(x, y)]
                     .set_char(agent_icon.chars().next().unwrap_or(' '))
-                    .set_style(bg_style.fg(agent_color).add_modifier(Modifier::BOLD));
+                    .set_style(bg_style.fg(fg).add_modifier(Modifier::BOLD));
                 x += 1;
             }
             if x < area.x + area.width {
@@ -594,7 +607,12 @@ impl SessionImportPicker {
             // Render display text
             for c in display.chars() {
                 if x < area.x + area.width {
-                    buf[(x, y)].set_char(c).set_style(bg_style.fg(Color::White));
+                    let fg = if is_selected {
+                        selected_fg
+                    } else {
+                        Color::White
+                    };
+                    buf[(x, y)].set_char(c).set_style(bg_style.fg(fg));
                     x += 1;
                 }
             }

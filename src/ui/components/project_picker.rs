@@ -9,8 +9,8 @@ use ratatui::{
 use std::path::PathBuf;
 
 use super::{
-    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
-    SELECTED_BG,
+    dialog_bg, ensure_contrast_bg, ensure_contrast_fg, render_minimal_scrollbar, selected_bg,
+    text_primary, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
 };
 
 /// A project entry (directory with .git)
@@ -372,10 +372,12 @@ impl ProjectPicker {
 
                 let line_text = format!("{}{} {}", prefix, name_display, path_display);
 
+                let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+                let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
                 let style = if is_selected {
-                    Style::default().fg(Color::White).bg(SELECTED_BG)
+                    Style::default().fg(selected_fg).bg(selected_bg)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(text_primary())
                 };
 
                 // Render the line

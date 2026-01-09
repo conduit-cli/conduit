@@ -10,6 +10,10 @@ use ratatui::{
 };
 
 use crate::agent::{AgentType, ModelInfo, ModelRegistry};
+use crate::ui::components::{
+    border_default, dialog_bg, ensure_contrast_bg, ensure_contrast_fg, selected_bg, text_muted,
+    text_primary,
+};
 
 /// Represents an item in the model selector (either a section header or a model)
 #[derive(Debug, Clone)]
@@ -192,12 +196,18 @@ impl ModelSelector {
 
         // Clear the dialog area
         Clear.render(dialog_area, buf);
+        for y in dialog_area.y..dialog_area.y.saturating_add(dialog_area.height) {
+            for x in dialog_area.x..dialog_area.x.saturating_add(dialog_area.width) {
+                buf[(x, y)].set_bg(dialog_bg());
+            }
+        }
 
         // Render dialog border with rounded corners
         let block = Block::default()
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Rgb(50, 50, 65)));
+            .border_style(Style::default().fg(border_default()))
+            .style(Style::default().bg(dialog_bg()));
 
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);
@@ -236,7 +246,7 @@ impl ModelSelector {
                     // Render section header
                     let title = ModelRegistry::agent_section_title(*agent_type);
                     let header_line =
-                        Line::from(Span::styled(title, Style::default().fg(Color::DarkGray)));
+                        Line::from(Span::styled(title, Style::default().fg(text_muted())));
                     let header = Paragraph::new(header_line);
                     header.render(
                         Rect {
@@ -257,18 +267,21 @@ impl ModelSelector {
                         .map(|id| id == &model.id)
                         .unwrap_or(false);
 
+                    let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+                    let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
+
                     // Build the line
                     let icon = ModelRegistry::agent_icon(model.agent_type);
                     let mut spans = vec![
-                        Span::styled(format!("  {} ", icon), Style::default().fg(Color::White)),
+                        Span::styled(format!("  {} ", icon), Style::default().fg(text_primary())),
                         Span::styled(
                             &model.display_name,
                             if is_selected {
                                 Style::default()
-                                    .fg(Color::White)
+                                    .fg(selected_fg)
                                     .add_modifier(Modifier::BOLD)
                             } else {
-                                Style::default().fg(Color::White)
+                                Style::default().fg(text_primary())
                             },
                         ),
                     ];
@@ -292,7 +305,7 @@ impl ModelSelector {
                         // Add padding to right-align checkmark
                         let padding = checkmark_col.saturating_sub(content_len);
                         spans.push(Span::raw(" ".repeat(padding)));
-                        spans.push(Span::styled("✓", Style::default().fg(Color::White)));
+                        spans.push(Span::styled("✓", Style::default().fg(text_primary())));
                     }
 
                     let line = Line::from(spans);
@@ -308,7 +321,7 @@ impl ModelSelector {
                     // Highlight selected row background
                     if is_selected {
                         for dx in 0..row_rect.width {
-                            buf[(row_rect.x + dx, row_rect.y)].set_bg(Color::Rgb(50, 50, 50));
+                            buf[(row_rect.x + dx, row_rect.y)].set_bg(selected_bg);
                         }
                     }
 

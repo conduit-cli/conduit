@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::git::GitDiffStats;
 
-use super::{ACCENT_ERROR, ACCENT_SUCCESS, ACCENT_WARNING, TEXT_MUTED};
+use super::{accent_error, accent_success, accent_warning, text_muted};
 
 /// Display mode for git status in the sidebar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -267,6 +267,11 @@ impl<'a> TreeView<'a> {
         self
     }
 
+    pub fn suffix_style(mut self, style: Style) -> Self {
+        self.suffix_style = style;
+        self
+    }
+
     /// Get all visible nodes flattened
     fn visible_nodes(&self) -> Vec<&TreeNode> {
         self.nodes.iter().flat_map(|n| n.flatten()).collect()
@@ -457,12 +462,12 @@ impl StatefulWidget for TreeView<'_> {
                                 if stats.has_changes() {
                                     name_spans.push(Span::styled(
                                         "  ●",
-                                        Style::default().fg(ACCENT_WARNING),
+                                        Style::default().fg(accent_warning()),
                                     ));
                                 } else {
                                     name_spans.push(Span::styled(
                                         "  ●",
-                                        Style::default().fg(ACCENT_SUCCESS),
+                                        Style::default().fg(accent_success()),
                                     ));
                                 }
                             }
@@ -471,8 +476,10 @@ impl StatefulWidget for TreeView<'_> {
                             // Inline stats: +12 -4 (omit zeros)
                             if let Some(ref stats) = node.git_stats {
                                 if stats.has_changes() {
-                                    name_spans
-                                        .push(Span::styled("  ", Style::default().fg(TEXT_MUTED)));
+                                    name_spans.push(Span::styled(
+                                        "  ",
+                                        Style::default().fg(text_muted()),
+                                    ));
 
                                     let has_additions = stats.additions > 0;
                                     let has_deletions = stats.deletions > 0;
@@ -480,7 +487,7 @@ impl StatefulWidget for TreeView<'_> {
                                     if has_additions {
                                         name_spans.push(Span::styled(
                                             format!("+{}", stats.additions),
-                                            Style::default().fg(ACCENT_SUCCESS),
+                                            Style::default().fg(accent_success()),
                                         ));
                                     }
 
@@ -491,7 +498,7 @@ impl StatefulWidget for TreeView<'_> {
                                     if has_deletions {
                                         name_spans.push(Span::styled(
                                             format!("-{}", stats.deletions),
-                                            Style::default().fg(ACCENT_ERROR),
+                                            Style::default().fg(accent_error()),
                                         ));
                                     }
                                 }

@@ -30,7 +30,8 @@ use parking_lot::RwLock;
 use ratatui::style::Color;
 
 pub use colors::{
-    boost_brightness, darken, desaturate, dim, interpolate, lighten, parse_hex_color, saturate,
+    boost_brightness, contrast_ratio, darken, desaturate, dim, ensure_contrast_bg,
+    ensure_contrast_fg, interpolate, lighten, parse_hex_color, relative_luminance, saturate,
     shift_hue,
 };
 pub use registry::ThemeRegistry;
@@ -70,6 +71,7 @@ pub fn current_theme() -> parking_lot::RwLockReadGuard<'static, Theme> {
 
 /// Set a new theme. Takes effect on the next render.
 pub fn set_theme(theme: Theme) {
+    let theme = normalize_theme(theme);
     *theme_lock().write() = theme;
     THEME_REVISION.fetch_add(1, Ordering::Relaxed);
 }
@@ -170,6 +172,28 @@ pub fn current_theme_name() -> String {
 /// Returns a monotonically increasing revision for theme changes.
 pub fn theme_revision() -> u64 {
     THEME_REVISION.load(Ordering::Relaxed)
+}
+
+fn normalize_theme(mut theme: Theme) -> Theme {
+    let base = theme.bg_base;
+
+    // Text contrast against base background.
+    theme.text_bright = ensure_contrast_fg(theme.text_bright, base, 4.5);
+    theme.text_primary = ensure_contrast_fg(theme.text_primary, base, 4.5);
+    theme.text_secondary = ensure_contrast_fg(theme.text_secondary, base, 3.0);
+    theme.text_muted = ensure_contrast_fg(theme.text_muted, base, 3.0);
+    theme.text_faint = ensure_contrast_fg(theme.text_faint, base, 2.2);
+
+    // Layered backgrounds should separate enough to be visible.
+    theme.bg_surface = ensure_contrast_bg(theme.bg_surface, base, 1.2);
+    theme.bg_elevated = ensure_contrast_bg(theme.bg_elevated, theme.bg_surface, 1.2);
+    theme.bg_highlight = ensure_contrast_bg(theme.bg_highlight, base, 2.0);
+
+    // Border contrast for outlines and separators.
+    theme.border_default = ensure_contrast_fg(theme.border_default, base, 1.8);
+    theme.border_dimmed = ensure_contrast_fg(theme.border_dimmed, base, 1.5);
+
+    theme
 }
 
 /// Refresh theme discovery (re-scan VS Code extensions).

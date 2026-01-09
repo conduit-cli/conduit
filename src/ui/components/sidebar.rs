@@ -3,14 +3,16 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::ui::components::{accent_primary, border_default, sidebar_bg, text_muted, text_primary};
+use crate::ui::components::{
+    accent_primary, border_default, ensure_contrast_fg, selected_bg, selected_bg_dim, sidebar_bg,
+    text_muted, text_primary,
+};
 
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
-use super::{selected_bg, selected_bg_dim};
 
 /// Sidebar widget for workspace navigation
 pub struct Sidebar<'a> {
@@ -201,20 +203,30 @@ impl StatefulWidget for Sidebar<'_> {
             // Clear button area when not empty
             state.add_project_button_area = None;
 
+            let sidebar_background = sidebar_bg();
+            let label_fg = ensure_contrast_fg(text_primary(), sidebar_background, 4.5);
+            let suffix_fg = ensure_contrast_fg(text_muted(), sidebar_background, 3.0);
+
+            let focused_bg = selected_bg();
+            let focused_fg = ensure_contrast_fg(text_primary(), focused_bg, 4.5);
+            let unfocused_bg = selected_bg_dim();
+            let unfocused_fg = ensure_contrast_fg(text_primary(), unfocused_bg, 4.5);
+
             let block = Block::default()
                 .borders(Borders::NONE)
                 .style(Style::default().bg(sidebar_bg()));
 
             // Create and render tree view
-            let tree = TreeView::new(&self.data.nodes).block(block).selected_style(
-                Style::default()
-                    .bg(if state.focused {
-                        selected_bg()
-                    } else {
-                        selected_bg_dim()
-                    })
-                    .fg(Color::White),
-            );
+            let selected_style = if state.focused {
+                Style::default().bg(focused_bg).fg(focused_fg)
+            } else {
+                Style::default().bg(unfocused_bg).fg(unfocused_fg)
+            };
+            let tree = TreeView::new(&self.data.nodes)
+                .block(block)
+                .style(Style::default().fg(label_fg))
+                .suffix_style(Style::default().fg(suffix_fg))
+                .selected_style(selected_style);
 
             StatefulWidget::render(tree, content_area, buf, &mut state.tree_state);
         }

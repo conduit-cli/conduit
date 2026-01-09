@@ -5,6 +5,109 @@
 
 use ratatui::style::Color;
 
+/// Relative luminance for contrast calculations (WCAG 2.1).
+pub fn relative_luminance(color: Color) -> Option<f64> {
+    let (r, g, b) = to_rgb(color)?;
+    let to_linear = |c: u8| {
+        let c = c as f64 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let r = to_linear(r);
+    let g = to_linear(g);
+    let b = to_linear(b);
+    Some(0.2126 * r + 0.7152 * g + 0.0722 * b)
+}
+
+/// Contrast ratio between two colors (WCAG 2.1).
+pub fn contrast_ratio(a: Color, b: Color) -> Option<f64> {
+    let la = relative_luminance(a)?;
+    let lb = relative_luminance(b)?;
+    let (lighter, darker) = if la >= lb { (la, lb) } else { (lb, la) };
+    Some((lighter + 0.05) / (darker + 0.05))
+}
+
+/// Adjust a foreground color to meet a minimum contrast ratio against a background.
+pub fn ensure_contrast_fg(fg: Color, bg: Color, min_ratio: f64) -> Color {
+    if let Some(ratio) = contrast_ratio(fg, bg) {
+        if ratio >= min_ratio {
+            return fg;
+        }
+    } else {
+        return fg;
+    }
+
+    let bg_luma = relative_luminance(bg).unwrap_or(0.5);
+    let prefer_darken = bg_luma > 0.5;
+
+    for step in 1..=10 {
+        let amount = 0.06 * step as f64;
+        let candidate = if prefer_darken {
+            darken(fg, amount)
+        } else {
+            lighten(fg, amount)
+        };
+        if contrast_ratio(candidate, bg).unwrap_or(0.0) >= min_ratio {
+            return candidate;
+        }
+    }
+
+    // Fallback to black/white, whichever yields higher contrast.
+    let black = Color::Rgb(0, 0, 0);
+    let white = Color::Rgb(255, 255, 255);
+    let black_ratio = contrast_ratio(black, bg).unwrap_or(0.0);
+    let white_ratio = contrast_ratio(white, bg).unwrap_or(0.0);
+    if black_ratio >= white_ratio {
+        black
+    } else {
+        white
+    }
+}
+
+/// Adjust a background color to meet a minimum contrast ratio against another background.
+pub fn ensure_contrast_bg(bg: Color, against: Color, min_ratio: f64) -> Color {
+    if let Some(ratio) = contrast_ratio(bg, against) {
+        if ratio >= min_ratio {
+            return bg;
+        }
+    } else {
+        return bg;
+    }
+
+    let mut best = bg;
+    let mut best_ratio = contrast_ratio(bg, against).unwrap_or(0.0);
+
+    for step in 1..=10 {
+        let amount = 0.06 * step as f64;
+        let darker = darken(bg, amount);
+        let lighter = lighten(bg, amount);
+        let dark_ratio = contrast_ratio(darker, against).unwrap_or(0.0);
+        let light_ratio = contrast_ratio(lighter, against).unwrap_or(0.0);
+
+        if dark_ratio >= min_ratio || light_ratio >= min_ratio {
+            return if dark_ratio >= light_ratio {
+                darker
+            } else {
+                lighter
+            };
+        }
+
+        if dark_ratio > best_ratio {
+            best_ratio = dark_ratio;
+            best = darker;
+        }
+        if light_ratio > best_ratio {
+            best_ratio = light_ratio;
+            best = lighter;
+        }
+    }
+
+    best
+}
+
 /// Parse a hex color string to a Color.
 ///
 /// Supports formats: "#RGB", "#RRGGBB", "#RRGGBBAA"
@@ -241,6 +344,30 @@ mod tests {
         assert_eq!(parse_hex_color("#1e1e2e"), Some(Color::Rgb(30, 30, 46)));
         assert_eq!(parse_hex_color("#1e1e2eff"), Some(Color::Rgb(30, 30, 46))); // With alpha
         assert_eq!(parse_hex_color("1e1e2e"), Some(Color::Rgb(30, 30, 46))); // Without #
+    }
+
+    #[test]
+    fn test_contrast_ratio_basic() {
+        let black = Color::Rgb(0, 0, 0);
+        let white = Color::Rgb(255, 255, 255);
+        let ratio = contrast_ratio(black, white).unwrap();
+        assert!(ratio >= 21.0);
+    }
+
+    #[test]
+    fn test_ensure_contrast_fg() {
+        let bg = Color::Rgb(245, 245, 245);
+        let fg = Color::Rgb(230, 230, 230);
+        let adjusted = ensure_contrast_fg(fg, bg, 4.5);
+        assert!(contrast_ratio(adjusted, bg).unwrap_or(0.0) >= 4.5);
+    }
+
+    #[test]
+    fn test_ensure_contrast_bg() {
+        let base = Color::Rgb(30, 30, 30);
+        let bg = Color::Rgb(32, 32, 32);
+        let adjusted = ensure_contrast_bg(bg, base, 2.0);
+        assert!(contrast_ratio(adjusted, base).unwrap_or(0.0) >= 2.0);
     }
 
     #[test]

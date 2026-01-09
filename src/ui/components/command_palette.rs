@@ -12,8 +12,9 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
-    render_minimal_scrollbar, DialogFrame, InstructionBar, SearchableListState, ACCENT_PRIMARY,
-    BG_HIGHLIGHT, TEXT_MUTED, TEXT_PRIMARY,
+    accent_primary, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
+    render_minimal_scrollbar, text_muted, text_primary, DialogFrame, InstructionBar,
+    SearchableListState,
 };
 use crate::config::keys::{KeyCombo, KeybindingConfig};
 use crate::ui::action::Action;
@@ -294,13 +295,13 @@ impl CommandPalette {
         if input.is_empty() {
             // Show placeholder
             let placeholder = format!("{}Type to search commands...", prompt);
-            let para = Paragraph::new(placeholder).style(Style::default().fg(TEXT_MUTED));
+            let para = Paragraph::new(placeholder).style(Style::default().fg(text_muted()));
             para.render(area, buf);
         } else {
             // Show prompt and input
             let line = Line::from(vec![
-                Span::styled(prompt, Style::default().fg(ACCENT_PRIMARY)),
-                Span::styled(input, Style::default().fg(TEXT_PRIMARY)),
+                Span::styled(prompt, Style::default().fg(accent_primary())),
+                Span::styled(input, Style::default().fg(text_primary())),
             ]);
             let para = Paragraph::new(line);
             para.render(area, buf);
@@ -322,7 +323,7 @@ impl CommandPalette {
 
     fn render_separator(&self, area: Rect, buf: &mut Buffer) {
         let separator = "\u{2500}".repeat(area.width as usize);
-        let para = Paragraph::new(separator).style(Style::default().fg(TEXT_MUTED));
+        let para = Paragraph::new(separator).style(Style::default().fg(text_muted()));
         para.render(area, buf);
     }
 
@@ -334,7 +335,7 @@ impl CommandPalette {
             } else {
                 "No matching commands"
             };
-            let para = Paragraph::new(msg).style(Style::default().fg(TEXT_MUTED));
+            let para = Paragraph::new(msg).style(Style::default().fg(text_muted()));
             para.render(area, buf);
             return;
         }
@@ -347,6 +348,11 @@ impl CommandPalette {
         } else {
             area.width
         };
+
+        let selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
+        let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
+        let selected_muted = ensure_contrast_fg(text_muted(), selected_bg, 3.0);
+        let selected_accent = ensure_contrast_fg(accent_primary(), selected_bg, 3.0);
 
         for (i, &cmd_idx) in state
             .list
@@ -385,16 +391,16 @@ impl CommandPalette {
             // Apply styling
             let (prefix_style, desc_style, key_style, bg) = if is_selected {
                 (
-                    Style::default().fg(ACCENT_PRIMARY).bg(BG_HIGHLIGHT),
-                    Style::default().fg(Color::White).bg(BG_HIGHLIGHT),
-                    Style::default().fg(TEXT_MUTED).bg(BG_HIGHLIGHT),
-                    BG_HIGHLIGHT,
+                    Style::default().fg(selected_accent).bg(selected_bg),
+                    Style::default().fg(selected_fg).bg(selected_bg),
+                    Style::default().fg(selected_muted).bg(selected_bg),
+                    selected_bg,
                 )
             } else {
                 (
-                    Style::default().fg(TEXT_MUTED),
-                    Style::default().fg(TEXT_PRIMARY),
-                    Style::default().fg(TEXT_MUTED),
+                    Style::default().fg(text_muted()),
+                    Style::default().fg(text_primary()),
+                    Style::default().fg(text_muted()),
                     Color::Reset,
                 )
             };
@@ -419,7 +425,7 @@ impl CommandPalette {
             // Fill background for selected line (only up to content_width)
             if is_selected {
                 for x in area.x..area.x + content_width {
-                    buf[(x, y)].set_bg(BG_HIGHLIGHT);
+                    buf[(x, y)].set_bg(selected_bg);
                 }
             }
 

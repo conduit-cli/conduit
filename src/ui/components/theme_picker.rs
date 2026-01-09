@@ -5,7 +5,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -13,8 +13,9 @@ use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
-    accent_primary, bg_highlight, render_minimal_scrollbar, text_muted, text_primary,
-    text_secondary, DialogFrame, InstructionBar,
+    accent_primary, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
+    render_minimal_scrollbar, text_muted, text_primary, text_secondary, DialogFrame,
+    InstructionBar,
 };
 use crate::ui::components::theme::{
     current_theme_name, list_themes, load_theme_by_name, ThemeInfo, ThemeSource,
@@ -487,6 +488,8 @@ impl ThemePicker<'_> {
         }
 
         let current_theme = current_theme_name();
+        let selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
+        let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
         let list_height = area.height as usize;
 
         // Build visible items with section context
@@ -543,7 +546,7 @@ impl ThemePicker<'_> {
             }
 
             if *is_selected {
-                let fill_style = Style::default().bg(bg_highlight());
+                let fill_style = Style::default().bg(selected_bg);
                 for x in area.x..area.x.saturating_add(line_width) {
                     buf[(x, y)].set_style(fill_style);
                 }
@@ -554,7 +557,7 @@ impl ThemePicker<'_> {
                     .fg(text_secondary())
                     .add_modifier(Modifier::BOLD)
             } else if *is_selected {
-                Style::default().fg(Color::White).bg(bg_highlight())
+                Style::default().fg(selected_fg).bg(selected_bg)
             } else {
                 Style::default().fg(text_primary())
             };

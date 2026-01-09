@@ -94,6 +94,7 @@ pub use theme::{
     border_default,
     border_dimmed,
     border_focused,
+    contrast_ratio,
     // Theme management
     current_theme,
     current_theme_name,
@@ -104,6 +105,8 @@ pub use theme::{
     diff_add,
     diff_remove,
     dim,
+    ensure_contrast_bg,
+    ensure_contrast_fg,
     // Legacy aliases (functions)
     footer_bg,
     init_theme,
@@ -124,6 +127,7 @@ pub use theme::{
     pr_open_bg,
     pr_unknown_bg,
     refresh_themes,
+    relative_luminance,
     saturate,
     selected_bg,
     selected_bg_dim,
