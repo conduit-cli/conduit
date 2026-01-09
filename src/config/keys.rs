@@ -681,6 +681,14 @@ mod tests {
     }
 
     #[test]
+    fn test_selecting_theme_maps_to_theme_picker_context() {
+        use crate::ui::events::{InputMode, ViewMode};
+
+        let context = KeyContext::from_input_mode(InputMode::SelectingTheme, ViewMode::Chat);
+        assert_eq!(context, KeyContext::ThemePicker);
+    }
+
+    #[test]
     fn test_ctrl_4_from_key_event() {
         use crossterm::event::{KeyEvent, KeyEventKind, KeyEventState};
 

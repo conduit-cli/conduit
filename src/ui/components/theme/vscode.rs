@@ -109,7 +109,14 @@ impl std::fmt::Display for VsCodeThemeError {
     }
 }
 
-impl std::error::Error for VsCodeThemeError {}
+impl std::error::Error for VsCodeThemeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            VsCodeThemeError::Io(e) => Some(e),
+            VsCodeThemeError::Parse { json, .. } => Some(json),
+        }
+    }
+}
 
 /// Maps VS Code theme colors to our semantic TUI colors.
 struct VsCodeMapper<'a> {
@@ -558,5 +565,21 @@ mod tests {
 
         let theme = vscode.to_theme();
         assert!(theme.is_light);
+    }
+
+    #[test]
+    fn test_parse_vscode_theme_json5() {
+        let json5_theme = r##"{
+            // JSON5-style comment
+            "name": "JSON5 Theme",
+            "type": "dark",
+            "colors": {
+                "editor.background": "#1e1e2e", // trailing comment
+            },
+        }"##;
+
+        let vscode = VsCodeTheme::load_from_str(json5_theme).unwrap();
+        assert_eq!(vscode.name, Some("JSON5 Theme".to_string()));
+        assert!(!vscode.is_light());
     }
 }

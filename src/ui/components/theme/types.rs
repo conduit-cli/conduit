@@ -1,6 +1,6 @@
 //! Theme type definitions.
 //!
-//! Defines the `Theme` struct with all 51 semantic color fields.
+//! Defines the `Theme` struct with all semantic color fields.
 
 use ratatui::style::Color;
 

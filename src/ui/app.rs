@@ -1619,7 +1619,15 @@ impl App {
                 }
                 InputMode::SelectingTheme => {
                     let selected_theme = self.state.theme_picker_state.selected_theme().cloned();
-                    if let Some(theme_name) = self.state.theme_picker_state.confirm() {
+                    let confirmed = self.state.theme_picker_state.confirm();
+                    if let Some(error) = self.state.theme_picker_state.take_error() {
+                        self.state
+                            .set_timed_footer_message(error, Duration::from_secs(5));
+                        return Ok(Vec::new());
+                    }
+
+                    if let Some(theme_name) = confirmed {
+                        let mut save_ok = true;
                         if let Some(theme) = selected_theme {
                             let (name, path) = match &theme.source {
                                 crate::ui::components::ThemeSource::CustomPath { path } => {
@@ -1630,6 +1638,7 @@ impl App {
                             if let Err(err) =
                                 crate::config::save_theme_config(name.as_deref(), path.as_deref())
                             {
+                                save_ok = false;
                                 self.state.set_timed_footer_message(
                                     format!("Failed to save theme: {err}"),
                                     Duration::from_secs(5),
@@ -1639,10 +1648,7 @@ impl App {
                                 self.config.theme_path = path;
                             }
                         }
-                        if let Some(error) = self.state.theme_picker_state.take_error() {
-                            self.state
-                                .set_timed_footer_message(error, Duration::from_secs(5));
-                        } else {
+                        if save_ok {
                             self.state.set_timed_footer_message(
                                 format!("Theme: {}", theme_name),
                                 Duration::from_secs(3),
@@ -2677,6 +2683,12 @@ impl App {
                     self.state.missing_tool_dialog_state.insert_char(ch);
                 }
             }
+            InputMode::SelectingTheme => {
+                let sanitized = pasted.replace('\n', " ");
+                for ch in sanitized.chars() {
+                    self.state.theme_picker_state.insert_char(ch);
+                }
+            }
             _ => {}
         }
     }
@@ -3406,6 +3418,8 @@ impl App {
                 && self.state.session_import_state.is_visible())
             && !(self.state.input_mode == InputMode::CommandPalette
                 && self.state.command_palette_state.is_visible())
+            && !(self.state.input_mode == InputMode::SelectingTheme
+                && self.state.theme_picker_state.is_visible())
     }
 
     fn raw_events_list_visible_height(&self) -> usize {
@@ -3466,6 +3480,15 @@ impl App {
             }
             for _ in 0..*pending_down {
                 self.state.command_palette_state.select_next();
+            }
+        } else if self.state.input_mode == InputMode::SelectingTheme
+            && self.state.theme_picker_state.is_visible()
+        {
+            for _ in 0..*pending_up {
+                self.state.theme_picker_state.select_prev();
+            }
+            for _ in 0..*pending_down {
+                self.state.theme_picker_state.select_next();
             }
         } else if self.state.view_mode == ViewMode::RawEvents {
             let list_height = self.raw_events_list_visible_height();
@@ -3528,6 +3551,10 @@ impl App {
                     && self.state.session_import_state.is_visible()
                 {
                     self.state.session_import_state.select_prev();
+                } else if self.state.input_mode == InputMode::SelectingTheme
+                    && self.state.theme_picker_state.is_visible()
+                {
+                    self.state.theme_picker_state.select_prev();
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         if session.raw_events_view.is_detail_visible() {
@@ -3554,6 +3581,10 @@ impl App {
                     && self.state.session_import_state.is_visible()
                 {
                     self.state.session_import_state.select_next();
+                } else if self.state.input_mode == InputMode::SelectingTheme
+                    && self.state.theme_picker_state.is_visible()
+                {
+                    self.state.theme_picker_state.select_next();
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     let list_height = self.raw_events_list_visible_height();
                     let detail_height = self.raw_events_detail_visible_height();
@@ -6285,6 +6316,9 @@ mod tests {
                     | InputMode::ShowingError
                     | InputMode::SelectingAgent
                     | InputMode::Confirming
+                    | InputMode::ImportingSession
+                    | InputMode::CommandPalette
+                    | InputMode::SelectingTheme
             )
     }
 

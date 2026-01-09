@@ -512,8 +512,8 @@ impl SessionImportPicker {
     fn render_session_list(&self, area: Rect, buf: &mut Buffer, state: &SessionImportPickerState) {
         let visible_count = area.height as usize;
 
-        let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
-        let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
+        let row_selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+        let row_selected_fg = ensure_contrast_fg(text_primary(), row_selected_bg, 4.5);
 
         for (i, &session_idx) in state
             .list
@@ -549,7 +549,7 @@ impl SessionImportPicker {
 
             // Background for selected row
             let bg_style = if is_selected {
-                Style::default().bg(selected_bg)
+                Style::default().bg(row_selected_bg)
             } else {
                 Style::default()
             };
@@ -566,7 +566,7 @@ impl SessionImportPicker {
             for c in prefix.chars() {
                 if x < area.x + area.width {
                     let fg = if is_selected {
-                        selected_fg
+                        row_selected_fg
                     } else {
                         Color::White
                     };
@@ -584,7 +584,7 @@ impl SessionImportPicker {
             }
             if x < area.x + area.width {
                 let fg = if is_selected {
-                    selected_fg
+                    row_selected_fg
                 } else {
                     agent_color
                 };
@@ -608,7 +608,7 @@ impl SessionImportPicker {
             for c in display.chars() {
                 if x < area.x + area.width {
                     let fg = if is_selected {
-                        selected_fg
+                        row_selected_fg
                     } else {
                         Color::White
                     };

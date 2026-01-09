@@ -62,12 +62,13 @@ impl<'a> DialogFrame<'a> {
         }
 
         // Render dialog border with rounded corners
+        let bg = dialog_bg();
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(self.border_color))
-            .style(Style::default().bg(dialog_bg()));
+            .border_style(Style::default().fg(self.border_color).bg(bg))
+            .style(Style::default().bg(bg));
 
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);

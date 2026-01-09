@@ -323,6 +323,10 @@ impl ProjectPicker {
                 .alignment(Alignment::Center);
             empty.render(list_area, buf);
         } else {
+            // Compute selected colors once for the list
+            let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+            let selected_fg_color = ensure_contrast_fg(text_primary(), selected_bg_color, 4.5);
+
             // Render visible items
             let visible_count = list_area.height as usize;
             for (i, &project_idx) in state
@@ -372,10 +376,8 @@ impl ProjectPicker {
 
                 let line_text = format!("{}{} {}", prefix, name_display, path_display);
 
-                let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
-                let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
                 let style = if is_selected {
-                    Style::default().fg(selected_fg).bg(selected_bg)
+                    Style::default().fg(selected_fg_color).bg(selected_bg_color)
                 } else {
                     Style::default().fg(text_primary())
                 };

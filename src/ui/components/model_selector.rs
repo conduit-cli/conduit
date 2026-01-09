@@ -3,7 +3,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     symbols::border,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
@@ -11,8 +11,8 @@ use ratatui::{
 
 use crate::agent::{AgentType, ModelInfo, ModelRegistry};
 use crate::ui::components::{
-    border_default, dialog_bg, ensure_contrast_bg, ensure_contrast_fg, selected_bg, text_muted,
-    text_primary,
+    bg_surface, border_default, dialog_bg, ensure_contrast_bg, ensure_contrast_fg, selected_bg,
+    text_muted, text_primary,
 };
 
 /// Represents an item in the model selector (either a section header or a model)
@@ -291,9 +291,7 @@ impl ModelSelector {
                         spans.push(Span::raw("  "));
                         spans.push(Span::styled(
                             " NEW ",
-                            Style::default()
-                                .fg(Color::Rgb(180, 160, 140))
-                                .bg(Color::Rgb(60, 50, 45)),
+                            Style::default().fg(text_muted()).bg(bg_surface()),
                         ));
                     }
 

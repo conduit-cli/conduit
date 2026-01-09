@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::git::GitDiffStats;
 
-use super::{accent_error, accent_success, accent_warning, text_muted};
+use super::{accent_error, accent_success, accent_warning, selected_bg, text_muted};
 
 /// Display mode for git status in the sidebar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -245,10 +245,10 @@ impl<'a> TreeView<'a> {
             block: None,
             style: Style::default(),
             selected_style: Style::default()
-                .bg(Color::DarkGray)
+                .bg(selected_bg())
                 .add_modifier(Modifier::BOLD),
             expand_style: Style::default().fg(Color::Yellow),
-            suffix_style: Style::default().fg(Color::DarkGray),
+            suffix_style: Style::default().fg(text_muted()),
         }
     }
 

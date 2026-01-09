@@ -313,6 +313,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "interrupt_agent",
     "toggle_view_mode",
     "show_model_selector",
+    "show_theme_picker",
     "toggle_metrics",
     "dump_debug_state",
     "copy_selection",
@@ -534,18 +535,16 @@ pub fn save_theme_config(name: Option<&str>, path: Option<&Path>) -> std::io::Re
             doc["theme"] = Item::Table(Table::new());
         }
 
-        if let Some(name) = name {
-            doc["theme"]["name"] = toml_edit::value(name);
-            if let Item::Table(table) = &mut doc["theme"] {
-                table.remove("path");
-            }
-        }
-
         if let Some(path) = path {
             let path_str = path.to_string_lossy().to_string();
             doc["theme"]["path"] = toml_edit::value(path_str);
             if let Item::Table(table) = &mut doc["theme"] {
                 table.remove("name");
+            }
+        } else if let Some(name) = name {
+            doc["theme"]["name"] = toml_edit::value(name);
+            if let Item::Table(table) = &mut doc["theme"] {
+                table.remove("path");
             }
         }
     }
