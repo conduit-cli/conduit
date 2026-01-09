@@ -8,6 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::agent::{AgentType, ModelInfo, ModelRegistry};
 use crate::ui::components::{
@@ -291,7 +292,10 @@ impl ModelSelector {
                     }
 
                     // Calculate remaining space for checkmark
-                    let content_len: usize = spans.iter().map(|s| s.content.len()).sum();
+                    let content_len: usize = spans
+                        .iter()
+                        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                        .sum();
                     let checkmark_col = inner.width.saturating_sub(4) as usize;
 
                     if is_current && content_len < checkmark_col {

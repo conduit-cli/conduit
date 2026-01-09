@@ -5626,10 +5626,7 @@ impl App {
                             None,
                         );
                     } else if self.state.theme_picker_state.is_visible() {
-                        use ratatui::widgets::Widget;
-                        self.state.theme_picker_state.update_viewport(size);
-                        let picker = ThemePicker::new(&self.state.theme_picker_state);
-                        picker.render(size, f.buffer_mut());
+                        self.render_theme_picker(size, f.buffer_mut());
                     }
 
                     // Draw agent selector dialog if needed
@@ -5742,19 +5739,32 @@ impl App {
                 // Fill margin areas so they match the app background.
                 let buf = f.buffer_mut();
                 let fill_margins = |buf: &mut ratatui::buffer::Buffer, row_area: Rect, bg| {
-                    // Left margin
-                    for y in row_area.y..row_area.y + row_area.height {
-                        for x in row_area.x..row_area.x + INPUT_MARGIN_LEFT {
-                            buf[(x, y)].set_bg(bg);
-                        }
+                    let style = ratatui::style::Style::default().bg(bg);
+                    let left_width = INPUT_MARGIN_LEFT.min(row_area.width);
+                    if left_width > 0 {
+                        buf.set_style(
+                            Rect {
+                                x: row_area.x,
+                                y: row_area.y,
+                                width: left_width,
+                                height: row_area.height,
+                            },
+                            style,
+                        );
                     }
-                    // Right margin
-                    let right_start =
-                        row_area.x + row_area.width.saturating_sub(INPUT_MARGIN_RIGHT);
-                    for y in row_area.y..row_area.y + row_area.height {
-                        for x in right_start..row_area.x + row_area.width {
-                            buf[(x, y)].set_bg(bg);
-                        }
+                    let right_width =
+                        INPUT_MARGIN_RIGHT.min(row_area.width.saturating_sub(left_width));
+                    if right_width > 0 {
+                        let right_start = row_area.x + row_area.width.saturating_sub(right_width);
+                        buf.set_style(
+                            Rect {
+                                x: right_start,
+                                y: row_area.y,
+                                width: right_width,
+                                height: row_area.height,
+                            },
+                            style,
+                        );
                     }
                 };
 
@@ -5977,12 +5987,7 @@ impl App {
         }
 
         // Draw theme picker dialog if open
-        if self.state.theme_picker_state.is_visible() {
-            use ratatui::widgets::Widget;
-            self.state.theme_picker_state.update_viewport(size);
-            let picker = ThemePicker::new(&self.state.theme_picker_state);
-            picker.render(size, f.buffer_mut());
-        }
+        self.render_theme_picker(size, f.buffer_mut());
 
         // Draw base directory dialog if open
         if self.state.base_dir_dialog_state.is_visible() {
@@ -6075,6 +6080,16 @@ impl App {
         }
     }
 
+    fn render_theme_picker(&mut self, size: Rect, buf: &mut ratatui::buffer::Buffer) {
+        if !self.state.theme_picker_state.is_visible() {
+            return;
+        }
+        use ratatui::widgets::Widget;
+        self.state.theme_picker_state.update_viewport(size);
+        let picker = ThemePicker::new(&self.state.theme_picker_state);
+        picker.render(size, buf);
+    }
+
     /// Render command mode prompt
     fn render_command_prompt(&self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
         use ratatui::style::Style;
@@ -6083,11 +6098,7 @@ impl App {
         use unicode_width::UnicodeWidthStr;
 
         Clear.render(area, buf);
-        for y in area.y..area.y.saturating_add(area.height) {
-            for x in area.x..area.x.saturating_add(area.width) {
-                buf[(x, y)].set_bg(crate::ui::components::input_bg());
-            }
-        }
+        buf.set_style(area, Style::default().bg(crate::ui::components::input_bg()));
 
         if area.height < 3 || area.width == 0 {
             return;

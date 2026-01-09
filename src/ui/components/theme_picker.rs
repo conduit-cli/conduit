@@ -198,59 +198,16 @@ impl ThemePickerState {
         let mut seen_vscode: HashSet<String> = HashSet::new();
         let mut seen_custom: HashSet<String> = HashSet::new();
 
-        let dedupe_key = |theme: &ThemeInfo| -> String {
-            match &theme.source {
-                ThemeSource::Builtin => format!("builtin:{}", theme.name.trim().to_lowercase()),
-                ThemeSource::VsCodeExtension { path } => format!(
-                    "vscode:{}:{}",
-                    path.display(),
-                    theme.name.trim().to_lowercase()
-                ),
-                ThemeSource::CustomPath { path } => format!(
-                    "custom:{}:{}",
-                    path.display(),
-                    theme.name.trim().to_lowercase()
-                ),
-            }
-        };
-
         for theme in &themes {
             match &theme.source {
                 ThemeSource::Builtin => {
-                    let key = dedupe_key(theme);
-                    if seen_builtin.insert(key.clone()) {
-                        builtin.push(theme);
-                    } else {
-                        tracing::debug!(
-                            key = %key,
-                            display = %theme.display_name,
-                            "Skipping duplicate built-in theme"
-                        );
-                    }
+                    Self::add_theme_to_group(theme, &mut builtin, &mut seen_builtin, "built-in");
                 }
                 ThemeSource::VsCodeExtension { .. } => {
-                    let key = dedupe_key(theme);
-                    if seen_vscode.insert(key.clone()) {
-                        vscode.push(theme);
-                    } else {
-                        tracing::debug!(
-                            key = %key,
-                            display = %theme.display_name,
-                            "Skipping duplicate VS Code theme"
-                        );
-                    }
+                    Self::add_theme_to_group(theme, &mut vscode, &mut seen_vscode, "VS Code");
                 }
                 ThemeSource::CustomPath { .. } => {
-                    let key = dedupe_key(theme);
-                    if seen_custom.insert(key.clone()) {
-                        custom.push(theme);
-                    } else {
-                        tracing::debug!(
-                            key = %key,
-                            display = %theme.display_name,
-                            "Skipping duplicate custom theme"
-                        );
-                    }
+                    Self::add_theme_to_group(theme, &mut custom, &mut seen_custom, "custom");
                 }
             }
         }
@@ -280,6 +237,41 @@ impl ThemePickerState {
         }
 
         items
+    }
+
+    fn dedupe_key(theme: &ThemeInfo) -> String {
+        match &theme.source {
+            ThemeSource::Builtin => format!("builtin:{}", theme.name.trim().to_lowercase()),
+            ThemeSource::VsCodeExtension { path } => format!(
+                "vscode:{}:{}",
+                path.display(),
+                theme.name.trim().to_lowercase()
+            ),
+            ThemeSource::CustomPath { path } => format!(
+                "custom:{}:{}",
+                path.display(),
+                theme.name.trim().to_lowercase()
+            ),
+        }
+    }
+
+    fn add_theme_to_group<'a>(
+        theme: &'a ThemeInfo,
+        group: &mut Vec<&'a ThemeInfo>,
+        seen: &mut HashSet<String>,
+        group_name: &str,
+    ) {
+        let key = Self::dedupe_key(theme);
+        if seen.insert(key.clone()) {
+            group.push(theme);
+        } else {
+            tracing::debug!(
+                key = %key,
+                display = %theme.display_name,
+                "Skipping duplicate {} theme",
+                group_name
+            );
+        }
     }
 
     /// Select the current theme in the list
@@ -444,39 +436,47 @@ impl ThemePickerState {
             return;
         }
 
+        let render_index = self.render_index_for_filtered(self.selected);
+        self.adjust_scroll_to_visible(render_index);
+    }
+
+    fn header_for_item(&self, item_idx: usize) -> Option<String> {
+        for i in (0..item_idx).rev() {
+            if let ThemePickerItem::SectionHeader(ref header) = self.items[i] {
+                return Some(header.clone());
+            }
+        }
+        None
+    }
+
+    fn render_index_for_filtered(&self, target_filter_idx: usize) -> usize {
         let mut seen_headers: HashSet<String> = HashSet::new();
         let mut render_index = 0usize;
-        let mut selected_render_index = None;
 
         for (filter_idx, &item_idx) in self.filtered.iter().enumerate() {
             if let ThemePickerItem::Theme(_) = self.items[item_idx] {
-                let mut header_text: Option<String> = None;
-                for i in (0..item_idx).rev() {
-                    if let ThemePickerItem::SectionHeader(ref header) = self.items[i] {
-                        header_text = Some(header.clone());
-                        break;
-                    }
-                }
-                if let Some(header_text) = header_text {
-                    if seen_headers.insert(header_text) {
+                if let Some(header) = self.header_for_item(item_idx) {
+                    if seen_headers.insert(header) {
                         render_index += 1;
                     }
                 }
 
-                if filter_idx == self.selected {
-                    selected_render_index = Some(render_index);
-                    break;
+                if filter_idx == target_filter_idx {
+                    return render_index;
                 }
 
                 render_index += 1;
             }
         }
 
-        let selected_render_index = selected_render_index.unwrap_or(0);
-        if selected_render_index < self.scroll_offset {
-            self.scroll_offset = selected_render_index;
-        } else if selected_render_index >= self.scroll_offset + self.max_visible {
-            self.scroll_offset = selected_render_index.saturating_sub(self.max_visible - 1);
+        0
+    }
+
+    fn adjust_scroll_to_visible(&mut self, render_index: usize) {
+        if render_index < self.scroll_offset {
+            self.scroll_offset = render_index;
+        } else if render_index >= self.scroll_offset + self.max_visible {
+            self.scroll_offset = render_index.saturating_sub(self.max_visible - 1);
         }
     }
 
@@ -675,12 +675,9 @@ impl ThemePicker<'_> {
 
         for (filter_idx, &item_idx) in self.state.filtered.iter().enumerate() {
             if let ThemePickerItem::Theme(ref info) = self.state.items[item_idx] {
-                for i in (0..item_idx).rev() {
-                    if let ThemePickerItem::SectionHeader(ref header) = self.state.items[i] {
-                        if seen_headers.insert(header.clone()) {
-                            render_items.push((true, header.clone(), false, false));
-                        }
-                        break;
+                if let Some(header) = self.state.header_for_item(item_idx) {
+                    if seen_headers.insert(header.clone()) {
+                        render_items.push((true, header, false, false));
                     }
                 }
 
