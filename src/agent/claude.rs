@@ -38,7 +38,7 @@ impl ClaudeCodeRunner {
         let mut cmd = Command::new(&self.binary_path);
 
         // Core headless mode flags
-        cmd.arg("-p").arg(&config.prompt);
+        cmd.arg("-p"); // Print mode (standalone flag, prompt is positional)
         cmd.arg("--output-format").arg("stream-json");
         cmd.arg("--verbose"); // verbose is now required
                               // Claude process failed (exit status: 1): Error: When
@@ -71,6 +71,12 @@ impl ClaudeCodeRunner {
         // Additional args
         for arg in &config.additional_args {
             cmd.arg(arg);
+        }
+
+        // Use "--" to signal end of flags, so prompts starting with "-" (like "- [ ] task")
+        // are not interpreted as CLI arguments
+        if !config.prompt.is_empty() {
+            cmd.arg("--").arg(&config.prompt);
         }
 
         // Stdio setup for JSONL capture
@@ -589,5 +595,140 @@ mod tests {
             }
             other => panic!("Expected AssistantMessage, got {:?}", other),
         }
+    }
+
+    /// Helper to extract command args for testing
+    fn get_command_args(cmd: &Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect()
+    }
+
+    /// Test that a prompt starting with "-" is properly escaped with "--" separator
+    #[test]
+    fn test_prompt_starting_with_dash_is_escaped() {
+        let runner = ClaudeCodeRunner {
+            binary_path: PathBuf::from("/usr/bin/claude"),
+        };
+        let config = AgentStartConfig::new(
+            "- [ ] Try to understand the source of this error",
+            PathBuf::from("/tmp"),
+        );
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Find the position of "--" and verify the prompt comes after it
+        let double_dash_pos = args.iter().position(|a| a == "--");
+        assert!(
+            double_dash_pos.is_some(),
+            "Command should contain '--' separator. Args: {:?}",
+            args
+        );
+
+        let prompt_pos = args
+            .iter()
+            .position(|a| a == "- [ ] Try to understand the source of this error");
+        assert!(
+            prompt_pos.is_some(),
+            "Command should contain the prompt. Args: {:?}",
+            args
+        );
+
+        assert!(
+            prompt_pos.unwrap() > double_dash_pos.unwrap(),
+            "Prompt should come after '--' separator. Args: {:?}",
+            args
+        );
+    }
+
+    /// Test that normal prompts (not starting with dash) still work
+    #[test]
+    fn test_prompt_without_dash_still_works() {
+        let runner = ClaudeCodeRunner {
+            binary_path: PathBuf::from("/usr/bin/claude"),
+        };
+        let config = AgentStartConfig::new("Hello, can you help me?", PathBuf::from("/tmp"));
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Should still contain "--" for consistency
+        assert!(
+            args.contains(&"--".to_string()),
+            "Command should contain '--' separator. Args: {:?}",
+            args
+        );
+        assert!(
+            args.contains(&"Hello, can you help me?".to_string()),
+            "Command should contain the prompt. Args: {:?}",
+            args
+        );
+    }
+
+    /// Test that resume session with dash-prefixed prompt works
+    #[test]
+    fn test_resume_session_with_dash_prompt() {
+        let runner = ClaudeCodeRunner {
+            binary_path: PathBuf::from("/usr/bin/claude"),
+        };
+        let config = AgentStartConfig::new("- continue with this task", PathBuf::from("/tmp"))
+            .with_resume(SessionId::from_string("session-123".to_string()));
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Check command structure includes --resume, --, and prompt in correct order
+        let resume_pos = args.iter().position(|a| a == "--resume");
+        let double_dash_pos = args.iter().position(|a| a == "--");
+        let prompt_pos = args.iter().position(|a| a == "- continue with this task");
+
+        assert!(
+            resume_pos.is_some(),
+            "Should contain '--resume'. Args: {:?}",
+            args
+        );
+        assert!(
+            double_dash_pos.is_some(),
+            "Should contain '--'. Args: {:?}",
+            args
+        );
+        assert!(
+            prompt_pos.is_some(),
+            "Should contain prompt. Args: {:?}",
+            args
+        );
+
+        // Prompt should come after both --resume and --
+        assert!(
+            prompt_pos.unwrap() > double_dash_pos.unwrap(),
+            "Prompt should come after '--'. Args: {:?}",
+            args
+        );
+        assert!(
+            double_dash_pos.unwrap() > resume_pos.unwrap(),
+            "'--' should come after '--resume'. Args: {:?}",
+            args
+        );
+    }
+
+    /// Test that empty prompt doesn't add "--" separator
+    #[test]
+    fn test_empty_prompt_no_separator() {
+        let runner = ClaudeCodeRunner {
+            binary_path: PathBuf::from("/usr/bin/claude"),
+        };
+        let config = AgentStartConfig::new("", PathBuf::from("/tmp"));
+
+        let cmd = runner.build_command(&config);
+        let args = get_command_args(&cmd);
+
+        // Should NOT contain "--" when prompt is empty
+        assert!(
+            !args.contains(&"--".to_string()),
+            "Command should NOT contain '--' separator when prompt is empty. Args: {:?}",
+            args
+        );
     }
 }
