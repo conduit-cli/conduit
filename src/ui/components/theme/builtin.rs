@@ -21,7 +21,7 @@ pub fn builtin_themes() -> Vec<(&'static str, Theme)> {
 /// Get a built-in theme by name.
 pub fn get_builtin(name: &str) -> Option<Theme> {
     match name {
-        "default" => Some(Theme::default_dark()),
+        "default" => Some(dracula()),
         "default-dark" => Some(Theme::default_dark()),
         "default-light" => Some(Theme::default_light()),
         "catppuccin-mocha" => Some(catppuccin_mocha()),

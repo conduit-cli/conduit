@@ -144,7 +144,7 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::default_dark()
+        super::builtin::dracula()
     }
 }
 
