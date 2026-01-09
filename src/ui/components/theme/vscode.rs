@@ -161,7 +161,7 @@ impl<'a> VsCodeMapper<'a> {
         // =====================================================================
         let bg_base = self
             .get_with_fallback(&["editor.background", "sideBar.background"])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(250, 250, 252)
                 } else {
@@ -234,7 +234,7 @@ impl<'a> VsCodeMapper<'a> {
         // =====================================================================
         let text_primary = self
             .get_with_fallback(&["editor.foreground", "foreground"])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(35, 35, 45)
                 } else {
@@ -288,7 +288,7 @@ impl<'a> VsCodeMapper<'a> {
         // =====================================================================
         let accent_primary = self
             .get_with_fallback(&["focusBorder", "button.background", "textLink.foreground"])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(60, 120, 220)
                 } else {
@@ -306,7 +306,7 @@ impl<'a> VsCodeMapper<'a> {
                 "gitDecoration.addedResourceForeground",
                 "terminal.ansiGreen",
             ])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(40, 160, 60)
                 } else {
@@ -320,7 +320,7 @@ impl<'a> VsCodeMapper<'a> {
                 "gitDecoration.modifiedResourceForeground",
                 "terminal.ansiYellow",
             ])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(200, 140, 30)
                 } else {
@@ -334,7 +334,7 @@ impl<'a> VsCodeMapper<'a> {
                 "errorForeground",
                 "terminal.ansiRed",
             ])
-            .unwrap_or_else(|| {
+            .unwrap_or({
                 if is_light {
                     Color::Rgb(200, 60, 60)
                 } else {

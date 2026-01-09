@@ -207,7 +207,7 @@ impl ThemeRegistry {
         }
 
         // Try VS Code theme by display name (case-insensitive)
-        for (_, entry) in &self.vscode_themes {
+        for entry in self.vscode_themes.values() {
             if entry.display_name.eq_ignore_ascii_case(name) {
                 let loaded = self.load_from_path(&entry.path);
                 if loaded.is_none() {
