@@ -195,13 +195,29 @@ impl ThemeRegistry {
 
         // Try VS Code theme by key
         if let Some(entry) = self.vscode_themes.get(name) {
-            return self.load_from_path(&entry.path);
+            let loaded = self.load_from_path(&entry.path);
+            if loaded.is_none() {
+                tracing::warn!(
+                    theme = name,
+                    path = %entry.path.display(),
+                    "VS Code theme failed to load by key"
+                );
+            }
+            return loaded;
         }
 
         // Try VS Code theme by display name (case-insensitive)
         for (_, entry) in &self.vscode_themes {
             if entry.display_name.eq_ignore_ascii_case(name) {
-                return self.load_from_path(&entry.path);
+                let loaded = self.load_from_path(&entry.path);
+                if loaded.is_none() {
+                    tracing::warn!(
+                        theme = name,
+                        path = %entry.path.display(),
+                        "VS Code theme failed to load by display name"
+                    );
+                }
+                return loaded;
             }
         }
 
@@ -210,9 +226,17 @@ impl ThemeRegistry {
 
     /// Load a theme from a file path.
     pub fn load_from_path(&self, path: &Path) -> Option<Theme> {
-        VsCodeTheme::load_from_file(path)
-            .ok()
-            .map(|vscode| vscode.to_theme())
+        match VsCodeTheme::load_from_file(path) {
+            Ok(vscode) => Some(vscode.to_theme()),
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "Failed to load VS Code theme file"
+                );
+                None
+            }
+        }
     }
 
     /// Get the number of available themes.

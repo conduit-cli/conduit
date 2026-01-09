@@ -9,6 +9,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -58,11 +60,15 @@ pub struct ThemePickerState {
     /// Maximum visible items
     pub max_visible: usize,
     /// Theme name when dialog was opened (for cancel/restore)
-    pub original_theme: String,
+    pub original_theme_name: Option<String>,
+    /// Theme path when dialog was opened (for cancel/restore)
+    pub original_theme_path: Option<PathBuf>,
     /// Currently previewing theme name
     pub preview_theme: Option<String>,
     /// Pending preview request (debounced)
     pending_preview: Option<PendingPreview>,
+    /// Last preview error (for footer message)
+    last_error: Option<String>,
 }
 
 impl Default for ThemePickerState {
@@ -83,18 +89,24 @@ impl ThemePickerState {
             filtered: Vec::new(),
             scroll_offset: 0,
             max_visible: 10,
-            original_theme: String::new(),
+            original_theme_name: None,
+            original_theme_path: None,
             preview_theme: None,
             pending_preview: None,
+            last_error: None,
         }
     }
 
     /// Show the theme picker dialog
-    pub fn show(&mut self) {
+    pub fn show(&mut self, theme_name: Option<&str>, theme_path: Option<&std::path::Path>) {
         self.visible = true;
-        self.original_theme = current_theme_name();
+        self.original_theme_name = theme_name
+            .map(|name| name.to_string())
+            .or_else(|| Some(current_theme_name()));
+        self.original_theme_path = theme_path.map(|path| path.to_path_buf());
         self.preview_theme = None;
         self.pending_preview = None;
+        self.last_error = None;
         self.search.clear();
         self.search_cursor = 0;
         self.scroll_offset = 0;
@@ -120,13 +132,34 @@ impl ThemePickerState {
 
     /// Hide the dialog and restore original theme if cancelled
     pub fn hide(&mut self, cancelled: bool) {
-        if cancelled && !self.original_theme.is_empty() {
-            // Restore original theme
-            load_theme_by_name(&self.original_theme);
+        if cancelled {
+            if let Some(path) = self.original_theme_path.as_ref() {
+                if !crate::ui::components::load_theme_from_path(path) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "Failed to restore original theme after cancel"
+                    );
+                    self.last_error = Some(format!(
+                        "Failed to restore theme from path: {}",
+                        path.display()
+                    ));
+                }
+            } else if let Some(name) = self.original_theme_name.as_ref() {
+                if !load_theme_by_name(name) {
+                    tracing::warn!(
+                        theme = %name,
+                        "Failed to restore original theme after cancel"
+                    );
+                    self.last_error = Some(format!("Failed to restore theme: {name}"));
+                }
+            }
         }
         self.visible = false;
         self.preview_theme = None;
         self.pending_preview = None;
+        if !cancelled {
+            self.last_error = None;
+        }
     }
 
     /// Check if visible
@@ -143,12 +176,47 @@ impl ThemePickerState {
         let mut builtin: Vec<&ThemeInfo> = Vec::new();
         let mut vscode: Vec<&ThemeInfo> = Vec::new();
         let mut custom: Vec<&ThemeInfo> = Vec::new();
+        let mut seen_builtin: HashSet<String> = HashSet::new();
+        let mut seen_vscode: HashSet<String> = HashSet::new();
+        let mut seen_custom: HashSet<String> = HashSet::new();
+
+        let normalize_key = |name: &str| name.trim().to_lowercase();
 
         for theme in &themes {
             match &theme.source {
-                ThemeSource::Builtin => builtin.push(theme),
-                ThemeSource::VsCodeExtension { .. } => vscode.push(theme),
-                ThemeSource::CustomPath { .. } => custom.push(theme),
+                ThemeSource::Builtin => {
+                    let key = normalize_key(&theme.display_name);
+                    if seen_builtin.insert(key) {
+                        builtin.push(theme);
+                    } else {
+                        tracing::debug!(
+                            display = %theme.display_name,
+                            "Skipping duplicate built-in theme"
+                        );
+                    }
+                }
+                ThemeSource::VsCodeExtension { .. } => {
+                    let key = normalize_key(&theme.display_name);
+                    if seen_vscode.insert(key) {
+                        vscode.push(theme);
+                    } else {
+                        tracing::debug!(
+                            display = %theme.display_name,
+                            "Skipping duplicate VS Code theme"
+                        );
+                    }
+                }
+                ThemeSource::CustomPath { .. } => {
+                    let key = normalize_key(&theme.display_name);
+                    if seen_custom.insert(key) {
+                        custom.push(theme);
+                    } else {
+                        tracing::debug!(
+                            display = %theme.display_name,
+                            "Skipping duplicate custom theme"
+                        );
+                    }
+                }
             }
         }
 
@@ -184,7 +252,7 @@ impl ThemePickerState {
         let current = current_theme_name();
         for (idx, &item_idx) in self.filtered.iter().enumerate() {
             if let ThemePickerItem::Theme(ref info) = self.items[item_idx] {
-                if info.name == current {
+                if theme_matches_current(&current, info) {
                     self.selected = idx;
                     self.ensure_visible();
                     return;
@@ -212,7 +280,8 @@ impl ThemePickerState {
         if let Some(theme) = self.selected_theme() {
             let name = theme.name.clone();
             // Theme is already applied via preview, just confirm it
-            self.original_theme = name.clone(); // Prevent restore on hide
+            self.original_theme_name = Some(name.clone()); // Prevent restore on hide
+            self.original_theme_path = None;
             Some(name)
         } else {
             None
@@ -268,9 +337,13 @@ impl ThemePickerState {
         let theme_name = self.selected_theme().map(|t| t.name.clone());
         if let Some(name) = theme_name {
             if self.preview_theme.as_ref() != Some(&name) {
-                load_theme_by_name(&name);
-                tracing::debug!(theme = %name, "Theme preview applied immediately");
-                self.preview_theme = Some(name);
+                if load_theme_by_name(&name) {
+                    tracing::debug!(theme = %name, "Theme preview applied immediately");
+                    self.preview_theme = Some(name);
+                } else {
+                    tracing::warn!(theme = %name, "Theme preview failed to load");
+                    self.last_error = Some(format!("Failed to load theme: {name}"));
+                }
             }
         }
         self.pending_preview = None;
@@ -288,12 +361,20 @@ impl ThemePickerState {
         if pending.requested_at.elapsed() >= PREVIEW_DEBOUNCE {
             let name = pending.name.clone();
             if self.preview_theme.as_ref() != Some(&name) {
-                load_theme_by_name(&name);
-                tracing::debug!(theme = %name, "Theme preview applied");
-                self.preview_theme = Some(name);
+                if load_theme_by_name(&name) {
+                    tracing::debug!(theme = %name, "Theme preview applied");
+                    self.preview_theme = Some(name);
+                } else {
+                    tracing::warn!(theme = %name, "Theme preview failed to load");
+                    self.last_error = Some(format!("Failed to load theme: {name}"));
+                }
             }
             self.pending_preview = None;
         }
+    }
+
+    pub fn take_error(&mut self) -> Option<String> {
+        self.last_error.take()
     }
 
     /// Ensure the selected item is visible
@@ -386,6 +467,16 @@ impl ThemePickerState {
     }
 }
 
+fn theme_matches_current(current: &str, info: &ThemeInfo) -> bool {
+    let current_norm = current.trim().to_lowercase();
+    let name_norm = info.name.trim().to_lowercase();
+    let display_norm = info.display_name.trim().to_lowercase();
+    name_norm == current_norm
+        || display_norm == current_norm
+        || (current_norm.len() > 4 && display_norm.contains(&current_norm))
+        || (display_norm.len() > 4 && current_norm.contains(&display_norm))
+}
+
 /// Theme picker dialog widget
 pub struct ThemePicker<'a> {
     state: &'a ThemePickerState,
@@ -465,9 +556,8 @@ impl ThemePicker<'_> {
 
         // Render cursor
         let prompt_width = UnicodeWidthStr::width(prompt) as u16;
-        let cursor_offset: u16 = input
+        let cursor_offset: u16 = input[..self.state.search_cursor.min(input.len())]
             .chars()
-            .take(self.state.search_cursor)
             .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1) as u16)
             .sum();
         let cursor_x = area.x + prompt_width + cursor_offset;
@@ -519,7 +609,7 @@ impl ThemePicker<'_> {
                 }
 
                 let is_selected = filter_idx == self.state.selected;
-                let is_current = info.name == current_theme;
+                let is_current = theme_matches_current(&current_theme, info);
                 let display = if is_current {
                     format!("\u{2713} {}", info.display_name)
                 } else {

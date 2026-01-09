@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
@@ -328,6 +328,12 @@ impl CommandPalette {
     }
 
     fn render_list(&self, area: Rect, buf: &mut Buffer, state: &CommandPaletteState) {
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                buf[(x, y)].set_bg(dialog_bg());
+            }
+        }
+
         if state.list.filtered.is_empty() {
             // Show empty message
             let msg = if state.commands.is_empty() {
@@ -401,7 +407,7 @@ impl CommandPalette {
                     Style::default().fg(text_muted()),
                     Style::default().fg(text_primary()),
                     Style::default().fg(text_muted()),
-                    Color::Reset,
+                    dialog_bg(),
                 )
             };
 

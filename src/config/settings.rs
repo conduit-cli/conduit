@@ -39,6 +39,10 @@ pub struct Config {
     pub keybindings: KeybindingConfig,
     /// Configured paths for external tools (git, gh, claude, codex)
     pub tool_paths: ToolPaths,
+    /// Theme name from config (None = use default)
+    pub theme_name: Option<String>,
+    /// Custom theme path from config (takes precedence over name)
+    pub theme_path: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -62,6 +66,8 @@ impl Default for Config {
             claude_output_cost_per_million: 15.0,
             keybindings: default_keybindings(),
             tool_paths: ToolPaths::default(),
+            theme_name: None,
+            theme_path: None,
         }
     }
 }
@@ -101,6 +107,15 @@ pub struct TomlKeybindings {
     pub raw_events: Option<HashMap<String, String>>,
 }
 
+/// TOML representation of theme configuration
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlThemeConfig {
+    /// Theme name (built-in or VS Code theme label/extension ID)
+    pub name: Option<String>,
+    /// Direct path to VS Code theme JSON file
+    pub path: Option<PathBuf>,
+}
+
 /// TOML representation of the config file
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlConfig {
@@ -108,6 +123,8 @@ pub struct TomlConfig {
     pub keys: Option<TomlKeybindings>,
     /// Tool path configuration
     pub tools: Option<ToolPaths>,
+    /// Theme configuration
+    pub theme: Option<TomlThemeConfig>,
 }
 
 impl TomlKeybindings {
@@ -199,6 +216,7 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "interrupt_agent" => Some(Action::InterruptAgent),
         "toggle_view_mode" => Some(Action::ToggleViewMode),
         "show_model_selector" => Some(Action::ShowModelSelector),
+        "show_theme_picker" => Some(Action::ShowThemePicker),
         "toggle_metrics" => Some(Action::ToggleMetrics),
         "dump_debug_state" => Some(Action::DumpDebugState),
         "copy_selection" => Some(Action::CopySelection),
@@ -396,6 +414,12 @@ impl Config {
                     if let Some(tools) = toml_config.tools {
                         config.tool_paths = tools;
                     }
+
+                    // Load theme configuration
+                    if let Some(theme) = toml_config.theme {
+                        config.theme_path = theme.path;
+                        config.theme_name = theme.name;
+                    }
                 }
             }
         }
@@ -476,6 +500,63 @@ pub fn save_tool_path(tool: Tool, path: &Path) -> std::io::Result<()> {
     }
 
     // Write back to file
+    fs::write(&config_file, doc.to_string())?;
+
+    Ok(())
+}
+
+/// Save the selected theme to the config file.
+///
+/// This updates the [theme] section, setting either "name" or "path"
+/// and clearing the other to avoid ambiguity.
+pub fn save_theme_config(name: Option<&str>, path: Option<&Path>) -> std::io::Result<()> {
+    let config_file = config_path();
+
+    // Read existing config or start with empty document
+    let contents = if config_file.exists() {
+        fs::read_to_string(&config_file)?
+    } else {
+        String::new()
+    };
+
+    // Parse as TOML document
+    let mut doc: DocumentMut = contents
+        .parse()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    if name.is_none() && path.is_none() {
+        if doc.contains_key("theme") {
+            doc.remove("theme");
+        }
+    } else {
+        // Ensure [theme] section exists
+        if !doc.contains_key("theme") {
+            doc["theme"] = Item::Table(Table::new());
+        }
+
+        if let Some(name) = name {
+            doc["theme"]["name"] = toml_edit::value(name);
+            if let Item::Table(table) = &mut doc["theme"] {
+                table.remove("path");
+            }
+        }
+
+        if let Some(path) = path {
+            let path_str = path.to_string_lossy().to_string();
+            doc["theme"]["path"] = toml_edit::value(path_str);
+            if let Item::Table(table) = &mut doc["theme"] {
+                table.remove("name");
+            }
+        }
+    }
+
+    // Ensure parent directory exists
+    if let Some(parent) = config_file.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
     fs::write(&config_file, doc.to_string())?;
 
     Ok(())

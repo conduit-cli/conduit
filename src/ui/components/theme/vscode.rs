@@ -55,8 +55,23 @@ impl VsCodeTheme {
     /// Load a VS Code theme from a JSON string.
     pub fn load_from_str(content: &str) -> Result<Self, VsCodeThemeError> {
         // VS Code themes may have comments and trailing commas
-        // Try to parse with serde_json first, then handle common issues
-        serde_json::from_str(content).map_err(VsCodeThemeError::Json)
+        // Try strict JSON first, then fall back to JSON5 for JSONC-style files.
+        match serde_json::from_str(content) {
+            Ok(theme) => Ok(theme),
+            Err(json_err) => {
+                tracing::debug!(error = %json_err, "Strict JSON parse failed, retrying with JSON5");
+                match json5::from_str(content) {
+                    Ok(theme) => {
+                        tracing::debug!("Parsed theme with JSON5 fallback");
+                        Ok(theme)
+                    }
+                    Err(json5_err) => Err(VsCodeThemeError::Parse {
+                        json: json_err,
+                        json5: json5_err,
+                    }),
+                }
+            }
+        }
     }
 
     /// Convert this VS Code theme to our Theme format.
@@ -75,14 +90,21 @@ impl VsCodeTheme {
 #[derive(Debug)]
 pub enum VsCodeThemeError {
     Io(std::io::Error),
-    Json(serde_json::Error),
+    Parse {
+        json: serde_json::Error,
+        json5: json5::Error,
+    },
 }
 
 impl std::fmt::Display for VsCodeThemeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VsCodeThemeError::Io(e) => write!(f, "IO error: {}", e),
-            VsCodeThemeError::Json(e) => write!(f, "JSON parse error: {}", e),
+            VsCodeThemeError::Parse { json, json5 } => write!(
+                f,
+                "JSON parse failed: {}. JSON5 parse failed: {}",
+                json, json5
+            ),
         }
     }
 }

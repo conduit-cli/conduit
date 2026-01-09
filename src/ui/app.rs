@@ -755,6 +755,10 @@ impl App {
         self.state.clear_expired_footer_message();
 
         self.state.theme_picker_state.tick();
+        if let Some(error) = self.state.theme_picker_state.take_error() {
+            self.state
+                .set_timed_footer_message(error, Duration::from_secs(5));
+        }
 
         // Tick other animations every 6 frames (~100ms)
         if !self.state.tick_count.is_multiple_of(6) {
@@ -1138,7 +1142,10 @@ impl App {
             }
             Action::ShowThemePicker => {
                 self.state.close_overlays();
-                self.state.theme_picker_state.show();
+                self.state.theme_picker_state.show(
+                    self.config.theme_name.as_deref(),
+                    self.config.theme_path.as_deref(),
+                );
                 self.state.input_mode = InputMode::SelectingTheme;
             }
             Action::OpenSessionImport => {
@@ -1611,11 +1618,36 @@ impl App {
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::SelectingTheme => {
+                    let selected_theme = self.state.theme_picker_state.selected_theme().cloned();
                     if let Some(theme_name) = self.state.theme_picker_state.confirm() {
-                        self.state.set_timed_footer_message(
-                            format!("Theme: {}", theme_name),
-                            Duration::from_secs(3),
-                        );
+                        if let Some(theme) = selected_theme {
+                            let (name, path) = match &theme.source {
+                                crate::ui::components::ThemeSource::CustomPath { path } => {
+                                    (None, Some(path.clone()))
+                                }
+                                _ => (Some(theme.name.clone()), None),
+                            };
+                            if let Err(err) =
+                                crate::config::save_theme_config(name.as_deref(), path.as_deref())
+                            {
+                                self.state.set_timed_footer_message(
+                                    format!("Failed to save theme: {err}"),
+                                    Duration::from_secs(5),
+                                );
+                            } else {
+                                self.config.theme_name = name;
+                                self.config.theme_path = path;
+                            }
+                        }
+                        if let Some(error) = self.state.theme_picker_state.take_error() {
+                            self.state
+                                .set_timed_footer_message(error, Duration::from_secs(5));
+                        } else {
+                            self.state.set_timed_footer_message(
+                                format!("Theme: {}", theme_name),
+                                Duration::from_secs(3),
+                            );
+                        }
                     }
                     self.state.theme_picker_state.hide(false); // Not cancelled
                     self.state.input_mode = InputMode::Normal;

@@ -483,7 +483,9 @@ dependencies = [
  "crossterm 0.28.1",
  "dirs",
  "image",
+ "json5",
  "libc",
+ "parking_lot",
  "pulldown-cmark",
  "rand 0.9.2",
  "ratatui",
@@ -1277,6 +1279,17 @@ checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "json5"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b0db21af676c1ce64250b5f40f3ce2cf27e4e47cb91ed91eb6fe9350b430c1"
+dependencies = [
+ "pest",
+ "pest_derive",
+ "serde",
 ]
 
 [[package]]

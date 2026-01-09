@@ -176,18 +176,30 @@ pub fn theme_revision() -> u64 {
 
 fn normalize_theme(mut theme: Theme) -> Theme {
     let base = theme.bg_base;
+    let is_light = theme.is_light;
 
     // Text contrast against base background.
+    let text_muted_min = if is_light { 3.6 } else { 3.0 };
+    let text_faint_min = if is_light { 2.8 } else { 2.2 };
     theme.text_bright = ensure_contrast_fg(theme.text_bright, base, 4.5);
     theme.text_primary = ensure_contrast_fg(theme.text_primary, base, 4.5);
     theme.text_secondary = ensure_contrast_fg(theme.text_secondary, base, 3.0);
-    theme.text_muted = ensure_contrast_fg(theme.text_muted, base, 3.0);
-    theme.text_faint = ensure_contrast_fg(theme.text_faint, base, 2.2);
+    theme.text_muted = ensure_contrast_fg(theme.text_muted, base, text_muted_min);
+    theme.text_faint = ensure_contrast_fg(theme.text_faint, base, text_faint_min);
 
     // Layered backgrounds should separate enough to be visible.
+    let highlight_min = if is_light { 2.6 } else { 2.0 };
     theme.bg_surface = ensure_contrast_bg(theme.bg_surface, base, 1.2);
     theme.bg_elevated = ensure_contrast_bg(theme.bg_elevated, theme.bg_surface, 1.2);
-    theme.bg_highlight = ensure_contrast_bg(theme.bg_highlight, base, 2.0);
+    theme.bg_highlight = ensure_contrast_bg(theme.bg_highlight, base, highlight_min);
+
+    // Light themes need extra separation for code/tool surfaces.
+    if is_light {
+        theme.tool_block_bg = ensure_contrast_bg(theme.tool_block_bg, base, 2.4);
+        theme.markdown_code_bg = ensure_contrast_bg(theme.markdown_code_bg, base, 2.0);
+        theme.markdown_inline_code_bg =
+            ensure_contrast_bg(theme.markdown_inline_code_bg, base, 2.0);
+    }
 
     // Border contrast for outlines and separators.
     theme.border_default = ensure_contrast_fg(theme.border_default, base, 1.8);
