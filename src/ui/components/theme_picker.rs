@@ -142,7 +142,10 @@ impl ThemePickerState {
 
     /// Hide the dialog and restore original theme if cancelled
     pub fn hide(&mut self, cancelled: bool) {
-        if cancelled {
+        // Only restore if we're actually visible and being cancelled
+        // This prevents restoring when close_overlays() is called after
+        // the picker was already closed via confirmation
+        if cancelled && self.visible {
             self.restore_original_theme();
         }
         self.visible = false;
@@ -205,12 +208,17 @@ impl ThemePickerState {
                 ThemeSource::Builtin => {
                     Self::add_theme_to_group(theme, &mut builtin, &mut seen_builtin, "built-in");
                 }
-                ThemeSource::ConduitToml { .. } => {
-                    let key = normalize_key(&theme.display_name);
-                    if seen_conduit_toml.insert(key) {
+                ThemeSource::ConduitToml { path } => {
+                    let key = format!(
+                        "toml:{}:{}",
+                        path.display(),
+                        theme.name.trim().to_lowercase()
+                    );
+                    if seen_conduit_toml.insert(key.clone()) {
                         conduit_toml.push(theme);
                     } else {
                         tracing::debug!(
+                            key = %key,
                             display = %theme.display_name,
                             "Skipping duplicate Conduit TOML theme"
                         );
