@@ -2688,6 +2688,7 @@ impl App {
                 self.config.theme_name = previous_theme_name;
                 self.config.theme_path = previous_theme_path;
                 self.state.theme_picker_state.hide(true); // Restore original theme
+                let _ = self.state.theme_picker_state.take_error();
                 self.state.input_mode = InputMode::Normal;
                 self.state.set_timed_footer_message(
                     format!("Failed to save theme: {err}"),

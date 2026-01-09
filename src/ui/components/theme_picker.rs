@@ -337,10 +337,7 @@ impl ThemePickerState {
     }
 
     fn theme_key(info: &ThemeInfo) -> String {
-        match &info.source {
-            ThemeSource::CustomPath { path } => format!("path:{}", path.display()),
-            _ => format!("name:{}", info.name),
-        }
+        Self::dedupe_key(info)
     }
 
     fn apply_theme_info(&self, info: &ThemeInfo) -> bool {
@@ -784,7 +781,7 @@ impl ThemePicker<'_> {
     }
 
     fn render_list(&self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 {
+        if area.height == 0 || area.width == 0 {
             return;
         }
 

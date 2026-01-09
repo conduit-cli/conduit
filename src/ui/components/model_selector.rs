@@ -284,10 +284,11 @@ impl ModelSelector {
 
                     // Add NEW badge if applicable
                     if model.is_new {
+                        let badge_fg = ensure_contrast_fg(text_muted(), bg_surface(), 4.5);
                         spans.push(Span::raw("  "));
                         spans.push(Span::styled(
                             " NEW ",
-                            Style::default().fg(text_muted()).bg(bg_surface()),
+                            Style::default().fg(badge_fg).bg(bg_surface()),
                         ));
                     }
 
@@ -302,7 +303,12 @@ impl ModelSelector {
                         // Add padding to right-align checkmark
                         let padding = checkmark_col.saturating_sub(content_len);
                         spans.push(Span::raw(" ".repeat(padding)));
-                        spans.push(Span::styled("✓", Style::default().fg(text_primary())));
+                        let checkmark_fg = if is_selected {
+                            selected_fg_color
+                        } else {
+                            text_primary()
+                        };
+                        spans.push(Span::styled("✓", Style::default().fg(checkmark_fg)));
                     }
 
                     let line = Line::from(spans);
