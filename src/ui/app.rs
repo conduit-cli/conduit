@@ -1630,48 +1630,7 @@ impl App {
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::SelectingTheme => {
-                    let selected_theme = self.state.theme_picker_state.selected_theme().cloned();
-                    let previous_theme_name = self.config.theme_name.clone();
-                    let previous_theme_path = self.config.theme_path.clone();
-                    let confirmed = self.state.theme_picker_state.confirm();
-                    if let Some(error) = self.state.theme_picker_state.take_error() {
-                        self.state
-                            .set_timed_footer_message(error, Duration::from_secs(5));
-                        return Ok(Vec::new());
-                    }
-
-                    if confirmed.is_some() {
-                        if let Some(theme) = selected_theme {
-                            let (name, path) = match &theme.source {
-                                crate::ui::components::ThemeSource::CustomPath { path } => {
-                                    (None, Some(path.clone()))
-                                }
-                                _ => (Some(theme.name.clone()), None),
-                            };
-                            let display_name = theme.display_name.clone();
-                            if let Err(err) =
-                                crate::config::save_theme_config(name.as_deref(), path.as_deref())
-                            {
-                                self.config.theme_name = previous_theme_name;
-                                self.config.theme_path = previous_theme_path;
-                                self.state.theme_picker_state.hide(true); // Restore original theme
-                                self.state.input_mode = InputMode::Normal;
-                                self.state.set_timed_footer_message(
-                                    format!("Failed to save theme: {err}"),
-                                    Duration::from_secs(5),
-                                );
-                                return Ok(Vec::new());
-                            }
-                            self.config.theme_name = name;
-                            self.config.theme_path = path;
-                            self.state.set_timed_footer_message(
-                                format!("Theme: {}", display_name),
-                                Duration::from_secs(3),
-                            );
-                        }
-                    }
-                    self.state.theme_picker_state.hide(false); // Not cancelled
-                    self.state.input_mode = InputMode::Normal;
+                    return self.confirm_theme_picker();
                 }
                 InputMode::SelectingAgent => {
                     let agent_type = self.state.agent_selector_state.selected_agent();
@@ -2700,12 +2659,53 @@ impl App {
             }
             InputMode::SelectingTheme => {
                 let sanitized = pasted.replace('\n', " ");
-                for ch in sanitized.chars() {
-                    self.state.theme_picker_state.insert_char(ch);
-                }
+                self.state.theme_picker_state.insert_str(&sanitized);
             }
             _ => {}
         }
+    }
+
+    fn confirm_theme_picker(&mut self) -> anyhow::Result<Vec<Effect>> {
+        let previous_theme_name = self.config.theme_name.clone();
+        let previous_theme_path = self.config.theme_path.clone();
+
+        let confirmed = self.state.theme_picker_state.confirm();
+        if let Some(error) = self.state.theme_picker_state.take_error() {
+            self.state
+                .set_timed_footer_message(error, Duration::from_secs(5));
+            return Ok(Vec::new());
+        }
+
+        if let Some(theme) = confirmed {
+            let (name, path) = match &theme.source {
+                crate::ui::components::ThemeSource::CustomPath { path } => {
+                    (None, Some(path.clone()))
+                }
+                _ => (Some(theme.name.clone()), None),
+            };
+            let display_name = theme.display_name.clone();
+            if let Err(err) = crate::config::save_theme_config(name.as_deref(), path.as_deref()) {
+                self.config.theme_name = previous_theme_name;
+                self.config.theme_path = previous_theme_path;
+                self.state.theme_picker_state.hide(true); // Restore original theme
+                self.state.input_mode = InputMode::Normal;
+                self.state.set_timed_footer_message(
+                    format!("Failed to save theme: {err}"),
+                    Duration::from_secs(5),
+                );
+                return Ok(Vec::new());
+            }
+            self.config.theme_name = name;
+            self.config.theme_path = path;
+            self.state.set_timed_footer_message(
+                format!("Theme: {}", display_name),
+                Duration::from_secs(3),
+            );
+        }
+
+        self.state.theme_picker_state.hide(false); // Not cancelled
+        self.state.input_mode = InputMode::Normal;
+        Ok(Vec::new())
     }
 
     /// Execute a command from command mode

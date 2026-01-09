@@ -32,6 +32,8 @@ pub enum ThemePickerItem {
 }
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
+const DIALOG_WIDTH: u16 = 50;
+const DIALOG_HEIGHT: u16 = 18;
 
 #[derive(Debug, Clone)]
 struct PendingPreview {
@@ -131,7 +133,7 @@ impl ThemePickerState {
 
     /// Update the list viewport height (based on the screen size).
     pub fn update_viewport(&mut self, area: Rect) {
-        let dialog_height = 18u16.min(area.height.saturating_sub(2));
+        let dialog_height = DIALOG_HEIGHT.min(area.height.saturating_sub(2));
         let inner_height = dialog_height.saturating_sub(2);
         let list_height = inner_height.saturating_sub(3).max(1);
         self.max_visible = list_height as usize;
@@ -308,19 +310,14 @@ impl ThemePickerState {
     }
 
     /// Confirm selection and apply theme
-    pub fn confirm(&mut self) -> Option<String> {
+    pub fn confirm(&mut self) -> Option<ThemeInfo> {
         self.apply_preview_now();
         if self.last_error.is_some() {
             return None;
         }
-        if let Some(theme) = self.selected_theme() {
-            let name = theme.name.clone();
-            // Theme is already applied via preview, just confirm it.
-            self.last_error = None;
-            Some(name)
-        } else {
-            None
-        }
+        let theme = self.selected_theme().cloned();
+        self.last_error = None;
+        theme
     }
 
     /// Move selection up
@@ -490,6 +487,16 @@ impl ThemePickerState {
         self.update_filter();
     }
 
+    /// Insert text into search
+    pub fn insert_str(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        self.search.insert_str(self.search_cursor, s);
+        self.search_cursor = self.search_cursor.saturating_add(s.len());
+        self.update_filter();
+    }
+
     /// Delete character before cursor
     pub fn backspace(&mut self) {
         if self.search_cursor > 0 {
@@ -621,8 +628,8 @@ impl Widget for ThemePicker<'_> {
             return;
         }
 
-        let dialog_width: u16 = 50;
-        let dialog_height: u16 = 18;
+        let dialog_width = DIALOG_WIDTH;
+        let dialog_height = DIALOG_HEIGHT;
 
         // Render dialog frame
         let frame = DialogFrame::new("Theme", dialog_width, dialog_height);
@@ -805,8 +812,8 @@ impl ThemePicker<'_> {
             selected_bg,
             selected_fg,
         };
-        for (rendered, (_idx, (is_header, text, is_selected, _is_current))) in
-            render_items.iter().enumerate().skip(scroll).enumerate()
+        for (rendered, (is_header, text, is_selected, _is_current)) in
+            render_items.iter().skip(scroll).enumerate()
         {
             if rendered >= list_height {
                 break;

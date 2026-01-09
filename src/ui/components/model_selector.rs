@@ -196,11 +196,7 @@ impl ModelSelector {
 
         // Clear the dialog area
         Clear.render(dialog_area, buf);
-        for y in dialog_area.y..dialog_area.y.saturating_add(dialog_area.height) {
-            for x in dialog_area.x..dialog_area.x.saturating_add(dialog_area.width) {
-                buf[(x, y)].set_bg(dialog_bg());
-            }
-        }
+        buf.set_style(dialog_area, Style::default().bg(dialog_bg()));
 
         // Render dialog border with rounded corners
         let block = Block::default()
@@ -317,9 +313,7 @@ impl ModelSelector {
 
                     // Highlight selected row background
                     if is_selected {
-                        for dx in 0..row_rect.width {
-                            buf[(row_rect.x + dx, row_rect.y)].set_bg(selected_bg_color);
-                        }
+                        buf.set_style(row_rect, Style::default().bg(selected_bg_color));
                     }
 
                     para.render(row_rect, buf);
