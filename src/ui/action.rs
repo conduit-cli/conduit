@@ -24,6 +24,8 @@ pub enum Action {
     ToggleViewMode,
     /// Show model selector dialog
     ShowModelSelector,
+    /// Show theme picker dialog
+    ShowThemePicker,
     /// Toggle performance metrics display
     ToggleMetrics,
     /// Dump debug state to file
@@ -202,6 +204,7 @@ impl Action {
             Action::InterruptAgent => "Interrupt agent",
             Action::ToggleViewMode => "Toggle view mode",
             Action::ShowModelSelector => "Select model",
+            Action::ShowThemePicker => "Change theme",
             Action::ToggleMetrics => "Toggle metrics",
             Action::DumpDebugState => "Dump debug state",
             Action::CopyWorkspacePath => "Copy workspace path",
@@ -305,6 +308,7 @@ impl Action {
             self,
             Action::NewProject
                 | Action::ShowModelSelector
+                | Action::ShowThemePicker
                 | Action::OpenSessionImport
                 | Action::ShowHelp
                 | Action::AddRepository
@@ -325,6 +329,7 @@ impl Action {
                 | Action::InterruptAgent
                 | Action::ToggleViewMode
                 | Action::ShowModelSelector
+                | Action::ShowThemePicker
                 | Action::ToggleMetrics
                 | Action::DumpDebugState
                 | Action::CopyWorkspacePath

@@ -9,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{SHINE_CENTER, SHINE_EDGE, SHINE_MID, SHINE_PEAK, TEXT_MUTED};
+use super::{shine_center, shine_edge, shine_mid, shine_peak, text_muted};
 
 /// The Conduit logo as an array of strings
 const LOGO_LINES: [&str; 7] = [
@@ -96,7 +96,7 @@ impl LogoShineAnimation {
             min_interval,
             max_interval,
             band_width,
-            base_color: TEXT_MUTED,
+            base_color: text_muted(),
             easing: EasingType::Linear,
             logo_width,
             logo_height,
@@ -181,13 +181,13 @@ impl LogoShineAnimation {
         if distance > band_width {
             self.base_color
         } else if distance < 1.0 {
-            SHINE_PEAK
+            shine_peak()
         } else if distance < 2.0 {
-            SHINE_CENTER
+            shine_center()
         } else if distance < 3.0 {
-            SHINE_MID
+            shine_mid()
         } else {
-            SHINE_EDGE
+            shine_edge()
         }
     }
 

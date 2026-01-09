@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use super::KnightRiderSpinner;
-use crate::ui::components::{render_key_hints_responsive, KeyHintBarStyle, TEXT_MUTED};
+use crate::ui::components::{render_key_hints_responsive, text_muted, KeyHintBarStyle};
 use crate::ui::events::{InputMode, ViewMode};
 
 /// Context for determining which footer hints to show
@@ -155,7 +155,7 @@ impl<'a> GlobalFooter<'a> {
             } else {
                 left_spans.push(Span::raw("  ")); // Leading space
             }
-            left_spans.push(Span::styled(message, Style::default().fg(TEXT_MUTED)));
+            left_spans.push(Span::styled(message, Style::default().fg(text_muted())));
         }
 
         // Calculate left side width

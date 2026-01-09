@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use super::{ACCENT_PRIMARY, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED, TEXT_SECONDARY};
+use super::{accent_primary, text_bright, text_faint, text_muted, text_secondary};
 
 #[derive(Debug, Clone, Copy)]
 pub struct KeyHintBarStyle {
@@ -27,9 +27,9 @@ pub struct KeyHintBarStyle {
 impl KeyHintBarStyle {
     pub fn instruction_bar() -> Self {
         Self {
-            key_style: Style::default().fg(ACCENT_PRIMARY),
-            action_style: Style::default().fg(TEXT_SECONDARY),
-            separator: Some((" │ ", Style::default().fg(TEXT_FAINT))),
+            key_style: Style::default().fg(accent_primary()),
+            action_style: Style::default().fg(text_secondary()),
+            separator: Some((" │ ", Style::default().fg(text_faint()))),
             item_gap: "",
             key_prefix: "",
             key_suffix: "",
@@ -42,8 +42,8 @@ impl KeyHintBarStyle {
 
     pub fn footer_bar(key_bg: Color, footer_bg: Color) -> Self {
         Self {
-            key_style: Style::default().fg(TEXT_SECONDARY).bg(key_bg),
-            action_style: Style::default().fg(TEXT_MUTED),
+            key_style: Style::default().fg(text_secondary()).bg(key_bg),
+            action_style: Style::default().fg(text_muted()),
             separator: None,
             item_gap: "   ",
             key_prefix: " ",
@@ -58,8 +58,8 @@ impl KeyHintBarStyle {
     /// Minimal footer style - just text with bright keys and muted descriptions
     pub fn minimal_footer() -> Self {
         Self {
-            key_style: Style::default().fg(TEXT_BRIGHT),
-            action_style: Style::default().fg(TEXT_MUTED),
+            key_style: Style::default().fg(text_bright()),
+            action_style: Style::default().fg(text_muted()),
             separator: None,
             item_gap: "   ",
             key_prefix: "",

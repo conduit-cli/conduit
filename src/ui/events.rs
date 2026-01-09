@@ -140,6 +140,8 @@ pub enum InputMode {
     AddingRepository,
     /// Selecting model for current session
     SelectingModel,
+    /// Selecting theme
+    SelectingTheme,
     /// Setting base projects directory
     SettingBaseDir,
     /// Picking a project from the list

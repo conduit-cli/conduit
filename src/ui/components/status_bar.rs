@@ -12,8 +12,8 @@ use crate::agent::{
 };
 use crate::git::{CheckState, GitDiffStats, MergeReadiness, MergeableStatus, PrState, PrStatus};
 use crate::ui::components::{
-    ACCENT_ERROR, ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, PR_CLOSED_BG, PR_DRAFT_BG,
-    PR_MERGED_BG, PR_OPEN_BG, PR_UNKNOWN_BG, STATUS_BAR_BG, TEXT_BRIGHT, TEXT_FAINT, TEXT_MUTED,
+    accent_error, accent_primary, accent_success, accent_warning, pr_closed_bg, pr_draft_bg,
+    pr_merged_bg, pr_open_bg, pr_unknown_bg, status_bar_bg, text_bright, text_faint, text_muted,
 };
 use ratatui::style::Color;
 
@@ -199,7 +199,7 @@ impl StatusBar {
         if self.agent_type == AgentType::Claude {
             spans.push(Span::styled(
                 self.agent_mode.display_name(),
-                Style::default().fg(ACCENT_PRIMARY),
+                Style::default().fg(accent_primary()),
             ));
             // Two spaces separator between mode and model
             spans.push(Span::raw("  "));
@@ -216,13 +216,13 @@ impl StatusBar {
 
         spans.push(Span::styled(
             model_display,
-            Style::default().fg(TEXT_BRIGHT),
+            Style::default().fg(text_bright()),
         ));
 
         // Agent name - muted color
         spans.push(Span::styled(
             format!(" {}", self.agent_type.display_name()),
-            Style::default().fg(TEXT_MUTED),
+            Style::default().fg(text_muted()),
         ));
 
         // Context usage indicator - hidden for now until we decide on presentation
@@ -231,14 +231,14 @@ impl StatusBar {
         //     // Only show if we have meaningful context usage (> 0%)
         //     if pct > 0.0 || ctx.max_tokens > 0 {
         //         let color = match ctx.warning_level() {
-        //             ContextWarningLevel::Critical => ACCENT_ERROR,
-        //             ContextWarningLevel::High => ACCENT_WARNING,
-        //             ContextWarningLevel::Medium => ACCENT_WARNING,
-        //             ContextWarningLevel::Normal => TEXT_MUTED,
+        //             ContextWarningLevel::Critical => accent_error(),
+        //             ContextWarningLevel::High => accent_warning(),
+        //             ContextWarningLevel::Medium => accent_warning(),
+        //             ContextWarningLevel::Normal => text_muted(),
         //         };
         //
-        //         spans.push(Span::styled(" │ ", Style::default().fg(TEXT_FAINT)));
-        //         spans.push(Span::styled("ctx:", Style::default().fg(TEXT_FAINT)));
+        //         spans.push(Span::styled(" │ ", Style::default().fg(text_faint())));
+        //         spans.push(Span::styled("ctx:", Style::default().fg(text_faint())));
         //         spans.push(Span::styled(
         //             format!("{:.0}%", pct * 100.0),
         //             Style::default().fg(color),
@@ -248,7 +248,7 @@ impl StatusBar {
         //         if ctx.compaction_count > 0 {
         //             spans.push(Span::styled(
         //                 format!(" ({}×)", ctx.compaction_count),
-        //                 Style::default().fg(TEXT_FAINT),
+        //                 Style::default().fg(text_faint()),
         //             ));
         //         }
         //     }
@@ -258,15 +258,15 @@ impl StatusBar {
 
         // Performance metrics (when enabled)
         if self.show_metrics {
-            spans.push(Span::styled(" │ ", Style::default().fg(TEXT_FAINT)));
+            spans.push(Span::styled(" │ ", Style::default().fg(text_faint())));
 
             // FPS indicator
             let fps_color = if self.fps >= 55.0 {
-                ACCENT_SUCCESS
+                accent_success()
             } else if self.fps >= 30.0 {
-                ACCENT_WARNING
+                accent_warning()
             } else {
-                ACCENT_ERROR
+                accent_error()
             };
             spans.push(Span::styled(
                 format!("FPS:{:.0} ", self.fps),
@@ -276,11 +276,11 @@ impl StatusBar {
             // Work time = draw + event (actual CPU work, excluding sleep)
             let work_ms = self.draw_time.as_millis() + self.event_time.as_millis();
             let work_color = if work_ms <= 8 {
-                ACCENT_SUCCESS
+                accent_success()
             } else if work_ms <= 14 {
-                ACCENT_WARNING
+                accent_warning()
             } else {
-                ACCENT_ERROR
+                accent_error()
             };
             spans.push(Span::styled(
                 format!("work:{}ms ", work_ms),
@@ -294,7 +294,7 @@ impl StatusBar {
                     self.draw_time.as_millis(),
                     self.event_time.as_millis()
                 ),
-                Style::default().fg(TEXT_MUTED),
+                Style::default().fg(text_muted()),
             ));
 
             // Scroll responsiveness (only highlight if active)
@@ -302,14 +302,14 @@ impl StatusBar {
             let latency_avg_ms = self.scroll_latency_avg.as_secs_f64() * 1000.0;
             let scroll_color = if self.scroll_active {
                 if latency_ms <= 16.0 {
-                    ACCENT_SUCCESS
+                    accent_success()
                 } else if latency_ms <= 33.0 {
-                    ACCENT_WARNING
+                    accent_warning()
                 } else {
-                    ACCENT_ERROR
+                    accent_error()
                 }
             } else {
-                TEXT_MUTED
+                text_muted()
             };
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
@@ -321,7 +321,7 @@ impl StatusBar {
                     "scroll:{:.0}l/s ev:{:.0}/s",
                     self.scroll_lines_per_sec, self.scroll_events_per_sec
                 ),
-                Style::default().fg(TEXT_MUTED),
+                Style::default().fg(text_muted()),
             ));
         }
 
@@ -345,17 +345,17 @@ impl StatusBar {
                     // For merged/closed PRs, use state-based coloring
                     // For open PRs, use merge readiness-based coloring
                     let (bg_color, fg_color) = match pr.state {
-                        PrState::Merged => (PR_MERGED_BG, Color::White),
-                        PrState::Closed => (PR_CLOSED_BG, Color::White),
-                        PrState::Unknown => (PR_UNKNOWN_BG, Color::White),
+                        PrState::Merged => (pr_merged_bg(), Color::White),
+                        PrState::Closed => (pr_closed_bg(), Color::White),
+                        PrState::Unknown => (pr_unknown_bg(), Color::White),
                         _ => match pr.merge_readiness {
-                            MergeReadiness::Ready => (PR_OPEN_BG, Color::White),
-                            MergeReadiness::HasConflicts => (PR_CLOSED_BG, Color::White),
-                            MergeReadiness::Blocked => (PR_DRAFT_BG, Color::White),
+                            MergeReadiness::Ready => (pr_open_bg(), Color::White),
+                            MergeReadiness::HasConflicts => (pr_closed_bg(), Color::White),
+                            MergeReadiness::Blocked => (pr_draft_bg(), Color::White),
                             MergeReadiness::Unknown => match pr.state {
-                                PrState::Open => (PR_OPEN_BG, Color::White),
-                                PrState::Draft => (PR_DRAFT_BG, Color::White),
-                                _ => (PR_UNKNOWN_BG, Color::White),
+                                PrState::Open => (pr_open_bg(), Color::White),
+                                PrState::Draft => (pr_draft_bg(), Color::White),
+                                _ => (pr_unknown_bg(), Color::White),
                             },
                         },
                     };
@@ -389,7 +389,7 @@ impl StatusBar {
                     {
                         spans.push(Span::styled(
                             " conflicts",
-                            Style::default().fg(ACCENT_ERROR),
+                            Style::default().fg(accent_error()),
                         ));
                     }
 
@@ -401,7 +401,7 @@ impl StatusBar {
         // Git stats: +44 -10 (omit zeros)
         if self.git_diff_stats.has_changes() {
             if has_content {
-                spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
+                spans.push(Span::styled(" · ", Style::default().fg(text_faint())));
             }
 
             let has_additions = self.git_diff_stats.additions > 0;
@@ -410,7 +410,7 @@ impl StatusBar {
             if has_additions {
                 spans.push(Span::styled(
                     format!("+{}", self.git_diff_stats.additions),
-                    Style::default().fg(ACCENT_SUCCESS), // Green
+                    Style::default().fg(accent_success()), // Green
                 ));
             }
 
@@ -421,7 +421,7 @@ impl StatusBar {
             if has_deletions {
                 spans.push(Span::styled(
                     format!("-{}", self.git_diff_stats.deletions),
-                    Style::default().fg(ACCENT_ERROR), // Red
+                    Style::default().fg(accent_error()), // Red
                 ));
             }
 
@@ -431,11 +431,11 @@ impl StatusBar {
         // Branch name
         if let Some(ref branch) = self.branch_name {
             if has_content {
-                spans.push(Span::styled(" · ", Style::default().fg(TEXT_FAINT)));
+                spans.push(Span::styled(" · ", Style::default().fg(text_faint())));
             }
             spans.push(Span::styled(
                 branch.clone(),
-                Style::default().fg(TEXT_MUTED),
+                Style::default().fg(text_muted()),
             ));
             has_content = true;
         }
@@ -457,7 +457,7 @@ impl StatusBar {
         right_spans: Vec<Span<'static>>,
     ) {
         // Fill background
-        buf.set_style(area, Style::default().bg(STATUS_BAR_BG));
+        buf.set_style(area, Style::default().bg(status_bar_bg()));
 
         // Calculate widths
         let left_width: usize = left_spans.iter().map(|s| s.width()).sum();

@@ -120,6 +120,8 @@ pub enum KeyContext {
     SessionImport,
     /// Command palette
     CommandPalette,
+    /// Theme picker
+    ThemePicker,
 }
 
 impl KeyContext {
@@ -139,6 +141,7 @@ impl KeyContext {
             KeyContext::HelpDialog,
             KeyContext::SessionImport,
             KeyContext::CommandPalette,
+            KeyContext::ThemePicker,
         ]
     }
 
@@ -166,6 +169,7 @@ impl KeyContext {
             InputMode::ImportingSession => return KeyContext::SessionImport,
             InputMode::CommandPalette => return KeyContext::CommandPalette,
             InputMode::MissingTool => return KeyContext::Dialog,
+            InputMode::SelectingTheme => return KeyContext::ThemePicker,
             // Non-modal modes - continue to check view mode
             InputMode::Normal | InputMode::Scrolling | InputMode::SidebarNavigation => {}
         }

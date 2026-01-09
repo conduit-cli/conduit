@@ -2,7 +2,7 @@
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
-use super::{BG_ELEVATED, BG_TERMINAL, TEXT_FAINT};
+use super::{bg_elevated, bg_terminal, text_faint};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollbarMetrics {
@@ -21,7 +21,15 @@ pub fn render_minimal_scrollbar(
     visible: usize,
     offset: usize,
 ) {
-    render_minimal_scrollbar_styled(area, buf, total, visible, offset, BG_ELEVATED, TEXT_FAINT)
+    render_minimal_scrollbar_styled(
+        area,
+        buf,
+        total,
+        visible,
+        offset,
+        bg_elevated(),
+        text_faint(),
+    )
 }
 
 /// Render a minimal vertical scrollbar with custom colors.
@@ -53,7 +61,7 @@ pub fn render_minimal_scrollbar_styled(
         for x in area.x..area.x + area.width {
             let cell = &mut buf[(x, top_y)];
             cell.set_char('▀');
-            cell.set_fg(BG_TERMINAL);
+            cell.set_fg(bg_terminal());
             cell.set_bg(track_color);
         }
 
@@ -71,7 +79,7 @@ pub fn render_minimal_scrollbar_styled(
         for x in area.x..area.x + area.width {
             let cell = &mut buf[(x, bottom_y)];
             cell.set_char('▄');
-            cell.set_fg(BG_TERMINAL);
+            cell.set_fg(bg_terminal());
             cell.set_bg(track_color);
         }
         return;
@@ -103,7 +111,7 @@ pub fn render_minimal_scrollbar_styled(
     for x in area.x..area.x + area.width {
         let cell = &mut buf[(x, top_y)];
         cell.set_char('▀');
-        cell.set_fg(BG_TERMINAL);
+        cell.set_fg(bg_terminal());
         cell.set_bg(if at_top { thumb_color } else { track_color });
     }
 
@@ -125,7 +133,7 @@ pub fn render_minimal_scrollbar_styled(
     for x in area.x..area.x + area.width {
         let cell = &mut buf[(x, bottom_y)];
         cell.set_char('▄');
-        cell.set_fg(BG_TERMINAL);
+        cell.set_fg(bg_terminal());
         cell.set_bg(if at_bottom { thumb_color } else { track_color });
     }
 }

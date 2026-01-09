@@ -7,7 +7,7 @@ use crate::ui::components::{
     AddRepoDialogState, AgentSelectorState, BaseDirDialogState, CommandPaletteState,
     ConfirmationDialogState, ErrorDialogState, HelpDialogState, KnightRiderSpinner,
     LogoShineAnimation, MissingToolDialogState, ModelSelectorState, ProjectPickerState,
-    SessionImportPickerState, SidebarData, SidebarState,
+    SessionImportPickerState, SidebarData, SidebarState, ThemePickerState,
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
@@ -159,6 +159,7 @@ pub struct AppState {
     pub sidebar_data: SidebarData,
     pub add_repo_dialog_state: AddRepoDialogState,
     pub model_selector_state: ModelSelectorState,
+    pub theme_picker_state: ThemePickerState,
     pub agent_selector_state: AgentSelectorState,
     pub base_dir_dialog_state: BaseDirDialogState,
     pub project_picker_state: ProjectPickerState,
@@ -229,6 +230,7 @@ impl AppState {
             sidebar_data: SidebarData::new(),
             add_repo_dialog_state: AddRepoDialogState::new(),
             model_selector_state: ModelSelectorState::default(),
+            theme_picker_state: ThemePickerState::default(),
             agent_selector_state: AgentSelectorState::new(),
             base_dir_dialog_state: BaseDirDialogState::new(),
             project_picker_state: ProjectPickerState::new(),
@@ -269,6 +271,7 @@ impl AppState {
         self.project_picker_state.hide();
         self.session_import_state.hide();
         self.model_selector_state.hide();
+        self.theme_picker_state.hide(true); // cancelled=true since we're closing all overlays
         self.agent_selector_state.hide();
         self.confirmation_dialog_state.hide();
         self.error_dialog_state.hide();
@@ -282,6 +285,7 @@ impl AppState {
             || self.project_picker_state.is_visible()
             || self.add_repo_dialog_state.is_visible()
             || self.model_selector_state.is_visible()
+            || self.theme_picker_state.is_visible()
             || self.agent_selector_state.is_visible()
             || self.confirmation_dialog_state.visible
             || self.error_dialog_state.is_visible()
@@ -347,6 +351,7 @@ mod tests {
         state.project_picker_state.visible = true;
         state.session_import_state.visible = true;
         state.model_selector_state.visible = true;
+        state.theme_picker_state.visible = true;
         state.agent_selector_state.visible = true;
         state.confirmation_dialog_state.visible = true;
         state.error_dialog_state.visible = true;
@@ -360,6 +365,7 @@ mod tests {
         assert!(!state.project_picker_state.visible);
         assert!(!state.session_import_state.visible);
         assert!(!state.model_selector_state.visible);
+        assert!(!state.theme_picker_state.visible);
         assert!(!state.agent_selector_state.visible);
         assert!(!state.confirmation_dialog_state.visible);
         assert!(!state.error_dialog_state.visible);

@@ -6,8 +6,8 @@
 use ratatui::{style::Color, style::Style, text::Span};
 
 use super::{
-    SPINNER_ACTIVE, SPINNER_INACTIVE, SPINNER_TRAIL_1, SPINNER_TRAIL_2, SPINNER_TRAIL_3,
-    SPINNER_TRAIL_4, SPINNER_TRAIL_5,
+    spinner_active, spinner_inactive, spinner_trail_1, spinner_trail_2, spinner_trail_3,
+    spinner_trail_4, spinner_trail_5,
 };
 
 /// Animation phase for the Knight Rider scanner
@@ -114,13 +114,13 @@ impl KnightRiderSpinner {
     /// Get the base color for a trail position (0 = brightest, higher = dimmer)
     fn color_for_trail_index(&self, index: usize) -> Color {
         match index {
-            0 => SPINNER_ACTIVE,
-            1 => SPINNER_TRAIL_1,
-            2 => SPINNER_TRAIL_2,
-            3 => SPINNER_TRAIL_3,
-            4 => SPINNER_TRAIL_4,
-            5 => SPINNER_TRAIL_5,
-            _ => SPINNER_INACTIVE,
+            0 => spinner_active(),
+            1 => spinner_trail_1(),
+            2 => spinner_trail_2(),
+            3 => spinner_trail_3(),
+            4 => spinner_trail_4(),
+            5 => spinner_trail_5(),
+            _ => spinner_inactive(),
         }
     }
 
@@ -205,7 +205,7 @@ impl KnightRiderSpinner {
                 // opencode: defaultRgba.a = baseInactiveAlpha * fadeFactor
                 // Effective range: 0.6 * 0.3 = 0.18 to 0.6 * 1.0 = 0.6
                 let effective_brightness = self.inactive_factor * fade;
-                self.dim_color(SPINNER_INACTIVE, effective_brightness)
+                self.dim_color(spinner_inactive(), effective_brightness)
             };
 
             // Choose character based on whether it's part of the active trail

@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use super::{
-    ACCENT_PRIMARY, ACCENT_SUCCESS, ACCENT_WARNING, BG_ELEVATED, TAB_BAR_BG, TEXT_MUTED,
-    TEXT_PRIMARY, TEXT_SECONDARY,
+    accent_primary, accent_success, accent_warning, bg_elevated, tab_bar_bg, text_muted,
+    text_primary, text_secondary,
 };
 /// Spinner animation frames
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -87,14 +87,14 @@ impl TabBar {
 
             // Base style for active tabs (with background)
             let active_bg_style = if is_active {
-                Style::default().bg(BG_ELEVATED)
+                Style::default().bg(bg_elevated())
             } else {
                 Style::default()
             };
 
             // Tab indicator - subtle marker for active tab
             if is_active && self.focused {
-                spans.push(Span::styled(" ▸ ", active_bg_style.fg(ACCENT_PRIMARY)));
+                spans.push(Span::styled(" ▸ ", active_bg_style.fg(accent_primary())));
                 _total_width += 3;
             } else if is_active {
                 // Active but unfocused - just padding with background
@@ -109,13 +109,13 @@ impl TabBar {
             if is_processing {
                 spans.push(Span::styled(
                     format!("{} ", self.spinner_char()),
-                    active_bg_style.fg(ACCENT_WARNING),
+                    active_bg_style.fg(accent_warning()),
                 ));
                 _total_width += 2;
             }
             // Attention indicator (dot) - only if not processing
             else if needs_attention {
-                spans.push(Span::styled("● ", active_bg_style.fg(ACCENT_SUCCESS)));
+                spans.push(Span::styled("● ", active_bg_style.fg(accent_success())));
                 _total_width += 2;
             }
 
@@ -123,14 +123,14 @@ impl TabBar {
             let tab_style = if is_active {
                 if self.focused {
                     active_bg_style
-                        .fg(TEXT_PRIMARY)
+                        .fg(text_primary())
                         .add_modifier(Modifier::BOLD)
                 } else {
                     // Active but unfocused - secondary text
-                    active_bg_style.fg(TEXT_SECONDARY)
+                    active_bg_style.fg(text_secondary())
                 }
             } else {
-                Style::default().fg(TEXT_MUTED)
+                Style::default().fg(text_muted())
             };
 
             let tab_text = format!("[{}] {}", i + 1, tab);
@@ -150,7 +150,7 @@ impl TabBar {
 
         // Add new tab button - muted until hovered
         if self.can_add {
-            spans.push(Span::styled(" [+] New ", Style::default().fg(TEXT_MUTED)));
+            spans.push(Span::styled(" [+] New ", Style::default().fg(text_muted())));
         }
 
         // Render the tab line on the first row
@@ -161,7 +161,7 @@ impl TabBar {
             height: 1,
         };
         let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).style(Style::default().bg(TAB_BAR_BG));
+        let paragraph = Paragraph::new(line).style(Style::default().bg(tab_bar_bg()));
         paragraph.render(tab_area, buf);
     }
 }

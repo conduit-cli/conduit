@@ -15,7 +15,7 @@ use ratatui::{
 use crate::util::tools::{Tool, ToolAvailability};
 
 use super::dialog::{DialogFrame, InstructionBar, StatusLine};
-use super::{ACCENT_ERROR, ACCENT_WARNING, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
+use super::{accent_error, accent_warning, text_muted, text_primary, text_secondary};
 
 /// Result of the missing tool dialog interaction
 #[derive(Debug, Clone)]
@@ -226,9 +226,9 @@ impl Widget for MissingToolDialog<'_> {
 
         // Choose border color based on severity
         let border_color = if self.state.is_required {
-            ACCENT_ERROR
+            accent_error()
         } else {
-            ACCENT_WARNING
+            accent_warning()
         };
 
         // Render dialog frame
@@ -251,7 +251,7 @@ impl Widget for MissingToolDialog<'_> {
         };
 
         let desc_para = Paragraph::new(description.as_str())
-            .style(Style::default().fg(TEXT_PRIMARY))
+            .style(Style::default().fg(text_primary()))
             .wrap(Wrap { trim: true });
         let desc_height = 2u16;
         desc_para.render(
@@ -269,7 +269,7 @@ impl Widget for MissingToolDialog<'_> {
         let install_header = Line::from(Span::styled(
             "Install:",
             Style::default()
-                .fg(TEXT_SECONDARY)
+                .fg(text_secondary())
                 .add_modifier(Modifier::BOLD),
         ));
         Paragraph::new(install_header).render(
@@ -287,7 +287,7 @@ impl Widget for MissingToolDialog<'_> {
         for line in self.state.tool.install_instructions().lines() {
             let install_line = Line::from(Span::styled(
                 format!("  {}", line),
-                Style::default().fg(TEXT_MUTED),
+                Style::default().fg(text_muted()),
             ));
             Paragraph::new(install_line).render(
                 Rect {
@@ -306,7 +306,7 @@ impl Widget for MissingToolDialog<'_> {
         // Render "Or enter path" prompt
         let path_header = Line::from(Span::styled(
             format!("Or enter the path to {}:", self.state.tool.binary_name()),
-            Style::default().fg(TEXT_SECONDARY),
+            Style::default().fg(text_secondary()),
         ));
         Paragraph::new(path_header).render(
             Rect {
@@ -324,9 +324,9 @@ impl Widget for MissingToolDialog<'_> {
         let input_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if self.state.error.is_some() {
-                ACCENT_ERROR
+                accent_error()
             } else {
-                TEXT_MUTED
+                text_muted()
             }));
 
         // We need 3 lines for bordered input
@@ -348,9 +348,9 @@ impl Widget for MissingToolDialog<'_> {
         };
 
         let input_style = if self.state.input.is_empty() {
-            Style::default().fg(TEXT_MUTED)
+            Style::default().fg(text_muted())
         } else {
-            Style::default().fg(TEXT_PRIMARY)
+            Style::default().fg(text_primary())
         };
 
         Paragraph::new(display_text.as_str())

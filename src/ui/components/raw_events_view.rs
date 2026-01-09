@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 use super::raw_events_types::{
     EventDetailState, EventDirection, RawEventEntry, DETAIL_PANEL_BREAKPOINT,
 };
-use super::{render_minimal_scrollbar, ScrollbarMetrics, ACCENT_PRIMARY};
+use super::{accent_primary, render_minimal_scrollbar, ScrollbarMetrics};
 
 pub enum RawEventsClick {
     SessionId,
@@ -490,7 +490,7 @@ impl RawEventsView {
                 // Only the session ID value changes on hover
                 let session_id_style = if self.session_id_hovered {
                     Style::default()
-                        .fg(ACCENT_PRIMARY)
+                        .fg(accent_primary())
                         .add_modifier(Modifier::UNDERLINED)
                 } else {
                     default_style

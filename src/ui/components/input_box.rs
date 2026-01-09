@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::{render_minimal_scrollbar, ScrollbarMetrics, BG_HIGHLIGHT, INPUT_BG, TEXT_PRIMARY};
+use super::{bg_highlight, input_bg, render_minimal_scrollbar, text_primary, ScrollbarMetrics};
 use crate::ui::clipboard_paste::normalize_pasted_path;
 
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
@@ -940,7 +940,7 @@ impl InputBox {
         Clear.render(area, buf);
         for y in area.y..area.y.saturating_add(area.height) {
             for x in area.x..area.x.saturating_add(area.width) {
-                buf[(x, y)].set_bg(INPUT_BG);
+                buf[(x, y)].set_bg(input_bg());
             }
         }
 
@@ -981,8 +981,8 @@ impl InputBox {
         let max_scroll = total_lines.saturating_sub(visible_lines);
         self.scroll_offset = self.scroll_offset.min(max_scroll);
 
-        let base_style = Style::default().fg(TEXT_PRIMARY).bg(INPUT_BG);
-        let selection_style = Style::default().fg(TEXT_PRIMARY).bg(BG_HIGHLIGHT);
+        let base_style = Style::default().fg(text_primary()).bg(input_bg());
+        let selection_style = Style::default().fg(text_primary()).bg(bg_highlight());
         let selection = self.selection_range();
 
         let mut display_lines: Vec<Line> = Vec::with_capacity(visible_lines);

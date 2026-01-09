@@ -72,6 +72,9 @@ async fn run_app() -> Result<()> {
     // Create config (loads from ~/.conduit/config.toml if present)
     let config = Config::load();
 
+    // Initialize theme from config
+    conduit::ui::components::init_theme(config.theme_name.as_deref(), config.theme_path.as_deref());
+
     // Detect tool availability
     let mut tools = ToolAvailability::detect(&config.tool_paths);
 
