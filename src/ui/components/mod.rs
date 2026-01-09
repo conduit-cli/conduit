@@ -29,6 +29,7 @@ mod status_bar;
 mod tab_bar;
 mod text_input;
 mod theme;
+mod theme_picker;
 mod thinking_indicator;
 mod tree_view;
 mod turn_summary;
@@ -69,56 +70,99 @@ pub use spinner::Spinner;
 pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;
 pub use text_input::TextInputState;
+pub use theme_picker::{ThemePicker, ThemePickerItem, ThemePickerState};
+// Theme system - new dynamic API (use these for new code)
 pub use theme::{
-    ACCENT_ERROR,
-    ACCENT_PRIMARY,
-    ACCENT_SECONDARY,
-    ACCENT_SUCCESS,
-    ACCENT_WARNING,
-    AGENT_CLAUDE,
-    AGENT_CODEX,
-    // New modern palette
-    BG_BASE,
-    BG_ELEVATED,
-    BG_HIGHLIGHT,
-    BG_SURFACE,
-    BG_TERMINAL,
-    BORDER_DEFAULT,
-    BORDER_DIMMED,
-    BORDER_FOCUSED,
-    // Legacy aliases (backward compatibility)
-    FOOTER_BG,
-    INPUT_BG,
-    KEY_HINT_BG,
-    // PR state colors
-    PR_CLOSED_BG,
-    PR_DRAFT_BG,
-    PR_MERGED_BG,
-    PR_OPEN_BG,
-    PR_UNKNOWN_BG,
-    SELECTED_BG,
-    SELECTED_BG_DIM,
-    // Logo shine colors
-    SHINE_CENTER,
-    SHINE_EDGE,
-    SHINE_MID,
-    SHINE_PEAK,
-    // Knight Rider spinner colors
-    SPINNER_ACTIVE,
-    SPINNER_INACTIVE,
-    SPINNER_TRAIL_1,
-    SPINNER_TRAIL_2,
-    SPINNER_TRAIL_3,
-    SPINNER_TRAIL_4,
-    SPINNER_TRAIL_5,
-    STATUS_BAR_BG,
-    TAB_BAR_BG,
-    TEXT_BRIGHT,
-    TEXT_FAINT,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
+    // Accent colors (functions)
+    accent_error,
+    accent_primary,
+    accent_secondary,
+    accent_success,
+    accent_warning,
+    // Agent colors (functions)
+    agent_claude,
+    agent_codex,
+    // Background colors (functions)
+    bg_base,
+    bg_elevated,
+    bg_highlight,
+    bg_surface,
+    bg_terminal,
+    // Color utilities
+    boost_brightness,
+    // Border colors (functions)
+    border_default,
+    border_dimmed,
+    border_focused,
+    // Theme management
+    current_theme,
+    current_theme_name,
+    darken,
+    desaturate,
+    dialog_bg,
+    // Tool block colors (functions)
+    diff_add,
+    diff_remove,
+    dim,
+    // Legacy aliases (functions)
+    footer_bg,
+    init_theme,
+    input_bg,
+    interpolate,
+    key_hint_bg,
+    lighten,
+    list_themes,
+    load_theme_by_name,
+    load_theme_from_path,
+    markdown_code_bg,
+    markdown_inline_code_bg,
+    parse_hex_color,
+    // PR state colors (functions)
+    pr_closed_bg,
+    pr_draft_bg,
+    pr_merged_bg,
+    pr_open_bg,
+    pr_unknown_bg,
+    refresh_themes,
+    saturate,
+    selected_bg,
+    selected_bg_dim,
+    set_theme,
+    shift_hue,
+    // Logo shine colors (functions)
+    shine_center,
+    shine_edge,
+    shine_mid,
+    shine_peak,
+    sidebar_bg,
+    // Spinner colors (functions)
+    spinner_active,
+    spinner_inactive,
+    spinner_trail_1,
+    spinner_trail_2,
+    spinner_trail_3,
+    spinner_trail_4,
+    spinner_trail_5,
+    status_bar_bg,
+    tab_bar_bg,
+    // Text colors (functions)
+    text_bright,
+    text_faint,
+    text_muted,
+    text_primary,
+    text_secondary,
+    toggle_theme,
+    tool_block_bg,
+    tool_command,
+    tool_comment,
+    tool_output,
+    // Theme types
+    Theme,
+    ThemeInfo,
+    ThemeRegistry,
+    ThemeSource,
 };
+
 pub use thinking_indicator::{ProcessingState, ThinkingIndicator};
 pub use tree_view::{
     ActionType, NodeType, SidebarData, SidebarGitDisplay, TreeNode, TreeView, TreeViewState,

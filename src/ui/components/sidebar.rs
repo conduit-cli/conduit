@@ -7,10 +7,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::ui::components::{ACCENT_PRIMARY, BG_BASE, BORDER_DEFAULT, TEXT_MUTED, TEXT_PRIMARY};
+use crate::ui::components::{accent_primary, border_default, sidebar_bg, text_muted, text_primary};
 
 use super::tree_view::{SidebarData, TreeView, TreeViewState};
-use super::{SELECTED_BG, SELECTED_BG_DIM};
+use super::{selected_bg, selected_bg_dim};
 
 /// Sidebar widget for workspace navigation
 pub struct Sidebar<'a> {
@@ -135,13 +135,13 @@ impl StatefulWidget for Sidebar<'_> {
             .split(area);
 
         let title = Paragraph::new(format!(" {} ", self.title.trim()))
-            .style(Style::default().fg(TEXT_PRIMARY).bg(BG_BASE));
+            .style(Style::default().fg(text_primary()).bg(sidebar_bg()));
 
         let title_area = chunks[0];
 
         for y in title_area.y..title_area.y + title_area.height {
             for x in title_area.x..title_area.x + title_area.width {
-                buf[(x, y)].set_bg(BG_BASE);
+                buf[(x, y)].set_bg(sidebar_bg());
             }
         }
 
@@ -155,8 +155,8 @@ impl StatefulWidget for Sidebar<'_> {
         for x in area.x..area.x + area.width {
             buf[(x, separator_y)]
                 .set_char('─')
-                .set_fg(BORDER_DEFAULT)
-                .set_bg(BG_BASE);
+                .set_fg(border_default())
+                .set_bg(sidebar_bg());
         }
 
         let content_area = chunks[2];
@@ -164,7 +164,7 @@ impl StatefulWidget for Sidebar<'_> {
         // Fill content area background
         for y in content_area.y..content_area.y + content_area.height {
             for x in content_area.x..content_area.x + content_area.width {
-                buf[(x, y)].set_bg(BG_BASE);
+                buf[(x, y)].set_bg(sidebar_bg());
             }
         }
 
@@ -190,9 +190,9 @@ impl StatefulWidget for Sidebar<'_> {
 
             // Render button with styling
             let button_style = if state.focused {
-                Style::default().fg(ACCENT_PRIMARY)
+                Style::default().fg(accent_primary())
             } else {
-                Style::default().fg(TEXT_MUTED)
+                Style::default().fg(text_muted())
             };
 
             let button = Paragraph::new(format!("  {}  ", button_text)).style(button_style);
@@ -203,15 +203,15 @@ impl StatefulWidget for Sidebar<'_> {
 
             let block = Block::default()
                 .borders(Borders::NONE)
-                .style(Style::default().bg(BG_BASE));
+                .style(Style::default().bg(sidebar_bg()));
 
             // Create and render tree view
             let tree = TreeView::new(&self.data.nodes).block(block).selected_style(
                 Style::default()
                     .bg(if state.focused {
-                        SELECTED_BG
+                        selected_bg()
                     } else {
-                        SELECTED_BG_DIM
+                        selected_bg_dim()
                     })
                     .fg(Color::White),
             );

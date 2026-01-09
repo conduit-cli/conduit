@@ -56,6 +56,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-<BS>", Action::DeleteWordBack);
     bind(&mut config.global, "M-p", Action::ToggleMetrics);
     bind(&mut config.global, "M-g", Action::DumpDebugState);
+    bind(&mut config.global, "M-t", Action::ShowThemePicker);
 
     // Agent mode toggle (Build/Plan) - Ctrl+\
     //
@@ -586,6 +587,36 @@ pub fn default_keybindings() -> KeybindingConfig {
     palette.insert(
         KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
         Action::Backspace,
+    );
+
+    // ========== Theme Picker ==========
+    let theme_picker = config.context.entry(KeyContext::ThemePicker).or_default();
+
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
+        Action::Backspace,
+    );
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Delete, KeyModifiers::NONE),
+        Action::Delete,
+    );
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Up, KeyModifiers::NONE),
+        Action::SelectPrev,
+    );
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Down, KeyModifiers::NONE),
+        Action::SelectNext,
+    );
+    bind(theme_picker, "C-k", Action::SelectPrev);
+    bind(theme_picker, "C-j", Action::SelectNext);
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),
+        Action::Confirm,
+    );
+    theme_picker.insert(
+        KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE),
+        Action::Cancel,
     );
 
     config

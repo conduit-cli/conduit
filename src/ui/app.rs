@@ -38,7 +38,7 @@ use crate::ui::components::{
     CommandPalette, ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog,
     EventDirection, GlobalFooter, HelpDialog, MessageRole, MissingToolDialog, ModelSelector,
     ProcessingState, ProjectPicker, RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics,
-    SessionImportPicker, Sidebar, SidebarData, TabBar,
+    SessionImportPicker, Sidebar, SidebarData, TabBar, ThemePicker,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -754,6 +754,8 @@ impl App {
         // Clear expired timed footer messages
         self.state.clear_expired_footer_message();
 
+        self.state.theme_picker_state.tick();
+
         // Tick other animations every 6 frames (~100ms)
         if !self.state.tick_count.is_multiple_of(6) {
             return;
@@ -1023,6 +1025,7 @@ impl App {
                     | InputMode::Confirming
                     | InputMode::ImportingSession
                     | InputMode::CommandPalette
+                    | InputMode::SelectingTheme
             )
         {
             // Only enter command mode if the input box is empty
@@ -1132,6 +1135,11 @@ impl App {
                     self.state.model_selector_state.show(model);
                     self.state.input_mode = InputMode::SelectingModel;
                 }
+            }
+            Action::ShowThemePicker => {
+                self.state.close_overlays();
+                self.state.theme_picker_state.show();
+                self.state.input_mode = InputMode::SelectingTheme;
             }
             Action::OpenSessionImport => {
                 self.state.close_overlays();
@@ -1379,6 +1387,9 @@ impl App {
                     InputMode::MissingTool => {
                         self.state.missing_tool_dialog_state.backspace();
                     }
+                    InputMode::SelectingTheme => {
+                        self.state.theme_picker_state.backspace();
+                    }
                     _ => {
                         if let Some(session) = self.state.tab_manager.active_session_mut() {
                             session.input_box.backspace();
@@ -1389,6 +1400,8 @@ impl App {
             Action::Delete => {
                 if self.state.input_mode == InputMode::MissingTool {
                     self.state.missing_tool_dialog_state.delete();
+                } else if self.state.input_mode == InputMode::SelectingTheme {
+                    self.state.theme_picker_state.delete();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.delete();
                 }
@@ -1494,6 +1507,9 @@ impl App {
                 InputMode::SelectingModel => {
                     self.state.model_selector_state.select_next();
                 }
+                InputMode::SelectingTheme => {
+                    self.state.theme_picker_state.select_next();
+                }
                 InputMode::SelectingAgent => {
                     self.state.agent_selector_state.select_next();
                 }
@@ -1518,6 +1534,9 @@ impl App {
                 }
                 InputMode::SelectingModel => {
                     self.state.model_selector_state.select_previous();
+                }
+                InputMode::SelectingTheme => {
+                    self.state.theme_picker_state.select_prev();
                 }
                 InputMode::SelectingAgent => {
                     self.state.agent_selector_state.select_previous();
@@ -1589,6 +1608,16 @@ impl App {
                         }
                     }
                     self.state.model_selector_state.hide();
+                    self.state.input_mode = InputMode::Normal;
+                }
+                InputMode::SelectingTheme => {
+                    if let Some(theme_name) = self.state.theme_picker_state.confirm() {
+                        self.state.set_timed_footer_message(
+                            format!("Theme: {}", theme_name),
+                            Duration::from_secs(3),
+                        );
+                    }
+                    self.state.theme_picker_state.hide(false); // Not cancelled
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::SelectingAgent => {
@@ -1745,6 +1774,10 @@ impl App {
                 }
                 InputMode::SelectingModel => {
                     self.state.model_selector_state.hide();
+                    self.state.input_mode = InputMode::Normal;
+                }
+                InputMode::SelectingTheme => {
+                    self.state.theme_picker_state.hide(true); // Cancelled - restore original
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::SelectingAgent => {
@@ -2498,6 +2531,7 @@ impl App {
                 | KeyContext::HelpDialog
                 | KeyContext::SessionImport
                 | KeyContext::CommandPalette
+                | KeyContext::ThemePicker
         )
     }
 
@@ -2548,6 +2582,9 @@ impl App {
             }
             InputMode::MissingTool => {
                 self.state.missing_tool_dialog_state.insert_char(c);
+            }
+            InputMode::SelectingTheme => {
+                self.state.theme_picker_state.insert_char(c);
             }
             _ => {}
         }
@@ -5342,6 +5379,14 @@ impl App {
 
     fn draw(&mut self, f: &mut Frame) {
         let size = f.area();
+        {
+            use ratatui::style::Style;
+            use ratatui::widgets::{Block, Widget};
+
+            let background =
+                Block::default().style(Style::default().bg(crate::ui::components::bg_base()));
+            background.render(size, f.buffer_mut());
+        }
 
         // Calculate sidebar width
         let sidebar_width = if self.state.sidebar_state.visible {
@@ -5396,7 +5441,7 @@ impl App {
             ViewMode::Chat => {
                 // Handle empty state - no tabs open
                 if self.state.tab_manager.is_empty() {
-                    use crate::ui::components::{FooterContext, TEXT_MUTED};
+                    use crate::ui::components::{text_muted, FooterContext};
                     use ratatui::style::Style;
                     use ratatui::text::{Line, Span};
                     use ratatui::widgets::{Paragraph, Widget};
@@ -5443,23 +5488,23 @@ impl App {
                         // First-time user - simpler message
                         lines.push(Line::from(Span::styled(
                             "Add your first project with Ctrl+N",
-                            Style::default().fg(TEXT_MUTED),
+                            Style::default().fg(text_muted()),
                         )));
                     } else {
                         // Returning user - full message
                         lines.push(Line::from(Span::styled(
                             "Add a new project with Ctrl+N",
-                            Style::default().fg(TEXT_MUTED),
+                            Style::default().fg(text_muted()),
                         )));
                         lines.push(Line::from(""));
                         lines.push(Line::from(Span::styled(
                             "- or -",
-                            Style::default().fg(TEXT_MUTED),
+                            Style::default().fg(text_muted()),
                         )));
                         lines.push(Line::from(""));
                         lines.push(Line::from(Span::styled(
                             "Select a project from the sidebar",
-                            Style::default().fg(TEXT_MUTED),
+                            Style::default().fg(text_muted()),
                         )));
                     }
 
@@ -5502,6 +5547,10 @@ impl App {
                             &self.state.model_selector_state,
                             None,
                         );
+                    } else if self.state.theme_picker_state.is_visible() {
+                        use ratatui::widgets::Widget;
+                        let picker = ThemePicker::new(&self.state.theme_picker_state);
+                        picker.render(size, f.buffer_mut());
                     }
 
                     // Draw agent selector dialog if needed
@@ -5611,13 +5660,13 @@ impl App {
                     height: chunks[4].height,
                 };
 
-                // Fill margin areas with default/black for input, status bar, and gap rows
+                // Fill margin areas so they match the app background.
                 let buf = f.buffer_mut();
-                for row_area in [chunks[2], chunks[3], chunks[4]] {
+                let fill_margins = |buf: &mut ratatui::buffer::Buffer, row_area: Rect, bg| {
                     // Left margin
                     for y in row_area.y..row_area.y + row_area.height {
                         for x in row_area.x..row_area.x + INPUT_MARGIN_LEFT {
-                            buf[(x, y)].reset();
+                            buf[(x, y)].set_bg(bg);
                         }
                     }
                     // Right margin
@@ -5625,18 +5674,24 @@ impl App {
                         row_area.x + row_area.width.saturating_sub(INPUT_MARGIN_RIGHT);
                     for y in row_area.y..row_area.y + row_area.height {
                         for x in right_start..row_area.x + row_area.width {
-                            buf[(x, y)].reset();
+                            buf[(x, y)].set_bg(bg);
                         }
                     }
-                }
+                };
+
+                use crate::ui::components::bg_base;
+                let margin_bg = bg_base();
+                fill_margins(buf, chunks[2], margin_bg);
+                fill_margins(buf, chunks[3], margin_bg);
+                fill_margins(buf, chunks[4], margin_bg);
 
                 // Draw separator line in the gap row (▀ characters)
-                // Foreground = box bg color, background = terminal default (creates rounded bottom edge)
-                use crate::ui::components::STATUS_BAR_BG;
+                // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
+                use crate::ui::components::status_bar_bg;
                 for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
                     buf[(x, gap_area_inner.y)]
                         .set_char('▀')
-                        .set_fg(STATUS_BAR_BG);
+                        .set_fg(status_bar_bg());
                 }
 
                 // Store layout areas for mouse hit-testing
@@ -5842,6 +5897,13 @@ impl App {
             );
         }
 
+        // Draw theme picker dialog if open
+        if self.state.theme_picker_state.is_visible() {
+            use ratatui::widgets::Widget;
+            let picker = ThemePicker::new(&self.state.theme_picker_state);
+            picker.render(size, f.buffer_mut());
+        }
+
         // Draw base directory dialog if open
         if self.state.base_dir_dialog_state.is_visible() {
             let dialog = BaseDirDialog::new();
@@ -5943,7 +6005,7 @@ impl App {
         Clear.render(area, buf);
         for y in area.y..area.y.saturating_add(area.height) {
             for x in area.x..area.x.saturating_add(area.width) {
-                buf[(x, y)].set_bg(crate::ui::components::INPUT_BG);
+                buf[(x, y)].set_bg(crate::ui::components::input_bg());
             }
         }
 
@@ -5979,7 +6041,7 @@ impl App {
             Line::from(vec![
                 Span::styled(
                     prefix,
-                    Style::default().fg(crate::ui::components::TEXT_MUTED),
+                    Style::default().fg(crate::ui::components::text_muted()),
                 ),
                 Span::raw("…"),
                 Span::styled(truncated, Style::default().fg(Color::White)),
@@ -5988,7 +6050,7 @@ impl App {
             Line::from(vec![
                 Span::styled(
                     prefix,
-                    Style::default().fg(crate::ui::components::TEXT_MUTED),
+                    Style::default().fg(crate::ui::components::text_muted()),
                 ),
                 Span::styled(
                     &self.state.command_buffer,
@@ -5997,7 +6059,8 @@ impl App {
             ])
         };
 
-        let para = Paragraph::new(line).style(Style::default().bg(crate::ui::components::INPUT_BG));
+        let para =
+            Paragraph::new(line).style(Style::default().bg(crate::ui::components::input_bg()));
         para.render(
             Rect {
                 x: area.x,

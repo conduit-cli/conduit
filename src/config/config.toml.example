@@ -1,9 +1,35 @@
 # Conduit Configuration File
 # Location: ~/.conduit/config.toml
 #
-# This file allows you to customize keybindings and tool paths.
+# This file allows you to customize keybindings, tool paths, and themes.
 # Settings are merged with defaults, so you only need to specify
 # the values you want to change.
+
+# ============================================================================
+# Theme Configuration
+# ============================================================================
+# Configure the color theme for the UI. Themes can be specified by name
+# (built-in or discovered VS Code themes) or by path to a theme JSON file.
+#
+# Built-in themes:
+#   - default-dark       (Default)
+#   - default-light
+#   - catppuccin-mocha
+#   - catppuccin-latte
+#   - tokyo-night
+#   - dracula
+#
+# VS Code themes are auto-discovered from ~/.vscode/extensions/
+#
+# [theme]
+# # Use a built-in theme
+# name = "catppuccin-mocha"
+#
+# # Or use a discovered VS Code theme (by label)
+# # name = "Tokyo Night"
+#
+# # Or specify a custom theme file path
+# # path = "/path/to/my-theme-color-theme.json"
 
 # ============================================================================
 # Tool Paths

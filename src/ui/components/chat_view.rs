@@ -11,8 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::{
     render_minimal_scrollbar,
     theme::{
-        ACCENT_ERROR, ACCENT_SUCCESS, BG_BASE, BG_HIGHLIGHT, DIFF_ADD, DIFF_REMOVE,
-        MARKDOWN_CODE_BG, TOOL_BLOCK_BG, TOOL_COMMAND, TOOL_COMMENT, TOOL_OUTPUT,
+        accent_error, accent_success, bg_base, bg_highlight, diff_add, diff_remove,
+        markdown_code_bg, theme_revision, tool_block_bg, tool_command, tool_comment, tool_output,
     },
     ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics, TurnSummary,
 };
@@ -36,8 +36,8 @@ impl ToolBlockBuilder {
         Self {
             width,
             // Use conversation background color as foreground so ┃ blends with surrounding area
-            block_style: Style::default().fg(BG_BASE).bg(TOOL_BLOCK_BG),
-            bg_style: Style::default().bg(TOOL_BLOCK_BG),
+            block_style: Style::default().fg(bg_base()).bg(tool_block_bg()),
+            bg_style: Style::default().bg(tool_block_bg()),
         }
     }
 
@@ -87,7 +87,7 @@ impl ToolBlockBuilder {
     fn comment(&self, text: &str) -> Line<'static> {
         self.line(vec![Span::styled(
             format!("# {}", text),
-            Style::default().fg(TOOL_COMMENT).bg(TOOL_BLOCK_BG),
+            Style::default().fg(tool_comment()).bg(tool_block_bg()),
         )])
     }
 
@@ -95,7 +95,7 @@ impl ToolBlockBuilder {
     fn command(&self, text: &str) -> Line<'static> {
         self.line(vec![Span::styled(
             format!("$ {}", text),
-            Style::default().fg(TOOL_COMMAND).bg(TOOL_BLOCK_BG),
+            Style::default().fg(tool_command()).bg(tool_block_bg()),
         )])
     }
 
@@ -103,7 +103,7 @@ impl ToolBlockBuilder {
     fn output(&self, text: &str) -> Line<'static> {
         self.line(vec![Span::styled(
             text.to_string(),
-            Style::default().fg(TOOL_OUTPUT).bg(TOOL_BLOCK_BG),
+            Style::default().fg(tool_output()).bg(tool_block_bg()),
         )])
     }
 
@@ -111,7 +111,7 @@ impl ToolBlockBuilder {
     fn output_colored(&self, text: &str, color: Color) -> Line<'static> {
         self.line(vec![Span::styled(
             text.to_string(),
-            Style::default().fg(color).bg(TOOL_BLOCK_BG),
+            Style::default().fg(color).bg(tool_block_bg()),
         )])
     }
 
@@ -134,7 +134,7 @@ impl ToolBlockBuilder {
     /// Wrap text and return multiple lines with the given color
     fn wrapped_output_colored(&self, text: &str, color: Color) -> Vec<Line<'static>> {
         let content_width = self.content_width();
-        let style = Style::default().fg(color).bg(TOOL_BLOCK_BG);
+        let style = Style::default().fg(color).bg(tool_block_bg());
         let spans = vec![Span::styled(text.to_string(), style)];
         let wrapped = wrap_spans(spans, content_width);
 
@@ -249,6 +249,8 @@ pub struct ChatView {
     streaming_joiner_before: Option<Vec<Option<String>>>,
     /// Selection scroll lock (offset from top)
     selection_scroll_lock: Option<usize>,
+    /// Theme revision used for cached lines (invalidate on change)
+    theme_revision: u64,
 }
 
 impl ChatView {
@@ -268,6 +270,7 @@ impl ChatView {
             joiner_before: Vec::new(),
             streaming_joiner_before: None,
             selection_scroll_lock: None,
+            theme_revision: theme_revision(),
         }
     }
 
@@ -1139,11 +1142,11 @@ impl ChatView {
             for line in display_lines {
                 // Check for diff-style lines
                 let (line_color, line_text) = if line.starts_with('+') && !line.starts_with("+++") {
-                    (DIFF_ADD, line.to_string())
+                    (diff_add(), line.to_string())
                 } else if line.starts_with('-') && !line.starts_with("---") {
-                    (DIFF_REMOVE, line.to_string())
+                    (diff_remove(), line.to_string())
                 } else if line.starts_with("Error:") || line.contains("error:") {
-                    (ACCENT_ERROR, line.to_string())
+                    (accent_error(), line.to_string())
                 } else {
                     // Parse ANSI escape codes
                     let parsed = line.as_bytes().into_text();
@@ -1155,7 +1158,10 @@ impl ChatView {
                                 .into_iter()
                                 .flat_map(|l| l.spans)
                                 .map(|s| {
-                                    Span::styled(s.content.into_owned(), s.style.bg(TOOL_BLOCK_BG))
+                                    Span::styled(
+                                        s.content.into_owned(),
+                                        s.style.bg(tool_block_bg()),
+                                    )
                                 })
                                 .collect();
                             if spans.is_empty() {
@@ -1168,7 +1174,7 @@ impl ChatView {
                             }
                             continue;
                         }
-                        Err(_) => (TOOL_OUTPUT, line.to_string()),
+                        Err(_) => (tool_output(), line.to_string()),
                     }
                 };
 
@@ -1185,7 +1191,7 @@ impl ChatView {
                 let more_word = if remaining == 1 { "line" } else { "lines" };
                 lines.push(builder.output_colored(
                     &format!("... ({} more {})", remaining, more_word),
-                    TOOL_COMMENT,
+                    tool_comment(),
                 ));
                 joiner_before.push(None);
             }
@@ -1218,9 +1224,9 @@ impl ChatView {
         };
 
         let status_color = if is_error {
-            ACCENT_ERROR
+            accent_error()
         } else {
-            ACCENT_SUCCESS
+            accent_success()
         };
         lines.push(builder.output_colored(&status_text, status_color));
         joiner_before.push(None);
@@ -1443,9 +1449,9 @@ impl ChatView {
 
             for (content, status) in display_todos {
                 let (icon, text_color) = match status.as_str() {
-                    "completed" => ("✅", TOOL_COMMENT),
-                    "in_progress" => ("🔄", TOOL_COMMAND),
-                    _ => ("⬜", TOOL_OUTPUT),
+                    "completed" => ("✅", tool_comment()),
+                    "in_progress" => ("🔄", tool_command()),
+                    _ => ("⬜", tool_output()),
                 };
 
                 let display_content = truncate_to_width(content, 70);
@@ -1453,7 +1459,7 @@ impl ChatView {
                     Span::styled(format!("{} ", icon), builder.bg_style()),
                     Span::styled(
                         display_content,
-                        Style::default().fg(text_color).bg(TOOL_BLOCK_BG),
+                        Style::default().fg(text_color).bg(tool_block_bg()),
                     ),
                 ]));
                 joiner_before.push(None);
@@ -1462,7 +1468,7 @@ impl ChatView {
             if todos.len() > max_display {
                 let remaining = todos.len() - max_display;
                 lines.push(
-                    builder.output_colored(&format!("... (+{} more)", remaining), TOOL_COMMENT),
+                    builder.output_colored(&format!("... (+{} more)", remaining), tool_comment()),
                 );
                 joiner_before.push(None);
             }
@@ -1471,12 +1477,12 @@ impl ChatView {
         // Status line
         let status_text = format!("{}/{} completed", completed, total);
         let status_color = if completed == total && total > 0 {
-            ACCENT_SUCCESS
+            accent_success()
         } else if in_progress > 0 {
             Color::Yellow
         } else {
             // Pending items - use neutral muted color (not success green)
-            TOOL_COMMENT
+            tool_comment()
         };
 
         lines.push(builder.empty_line());
@@ -1538,6 +1544,8 @@ impl ChatView {
         let Some(content) = Self::content_area(area) else {
             return;
         };
+
+        self.invalidate_theme_cache_if_needed();
 
         // Ensure cache is valid for current width
         self.ensure_cache(content.width);
@@ -1624,6 +1632,26 @@ impl ChatView {
             total_lines,
             visible_height,
             scroll_from_top,
+        );
+    }
+
+    fn invalidate_theme_cache_if_needed(&mut self) {
+        let current = theme_revision();
+        if self.theme_revision == current {
+            return;
+        }
+
+        self.theme_revision = current;
+        self.line_cache = LineCache::default();
+        self.flat_cache.clear();
+        self.flat_cache_width = None;
+        self.flat_cache_dirty = true;
+        self.streaming_cache = None;
+        self.streaming_joiner_before = None;
+        self.cache_width = None;
+        tracing::debug!(
+            theme_revision = current,
+            "Chat view cache invalidated for theme change"
         );
     }
 }
@@ -1763,7 +1791,7 @@ fn highlight_line_by_cols(line: &Line<'static>, start_col: u16, end_col: u16) ->
             let end = col.saturating_add(w.saturating_sub(1));
             let in_selection = end >= start_col && col <= end_col;
             let style = if in_selection {
-                base_style.bg(BG_HIGHLIGHT)
+                base_style.bg(bg_highlight())
             } else {
                 base_style
             };
@@ -1941,15 +1969,15 @@ fn line_to_flat(line: &Line<'_>) -> String {
 }
 
 fn is_code_block_line(line: &Line<'_>) -> bool {
-    line.style.bg == Some(TOOL_BLOCK_BG)
+    line.style.bg == Some(tool_block_bg())
         || line
             .spans
             .iter()
-            .any(|span| span.style.bg == Some(TOOL_BLOCK_BG))
+            .any(|span| span.style.bg == Some(tool_block_bg()))
         || line
             .spans
             .iter()
-            .any(|span| span.style.bg == Some(MARKDOWN_CODE_BG))
+            .any(|span| span.style.bg == Some(markdown_code_bg()))
 }
 
 fn last_non_space_col(flat: &str) -> Option<u16> {
@@ -2077,7 +2105,7 @@ mod tests {
     fn code_line(text: &str) -> Line<'static> {
         Line::from(Span::styled(
             text.to_string(),
-            Style::default().bg(MARKDOWN_CODE_BG),
+            Style::default().bg(markdown_code_bg()),
         ))
     }
 

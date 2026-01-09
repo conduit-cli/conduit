@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use super::{render_key_hints, KeyHintBarStyle, ACCENT_PRIMARY};
+use super::{accent_primary, dialog_bg, render_key_hints, KeyHintBarStyle};
 // Re-export Widget for use in render methods
 pub use ratatui::widgets::Widget as WidgetTrait;
 
@@ -27,7 +27,7 @@ impl<'a> DialogFrame<'a> {
             title,
             width,
             height,
-            border_color: ACCENT_PRIMARY,
+            border_color: accent_primary(),
         }
     }
 
@@ -55,13 +55,19 @@ impl<'a> DialogFrame<'a> {
 
         // Clear the dialog area
         Clear.render(dialog_area, buf);
+        for y in dialog_area.y..dialog_area.y.saturating_add(dialog_area.height) {
+            for x in dialog_area.x..dialog_area.x.saturating_add(dialog_area.width) {
+                buf[(x, y)].set_bg(dialog_bg());
+            }
+        }
 
         // Render dialog border with rounded corners
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(self.border_color));
+            .border_style(Style::default().fg(self.border_color))
+            .style(Style::default().bg(dialog_bg()));
 
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);
