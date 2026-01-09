@@ -267,8 +267,9 @@ impl ModelSelector {
                         .map(|id| id == &model.id)
                         .unwrap_or(false);
 
-                    let selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
-                    let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
+                    let selected_bg_color = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+                    let selected_fg_color =
+                        ensure_contrast_fg(text_primary(), selected_bg_color, 4.5);
 
                     // Build the line
                     let icon = ModelRegistry::agent_icon(model.agent_type);
@@ -278,7 +279,7 @@ impl ModelSelector {
                             &model.display_name,
                             if is_selected {
                                 Style::default()
-                                    .fg(selected_fg)
+                                    .fg(selected_fg_color)
                                     .add_modifier(Modifier::BOLD)
                             } else {
                                 Style::default().fg(text_primary())
@@ -319,7 +320,7 @@ impl ModelSelector {
                     // Highlight selected row background
                     if is_selected {
                         for dx in 0..row_rect.width {
-                            buf[(row_rect.x + dx, row_rect.y)].set_bg(selected_bg);
+                            buf[(row_rect.x + dx, row_rect.y)].set_bg(selected_bg_color);
                         }
                     }
 

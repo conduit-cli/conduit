@@ -10,8 +10,9 @@ use ratatui::{
 };
 
 use super::{
-    dialog_bg, ensure_contrast_bg, ensure_contrast_fg, render_minimal_scrollbar, selected_bg,
-    text_primary, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
+    agent_claude, agent_codex, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
+    render_minimal_scrollbar, selected_bg, text_muted, text_primary, DialogFrame, InstructionBar,
+    ScrollbarMetrics, SearchableListState,
 };
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
@@ -459,20 +460,23 @@ impl SessionImportPicker {
 
     fn render_tab_bar(&self, area: Rect, buf: &mut Buffer, state: &SessionImportPickerState) {
         let mut x = area.x;
+        let selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
 
         for filter in [AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex] {
             let is_selected = state.agent_filter == filter;
             let label = format!(" {} ", filter.label());
             let width = label.len() as u16;
 
+            let base_fg = match filter {
+                AgentFilter::All => text_primary(),
+                AgentFilter::Claude => agent_claude(),
+                AgentFilter::Codex => agent_codex(),
+            };
             let style = if is_selected {
-                Style::default().fg(Color::Black).bg(match filter {
-                    AgentFilter::All => Color::White,
-                    AgentFilter::Claude => Color::Cyan,
-                    AgentFilter::Codex => Color::Green,
-                })
+                let fg = ensure_contrast_fg(base_fg, selected_bg, 4.5);
+                Style::default().fg(fg).bg(selected_bg)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(text_muted())
             };
 
             if x + width <= area.x + area.width {
@@ -493,7 +497,7 @@ impl SessionImportPicker {
         // Show count
         let count = format!("({}/{})", state.list.filtered.len(), state.sessions.len());
         let count_len = count.len() as u16;
-        let count_style = Style::default().fg(Color::DarkGray);
+        let count_style = Style::default().fg(text_muted());
         let count_x = area.x + area.width - count_len;
         if count_x > x {
             let count_para = Paragraph::new(count).style(count_style);
@@ -512,7 +516,7 @@ impl SessionImportPicker {
     fn render_session_list(&self, area: Rect, buf: &mut Buffer, state: &SessionImportPickerState) {
         let visible_count = area.height as usize;
 
-        let row_selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 2.0);
+        let row_selected_bg = ensure_contrast_bg(selected_bg(), dialog_bg(), 3.0);
         let row_selected_fg = ensure_contrast_fg(text_primary(), row_selected_bg, 4.5);
 
         for (i, &session_idx) in state

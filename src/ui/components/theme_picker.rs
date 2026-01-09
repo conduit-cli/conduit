@@ -20,7 +20,8 @@ use super::{
     InstructionBar,
 };
 use crate::ui::components::theme::{
-    current_theme_name, list_themes, load_theme_by_name, ThemeInfo, ThemeSource,
+    current_theme_name, list_themes, load_theme_by_name, load_theme_from_path, ThemeInfo,
+    ThemeSource,
 };
 
 /// Represents an item in the theme picker (either a section header or a theme)
@@ -34,7 +35,7 @@ const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone)]
 struct PendingPreview {
-    name: String,
+    item_idx: usize,
     requested_at: Instant,
 }
 
@@ -98,7 +99,7 @@ impl ThemePickerState {
     }
 
     /// Show the theme picker dialog
-    pub fn show(&mut self, _theme_name: Option<&str>, theme_path: Option<&std::path::Path>) {
+    pub fn show(&mut self, theme_path: Option<&std::path::Path>) {
         self.visible = true;
         self.original_theme_name = Some(current_theme_name());
         self.original_theme_path = theme_path.map(|path| path.to_path_buf());
@@ -126,6 +127,15 @@ impl ThemePickerState {
 
         // Select the current theme
         self.select_current_theme();
+    }
+
+    /// Update the list viewport height (based on the screen size).
+    pub fn update_viewport(&mut self, area: Rect) {
+        let dialog_height = 18u16.min(area.height.saturating_sub(2));
+        let inner_height = dialog_height.saturating_sub(2);
+        let list_height = inner_height.saturating_sub(3).max(1);
+        self.max_visible = list_height as usize;
+        self.ensure_visible();
     }
 
     /// Hide the dialog and restore original theme if cancelled
@@ -284,9 +294,7 @@ impl ThemePickerState {
         }
         if let Some(theme) = self.selected_theme() {
             let name = theme.name.clone();
-            // Theme is already applied via preview, just confirm it
-            self.original_theme_name = Some(name.clone()); // Prevent restore on hide
-            self.original_theme_path = None;
+            // Theme is already applied via preview, just confirm it.
             self.last_error = None;
             Some(name)
         } else {
@@ -318,40 +326,60 @@ impl ThemePickerState {
         self.queue_preview();
     }
 
+    fn theme_key(info: &ThemeInfo) -> String {
+        match &info.source {
+            ThemeSource::CustomPath { path } => format!("path:{}", path.display()),
+            _ => format!("name:{}", info.name),
+        }
+    }
+
+    fn apply_theme_info(&self, info: &ThemeInfo) -> bool {
+        match &info.source {
+            ThemeSource::CustomPath { path } => load_theme_from_path(path),
+            _ => load_theme_by_name(&info.name),
+        }
+    }
+
     /// Queue the currently selected theme as preview (debounced)
     fn queue_preview(&mut self) {
-        let theme_name = self.selected_theme().map(|t| t.name.clone());
-        if let Some(name) = theme_name {
-            if self.preview_theme.as_ref() == Some(&name) {
-                self.pending_preview = None;
-                return;
-            }
-            tracing::debug!(theme = %name, "Theme preview queued");
-            self.pending_preview = Some(PendingPreview {
-                name,
-                requested_at: Instant::now(),
-            });
-        } else {
+        let Some(&item_idx) = self.filtered.get(self.selected) else {
             self.pending_preview = None;
+            return;
+        };
+        let ThemePickerItem::Theme(info) = &self.items[item_idx] else {
+            self.pending_preview = None;
+            return;
+        };
+        let key = Self::theme_key(info);
+        if self.preview_theme.as_ref() == Some(&key) {
+            self.pending_preview = None;
+            return;
         }
+        tracing::debug!(theme = %key, "Theme preview queued");
+        self.pending_preview = Some(PendingPreview {
+            item_idx,
+            requested_at: Instant::now(),
+        });
     }
 
     /// Apply the currently selected theme immediately as preview
     fn apply_preview_now(&mut self) {
-        let theme_name = self.selected_theme().map(|t| t.name.clone());
-        if let Some(name) = theme_name {
-            if self.preview_theme.as_ref() != Some(&name) {
-                if load_theme_by_name(&name) {
-                    tracing::debug!(theme = %name, "Theme preview applied immediately");
-                    self.preview_theme = Some(name);
-                    self.last_error = None;
-                } else {
-                    tracing::warn!(theme = %name, "Theme preview failed to load");
-                    self.last_error = Some(format!("Failed to load theme: {name}"));
-                }
-            } else {
+        let Some(info) = self.selected_theme().cloned() else {
+            self.pending_preview = None;
+            return;
+        };
+        let key = Self::theme_key(&info);
+        if self.preview_theme.as_ref() != Some(&key) {
+            if self.apply_theme_info(&info) {
+                tracing::debug!(theme = %key, "Theme preview applied immediately");
+                self.preview_theme = Some(key);
                 self.last_error = None;
+            } else {
+                tracing::warn!(theme = %key, "Theme preview failed to load");
+                self.last_error = Some(format!("Failed to load theme: {}", info.display_name));
             }
+        } else {
+            self.last_error = None;
         }
         self.pending_preview = None;
     }
@@ -366,14 +394,21 @@ impl ThemePickerState {
             return;
         };
         if pending.requested_at.elapsed() >= PREVIEW_DEBOUNCE {
-            let name = pending.name.clone();
-            if self.preview_theme.as_ref() != Some(&name) {
-                if load_theme_by_name(&name) {
-                    tracing::debug!(theme = %name, "Theme preview applied");
-                    self.preview_theme = Some(name);
+            let item_idx = pending.item_idx;
+            if let Some(ThemePickerItem::Theme(info)) = self.items.get(item_idx) {
+                let key = Self::theme_key(info);
+                if self.preview_theme.as_ref() != Some(&key) {
+                    if self.apply_theme_info(info) {
+                        tracing::debug!(theme = %key, "Theme preview applied");
+                        self.preview_theme = Some(key);
+                        self.last_error = None;
+                    } else {
+                        tracing::warn!(theme = %key, "Theme preview failed to load");
+                        self.last_error =
+                            Some(format!("Failed to load theme: {}", info.display_name));
+                    }
                 } else {
-                    tracing::warn!(theme = %name, "Theme preview failed to load");
-                    self.last_error = Some(format!("Failed to load theme: {name}"));
+                    self.last_error = None;
                 }
             }
             self.pending_preview = None;
@@ -580,20 +615,26 @@ impl ThemePicker<'_> {
         let prompt = "> ";
         let input = &self.state.search;
 
-        if input.is_empty() {
-            // Show placeholder
-            let placeholder = format!("{}Type to filter themes...", prompt);
-            let para = Paragraph::new(placeholder).style(Style::default().fg(text_muted()));
-            para.render(area, buf);
+        let (line, show_placeholder) = if input.is_empty() {
+            let placeholder = " Type to filter themes...";
+            (
+                Line::from(vec![
+                    Span::styled(prompt, Style::default().fg(accent_primary())),
+                    Span::styled(placeholder, Style::default().fg(text_muted())),
+                ]),
+                true,
+            )
         } else {
-            // Show prompt and input
-            let line = Line::from(vec![
-                Span::styled(prompt, Style::default().fg(accent_primary())),
-                Span::styled(input.as_str(), Style::default().fg(text_primary())),
-            ]);
-            let para = Paragraph::new(line);
-            para.render(area, buf);
-        }
+            (
+                Line::from(vec![
+                    Span::styled(prompt, Style::default().fg(accent_primary())),
+                    Span::styled(input.as_str(), Style::default().fg(text_primary())),
+                ]),
+                false,
+            )
+        };
+
+        Paragraph::new(line).render(area, buf);
 
         // Render cursor
         let prompt_width = UnicodeWidthStr::width(prompt) as u16;
@@ -603,7 +644,14 @@ impl ThemePicker<'_> {
             .sum();
         let cursor_x = area.x + prompt_width + cursor_offset;
         if cursor_x < area.x + area.width {
-            buf[(cursor_x, area.y)].set_style(Style::default().add_modifier(Modifier::REVERSED));
+            if show_placeholder {
+                buf[(cursor_x, area.y)]
+                    .set_char(' ')
+                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+            } else {
+                buf[(cursor_x, area.y)]
+                    .set_style(Style::default().add_modifier(Modifier::REVERSED));
+            }
         }
     }
 

@@ -755,9 +755,14 @@ impl App {
         self.state.clear_expired_footer_message();
 
         self.state.theme_picker_state.tick();
-        if let Some(error) = self.state.theme_picker_state.take_error() {
-            self.state
-                .set_timed_footer_message(error, Duration::from_secs(5));
+        let can_show_picker_error = self.state.theme_picker_state.is_visible()
+            || (self.state.footer_message.is_none()
+                && self.state.footer_message_expires_at.is_none());
+        if can_show_picker_error {
+            if let Some(error) = self.state.theme_picker_state.take_error() {
+                self.state
+                    .set_timed_footer_message(error, Duration::from_secs(5));
+            }
         }
 
         // Tick other animations every 6 frames (~100ms)
@@ -1142,10 +1147,9 @@ impl App {
             }
             Action::ShowThemePicker => {
                 self.state.close_overlays();
-                self.state.theme_picker_state.show(
-                    self.config.theme_name.as_deref(),
-                    self.config.theme_path.as_deref(),
-                );
+                self.state
+                    .theme_picker_state
+                    .show(self.config.theme_path.as_deref());
                 self.state.input_mode = InputMode::SelectingTheme;
             }
             Action::OpenSessionImport => {
@@ -1648,12 +1652,13 @@ impl App {
                                 self.config.theme_path = path;
                             }
                         }
-                        if save_ok {
-                            self.state.set_timed_footer_message(
-                                format!("Theme: {}", theme_name),
-                                Duration::from_secs(3),
-                            );
+                        if !save_ok {
+                            return Ok(Vec::new());
                         }
+                        self.state.set_timed_footer_message(
+                            format!("Theme: {}", theme_name),
+                            Duration::from_secs(3),
+                        );
                     }
                     self.state.theme_picker_state.hide(false); // Not cancelled
                     self.state.input_mode = InputMode::Normal;
@@ -5612,6 +5617,7 @@ impl App {
                         );
                     } else if self.state.theme_picker_state.is_visible() {
                         use ratatui::widgets::Widget;
+                        self.state.theme_picker_state.update_viewport(size);
                         let picker = ThemePicker::new(&self.state.theme_picker_state);
                         picker.render(size, f.buffer_mut());
                     }

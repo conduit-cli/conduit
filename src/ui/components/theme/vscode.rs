@@ -113,6 +113,7 @@ impl std::error::Error for VsCodeThemeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             VsCodeThemeError::Io(e) => Some(e),
+            // JSON is attempted first; JSON5 is only a fallback, so surface the JSON error.
             VsCodeThemeError::Parse { json, .. } => Some(json),
         }
     }
