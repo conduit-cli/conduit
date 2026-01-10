@@ -226,11 +226,12 @@ impl App {
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
             // Restore agent mode (defaults to Build if not set)
-            session.agent_mode = tab
+            let parsed_mode = tab
                 .agent_mode
                 .as_deref()
                 .map(AgentMode::parse)
                 .unwrap_or_default();
+            session.agent_mode = Self::clamp_agent_mode(tab.agent_type, parsed_mode);
 
             // Look up workspace to get working_dir, workspace_name, and project_name
             if let Some(workspace_id) = tab.workspace_id {
@@ -2852,6 +2853,15 @@ impl App {
             .map(|saved| saved.agent_type)
             .unwrap_or(AgentType::Claude);
 
+        let saved_agent_mode = saved_tab.as_ref().map(|saved| {
+            let parsed_mode = saved
+                .agent_mode
+                .as_deref()
+                .map(AgentMode::parse)
+                .unwrap_or_default();
+            Self::clamp_agent_mode(tab_agent_type, parsed_mode)
+        });
+
         if let Some(saved) = saved_tab.as_ref() {
             let required_tool = match saved.agent_type {
                 AgentType::Claude => crate::util::Tool::Claude,
@@ -2859,11 +2869,13 @@ impl App {
             };
             if !self.tools.is_available(required_tool) {
                 self.state.close_overlays();
-                self.state.missing_tool_dialog_state.show(required_tool);
-                self.state.missing_tool_dialog_state.context_message = Some(format!(
-                    "{} is required to open this workspace's saved session.",
-                    required_tool.display_name()
-                ));
+                self.state.missing_tool_dialog_state.show_with_context(
+                    required_tool,
+                    format!(
+                        "{} is required to open this workspace's saved session.",
+                        required_tool.display_name()
+                    ),
+                );
                 self.state.input_mode = InputMode::MissingTool;
                 if close_sidebar {
                     self.state.sidebar_state.hide();
@@ -2887,11 +2899,7 @@ impl App {
             if let Some(saved) = saved_tab {
                 session.agent_type = saved.agent_type;
                 session.model = saved.model;
-                session.agent_mode = saved
-                    .agent_mode
-                    .as_deref()
-                    .map(AgentMode::parse)
-                    .unwrap_or_default();
+                session.agent_mode = saved_agent_mode.unwrap_or_default();
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
@@ -2973,6 +2981,15 @@ impl App {
     /// Open a workspace (create or switch to tab), closing the sidebar
     fn open_workspace(&mut self, workspace_id: uuid::Uuid) {
         self.open_workspace_with_options(workspace_id, true);
+    }
+
+    /// Clamp unsupported agent modes to a safe default.
+    fn clamp_agent_mode(agent_type: AgentType, mode: AgentMode) -> AgentMode {
+        if agent_type == AgentType::Codex && mode == AgentMode::Plan {
+            AgentMode::Build
+        } else {
+            mode
+        }
     }
 
     /// Find the tab index for a workspace if it's already open
