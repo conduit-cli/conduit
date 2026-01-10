@@ -18,18 +18,18 @@ impl QueuedMessageMode {
     pub fn label(&self) -> &'static str {
         match self {
             QueuedMessageMode::Steer => "Steering",
-            QueuedMessageMode::FollowUp => "Follow-up",
+            QueuedMessageMode::FollowUp => "Queued",
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QueuedImageAttachment {
     pub path: PathBuf,
     pub placeholder: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QueuedMessage {
     pub id: Uuid,
     pub mode: QueuedMessageMode,

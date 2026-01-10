@@ -182,6 +182,7 @@ fn deserialize_queued_messages(raw: Option<&str>) -> Vec<QueuedMessage> {
 mod tests {
     use super::*;
     use crate::data::Database;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn setup_db() -> (tempfile::TempDir, Database, SessionTabStore) {
@@ -209,6 +210,28 @@ mod tests {
         assert_eq!(retrieved.tab_index, 0);
         assert_eq!(retrieved.agent_type, AgentType::Claude);
         assert_eq!(retrieved.agent_session_id, Some("session-123".to_string()));
+    }
+
+    #[test]
+    fn test_queued_messages_roundtrip() {
+        let (_dir, _db, dao) = setup_db();
+        let mut tab = SessionTab::new(0, AgentType::Claude, None, None, None, None);
+        let message = QueuedMessage {
+            id: Uuid::new_v4(),
+            mode: QueuedMessageMode::FollowUp,
+            text: "queued message".to_string(),
+            images: vec![QueuedImageAttachment {
+                path: PathBuf::from("/tmp/image.png"),
+                placeholder: "[image]".to_string(),
+            }],
+            created_at: Utc::now(),
+        };
+        tab.queued_messages = vec![message];
+
+        dao.create(&tab).unwrap();
+        let retrieved = dao.get_by_id(tab.id).unwrap().unwrap();
+
+        assert_eq!(retrieved.queued_messages, tab.queued_messages);
     }
 
     #[test]

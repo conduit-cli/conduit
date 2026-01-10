@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     pr_number INTEGER,
     created_at TEXT NOT NULL,
     pending_user_message TEXT,
-    queued_messages TEXT,
+    queued_messages TEXT NOT NULL DEFAULT '[]',
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 );
 
@@ -201,10 +201,15 @@ impl Database {
 
         if !has_queued_messages {
             conn.execute(
-                "ALTER TABLE session_tabs ADD COLUMN queued_messages TEXT",
+                "ALTER TABLE session_tabs ADD COLUMN queued_messages TEXT NOT NULL DEFAULT '[]'",
                 [],
             )?;
         }
+
+        conn.execute(
+            "UPDATE session_tabs SET queued_messages = '[]' WHERE queued_messages IS NULL",
+            [],
+        )?;
 
         Ok(())
     }

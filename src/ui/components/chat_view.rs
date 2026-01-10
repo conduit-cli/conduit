@@ -702,6 +702,7 @@ impl ChatView {
         &mut self,
         area: Rect,
         show_thinking_line: bool,
+        queue_lines_len: usize,
     ) -> Option<ScrollbarMetrics> {
         let content = Self::content_area(area)?;
 
@@ -715,9 +716,18 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let indicator_len = if show_thinking_line { 2 } else { 0 }; // indicator + blank line
+        let mut extra_len = 0;
+        if show_thinking_line {
+            extra_len += 1;
+        }
+        if queue_lines_len > 0 {
+            extra_len += queue_lines_len;
+        }
+        if extra_len > 0 {
+            extra_len += 1; // spacing line
+        }
 
-        let total_lines = cached_len + streaming_len + indicator_len;
+        let total_lines = cached_len + streaming_len + extra_len;
         let visible_height = content.height as usize;
         if total_lines <= visible_height {
             return None;

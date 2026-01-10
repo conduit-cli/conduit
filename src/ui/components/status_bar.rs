@@ -497,7 +497,7 @@ impl StatusBar {
         buf.set_line(left_area.x, left_area.y, &left_line, left_area.width);
 
         // Render right content (if it fits)
-        if !right_spans.is_empty() && right_width < total_width {
+        if !right_spans.is_empty() && left_width + right_width <= total_width {
             let right_x = area.x + (total_width - right_width) as u16;
             let right_line = Line::from(right_spans);
             buf.set_line(right_x, area.y, &right_line, right_width as u16);

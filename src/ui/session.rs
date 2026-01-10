@@ -396,6 +396,7 @@ impl AgentSession {
 
     pub fn dequeue_last(&mut self) -> Option<QueuedMessage> {
         let message = self.queued_messages.pop();
+        // If selection pointed to the removed (last) element, adjust to new last.
         if self.queue_selection == Some(self.queued_messages.len()) {
             self.queue_selection = self.queued_messages.len().checked_sub(1);
         }

@@ -330,6 +330,7 @@ impl Action {
             Action::NewProject
                 | Action::ShowModelSelector
                 | Action::ShowThemePicker
+                | Action::OpenQueueEditor
                 | Action::OpenSessionImport
                 | Action::ShowHelp
                 | Action::AddRepository
