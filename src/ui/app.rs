@@ -251,6 +251,11 @@ impl App {
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
             session.fork_seed_id = tab.fork_seed_id;
+            // Derive fork_welcome_shown: if restoring a forked session with history,
+            // the welcome message was already shown in the previous session
+            if tab.fork_seed_id.is_some() && tab.agent_session_id.is_some() {
+                session.fork_welcome_shown = true;
+            }
             // Restore agent mode (defaults to Build if not set)
             let parsed_mode = tab
                 .agent_mode
@@ -3148,6 +3153,11 @@ impl App {
                     session.agent_mode = saved_mode;
                 }
                 session.fork_seed_id = saved.fork_seed_id;
+                // Derive fork_welcome_shown: if restoring a forked session with history,
+                // the welcome message was already shown in the previous session
+                if saved.fork_seed_id.is_some() && saved.agent_session_id.is_some() {
+                    session.fork_welcome_shown = true;
+                }
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
@@ -5561,6 +5571,9 @@ impl App {
                 AgentEvent::TurnCompleted(completed) => {
                     session.add_usage(completed.usage);
                     session.stop_processing();
+                    // Safety net: avoid suppressing a future real assistant message
+                    // (in case the final assistant message event never arrived)
+                    session.suppress_next_assistant_reply = false;
                     // Only stop footer spinner if this is the active tab
                     if is_active_tab {
                         should_stop_footer_spinner = true;
@@ -6361,7 +6374,8 @@ impl App {
     }
 
     /// Attempt to clean up a fork workspace after finish_fork_session fails.
-    /// Returns Some(error_message) if cleanup failed, None if successful.
+    /// Returns Some(error_message) if cleanup failed or partial cleanup occurred,
+    /// None only if all cleanup operations succeeded.
     fn cleanup_fork_workspace(
         &mut self,
         workspace_id: uuid::Uuid,
@@ -6389,6 +6403,9 @@ impl App {
             Err(e) => return Some(format!("Failed to load repository: {}", e)),
         };
 
+        // Collect cleanup warnings for resources that may need manual cleanup
+        let mut cleanup_warnings: Vec<String> = Vec::new();
+
         // Try to remove the worktree first
         if let Some(base_path) = &repo.base_path {
             if let Err(e) = self
@@ -6400,7 +6417,10 @@ impl App {
                     workspace_id = %workspace_id,
                     "Failed to remove worktree during fork cleanup"
                 );
-                // Continue to try database cleanup even if worktree removal fails
+                cleanup_warnings.push(format!(
+                    "Worktree at {} may need manual removal",
+                    workspace.path.display()
+                ));
             }
 
             // Also try to delete the branch
@@ -6414,7 +6434,10 @@ impl App {
                     branch = %workspace.branch,
                     "Failed to delete branch during fork cleanup"
                 );
-                // Continue with database cleanup even if branch deletion fails
+                cleanup_warnings.push(format!(
+                    "Branch '{}' may need manual deletion",
+                    workspace.branch
+                ));
             }
         }
 
@@ -6424,7 +6447,13 @@ impl App {
         }
 
         self.refresh_sidebar_data();
-        None
+
+        // Return cleanup warnings if any resources may need manual cleanup
+        if cleanup_warnings.is_empty() {
+            None
+        } else {
+            Some(format!("Partial cleanup: {}", cleanup_warnings.join("; ")))
+        }
     }
 
     /// Handle the result of the PR preflight check
