@@ -6330,6 +6330,8 @@ impl App {
 
         // Keep track of where we came from so we can recover cleanly on failure
         let prev_index = self.state.tab_manager.active_index();
+        let prev_sidebar_visible = self.state.sidebar_state.visible;
+        let prev_input_mode = self.state.input_mode;
 
         let mut session =
             AgentSession::with_working_dir(pending.agent_type, workspace.path.clone());
@@ -6375,6 +6377,11 @@ impl App {
                 self.state.tab_manager.close_tab(new_index);
                 let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                 self.state.tab_manager.switch_to(fallback);
+                // Restore pre-fork UI state
+                if prev_sidebar_visible {
+                    self.state.sidebar_state.show();
+                }
+                self.state.input_mode = prev_input_mode;
                 return Err(anyhow!(
                     "Failed to start forked agent: no start-agent effect produced."
                 ));
@@ -6388,6 +6395,11 @@ impl App {
                 self.state.tab_manager.close_tab(new_index);
                 let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                 self.state.tab_manager.switch_to(fallback);
+                // Restore pre-fork UI state
+                if prev_sidebar_visible {
+                    self.state.sidebar_state.show();
+                }
+                self.state.input_mode = prev_input_mode;
                 return Err(e);
             }
         };
@@ -6504,9 +6516,20 @@ impl App {
         // Collect cleanup warnings for resources that may need manual cleanup
         let mut cleanup_warnings: Vec<String> = Vec::new();
 
-        // Try to remove the worktree first
+        // Try to remove the worktree first (only if path is under managed root)
         if let Some(base_path) = &repo.base_path {
-            if let Err(e) = self
+            if !path_is_managed {
+                tracing::warn!(
+                    workspace_id = %workspace_id,
+                    path = %workspace.path.display(),
+                    managed_root = %managed_root.display(),
+                    "Refusing to remove worktree: workspace path is outside managed directory"
+                );
+                cleanup_warnings.push(format!(
+                    "Worktree at {} may need manual removal (outside managed directory)",
+                    workspace.path.display()
+                ));
+            } else if let Err(e) = self
                 .worktree_manager
                 .remove_worktree(base_path, &workspace.path)
             {
@@ -6521,19 +6544,26 @@ impl App {
                 ));
             }
 
-            // Also try to delete the branch
-            if let Err(e) = self
-                .worktree_manager
-                .delete_branch(base_path, &workspace.branch)
-            {
-                tracing::warn!(
-                    error = %e,
-                    workspace_id = %workspace_id,
-                    branch = %workspace.branch,
-                    "Failed to delete branch during fork cleanup"
-                );
+            // Also try to delete the branch (only if we successfully managed the worktree path)
+            if path_is_managed {
+                if let Err(e) = self
+                    .worktree_manager
+                    .delete_branch(base_path, &workspace.branch)
+                {
+                    tracing::warn!(
+                        error = %e,
+                        workspace_id = %workspace_id,
+                        branch = %workspace.branch,
+                        "Failed to delete branch during fork cleanup"
+                    );
+                    cleanup_warnings.push(format!(
+                        "Branch '{}' may need manual deletion",
+                        workspace.branch
+                    ));
+                }
+            } else {
                 cleanup_warnings.push(format!(
-                    "Branch '{}' may need manual deletion",
+                    "Branch '{}' not auto-deleted (workspace path outside managed directory)",
                     workspace.branch
                 ));
             }
