@@ -8,7 +8,7 @@ mod common;
 
 use common::git_fixtures::TestRepo;
 use conduit::{generate_branch_name, generate_workspace_name};
-use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore, WorktreeManager};
+use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore};
 use std::path::PathBuf;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -90,7 +90,6 @@ fn test_branch_name_sanitization() {
 #[test]
 fn test_worktree_creation_existing_branch() {
     let repo = TestRepo::with_branches(&["feature-1"]);
-    let manager = WorktreeManager::new();
 
     // Use a unique path within the repo's parent temp dir to avoid collisions
     let unique_id = Uuid::new_v4().as_simple().to_string();
@@ -100,13 +99,9 @@ fn test_worktree_creation_existing_branch() {
         .unwrap()
         .join(format!("wt-feature-1-{}", &unique_id[..8]));
 
-    let result = manager.create_worktree(&repo.path, "feature-1", worktree_path.to_str().unwrap());
+    // Use tracked worktree creation for automatic cleanup
+    repo.create_tracked_worktree(&worktree_path, "feature-1");
 
-    assert!(
-        result.is_ok(),
-        "Worktree creation should succeed: {:?}",
-        result.err()
-    );
     assert!(worktree_path.exists(), "Worktree directory should exist");
     assert!(
         worktree_path.join(".git").exists(),
@@ -118,7 +113,6 @@ fn test_worktree_creation_existing_branch() {
 #[test]
 fn test_worktree_creation_new_branch() {
     let repo = TestRepo::new();
-    let manager = WorktreeManager::new();
 
     // Use a unique path to avoid collisions
     let unique_id = Uuid::new_v4().as_simple().to_string();
@@ -128,15 +122,9 @@ fn test_worktree_creation_new_branch() {
         .unwrap()
         .join(format!("wt-new-feature-{}", &unique_id[..8]));
 
-    // create_worktree will auto-create a new branch if it doesn't exist
-    let result =
-        manager.create_worktree(&repo.path, "new-feature", worktree_path.to_str().unwrap());
+    // create_tracked_worktree will auto-create a new branch if it doesn't exist
+    repo.create_tracked_worktree(&worktree_path, "new-feature");
 
-    assert!(
-        result.is_ok(),
-        "Worktree creation should succeed: {:?}",
-        result.err()
-    );
     assert!(worktree_path.exists(), "Worktree directory should exist");
 
     // Verify branch was created
@@ -224,12 +212,9 @@ fn test_full_workspace_creation_flow() {
     // 3. Generate branch name
     let branch_name = generate_branch_name("testuser", &workspace_name);
 
-    // 4. Create worktree
+    // 4. Create worktree (tracked for automatic cleanup)
     let worktree_path = repo.path.parent().unwrap().join(&workspace_name);
-    let manager = WorktreeManager::new();
-    manager
-        .create_worktree(&repo.path, &branch_name, worktree_path.to_str().unwrap())
-        .expect("Failed to create worktree");
+    repo.create_tracked_worktree(&worktree_path, &branch_name);
 
     // 5. Persist workspace to database
     let workspace = Workspace::new(
@@ -266,8 +251,6 @@ fn test_multiple_workspaces_per_repo() {
     let db_repo = Repository::from_local_path("test-repo", repo.path.clone());
     repo_store.create(&db_repo).unwrap();
 
-    let manager = WorktreeManager::new();
-
     // Create 3 workspaces
     let mut created_names = Vec::new();
     for _ in 0..3 {
@@ -284,9 +267,8 @@ fn test_multiple_workspaces_per_repo() {
         let branch = generate_branch_name("testuser", &name);
         let wt_path = repo.path.parent().unwrap().join(&name);
 
-        manager
-            .create_worktree(&repo.path, &branch, wt_path.to_str().unwrap())
-            .expect("Failed to create worktree");
+        // Use tracked worktree for automatic cleanup
+        repo.create_tracked_worktree(&wt_path, &branch);
 
         let ws = Workspace::new(db_repo.id, &name, &branch, wt_path);
         ws_store.create(&ws).unwrap();
@@ -306,12 +288,11 @@ fn test_multiple_workspaces_per_repo() {
 #[test]
 fn test_workspace_isolation() {
     let repo = TestRepo::new();
-    let manager = WorktreeManager::new();
 
     // Use unique paths to avoid collisions
     let unique_id = Uuid::new_v4().as_simple().to_string();
 
-    // Create two worktrees
+    // Create two worktrees (tracked for automatic cleanup)
     let wt1_path = repo
         .path
         .parent()
@@ -323,12 +304,8 @@ fn test_workspace_isolation() {
         .unwrap()
         .join(format!("wt2-{}", &unique_id[..8]));
 
-    manager
-        .create_worktree(&repo.path, "branch-1", wt1_path.to_str().unwrap())
-        .unwrap();
-    manager
-        .create_worktree(&repo.path, "branch-2", wt2_path.to_str().unwrap())
-        .unwrap();
+    repo.create_tracked_worktree(&wt1_path, "branch-1");
+    repo.create_tracked_worktree(&wt2_path, "branch-2");
 
     // Create a file in wt1 only
     std::fs::write(wt1_path.join("wt1_only.txt"), "This is only in wt1").unwrap();

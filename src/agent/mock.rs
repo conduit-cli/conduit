@@ -78,7 +78,7 @@ impl MockConfig {
         self
     }
 
-    /// Configure delay between emitting events (default: 1ms)
+    /// Configure delay between emitting events (default: Duration::ZERO)
     pub fn with_delay(mut self, delay: Duration) -> Self {
         self.event_delay = delay;
         self

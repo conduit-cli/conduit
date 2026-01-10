@@ -5,13 +5,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 /// A temporary git repository for testing
 ///
 /// The repository is automatically cleaned up when the `TestRepo`
-/// is dropped. Use the various constructors to create repos in
-/// different initial states.
+/// is dropped, including any worktrees created through this struct.
+/// Use the various constructors to create repos in different initial states.
 ///
 /// # Example
 /// ```
@@ -23,6 +24,8 @@ pub struct TestRepo {
     _dir: TempDir,
     /// Path to the repository root
     pub path: PathBuf,
+    /// Tracks worktree paths for cleanup on drop
+    worktrees: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl TestRepo {
@@ -31,6 +34,7 @@ impl TestRepo {
     /// The repository will have:
     /// - Git initialized
     /// - User configured (test@example.com)
+    /// - GPG signing disabled (for CI compatibility)
     /// - A README.md file
     /// - One initial commit
     pub fn new() -> Self {
@@ -40,13 +44,19 @@ impl TestRepo {
         Self::git(&path, &["init"]);
         Self::git(&path, &["config", "user.email", "test@example.com"]);
         Self::git(&path, &["config", "user.name", "Test User"]);
+        // Disable GPG signing to ensure tests work on machines with global signing enabled
+        Self::git(&path, &["config", "commit.gpgsign", "false"]);
 
         // Create initial commit
         std::fs::write(path.join("README.md"), "# Test Repository\n").unwrap();
         Self::git(&path, &["add", "."]);
         Self::git(&path, &["commit", "-m", "Initial commit"]);
 
-        Self { _dir: dir, path }
+        Self {
+            _dir: dir,
+            path,
+            worktrees: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     /// Create a repository with multiple branches
@@ -88,14 +98,15 @@ impl TestRepo {
 
     /// Create a repository with a worktree already set up
     ///
-    /// Creates the main repo and a worktree in a sibling directory.
+    /// Creates the main repo and a worktree. The worktree is tracked
+    /// and will be cleaned up when the TestRepo is dropped.
     pub fn with_worktree(worktree_name: &str, branch_name: &str) -> (Self, PathBuf) {
         let repo = Self::new();
 
         // Create the branch first
         Self::git(&repo.path, &["branch", branch_name]);
 
-        // Create worktree directory path (sibling to main repo)
+        // Create worktree directory path (sibling to main repo, inside the temp dir)
         let worktree_path = repo.path.parent().unwrap().join(worktree_name);
 
         Self::git(
@@ -108,7 +119,51 @@ impl TestRepo {
             ],
         );
 
+        // Track the worktree for cleanup
+        repo.worktrees.lock().unwrap().push(worktree_path.clone());
+
         (repo, worktree_path)
+    }
+
+    /// Create a worktree and track it for cleanup
+    ///
+    /// Use this method when creating worktrees in integration tests
+    /// to ensure they are properly cleaned up.
+    #[allow(dead_code)] // Used in integration tests via #[path] includes
+    pub fn create_tracked_worktree(&self, worktree_path: &Path, branch_name: &str) {
+        // Check if branch exists
+        let branches = self.branches();
+        let branch_exists = branches.iter().any(|b| b == branch_name);
+
+        if branch_exists {
+            Self::git(
+                &self.path,
+                &[
+                    "worktree",
+                    "add",
+                    worktree_path.to_str().unwrap(),
+                    branch_name,
+                ],
+            );
+        } else {
+            // Create new branch with worktree
+            Self::git(
+                &self.path,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch_name,
+                    worktree_path.to_str().unwrap(),
+                ],
+            );
+        }
+
+        // Track for cleanup
+        self.worktrees
+            .lock()
+            .unwrap()
+            .push(worktree_path.to_path_buf());
     }
 
     /// Create a repository with commit history
@@ -253,6 +308,30 @@ impl TestRepo {
 impl Default for TestRepo {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for TestRepo {
+    fn drop(&mut self) {
+        // Clean up worktrees before the temp dir is removed
+        let worktrees = self.worktrees.lock().unwrap();
+        for worktree_path in worktrees.iter() {
+            // First, remove the worktree from git's tracking
+            let _ = Command::new("git")
+                .args([
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.to_str().unwrap_or(""),
+                ])
+                .current_dir(&self.path)
+                .output();
+
+            // Then remove the directory if it still exists
+            if worktree_path.exists() {
+                let _ = std::fs::remove_dir_all(worktree_path);
+            }
+        }
     }
 }
 

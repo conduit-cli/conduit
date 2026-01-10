@@ -126,13 +126,36 @@ mod tests {
 
     #[test]
     fn test_setup_deterministic_env() {
+        // Capture original values to restore after test
+        let original_tz = std::env::var("TZ").ok();
+        let original_no_color = std::env::var("NO_COLOR").ok();
+        let original_term = std::env::var("TERM").ok();
+        let original_columns = std::env::var("COLUMNS").ok();
+        let original_lines = std::env::var("LINES").ok();
+        let original_test_mode = std::env::var("CONDUIT_TEST_MODE").ok();
+
         setup_deterministic_env();
 
+        // Verify the values are set
         assert_eq!(std::env::var("TZ").unwrap(), "UTC");
         assert_eq!(std::env::var("NO_COLOR").unwrap(), "1");
         assert_eq!(std::env::var("TERM").unwrap(), "dumb");
         assert_eq!(std::env::var("COLUMNS").unwrap(), "80");
         assert_eq!(std::env::var("LINES").unwrap(), "24");
         assert_eq!(std::env::var("CONDUIT_TEST_MODE").unwrap(), "1");
+
+        // Restore original values to avoid polluting other tests
+        fn restore_or_remove(key: &str, original: Option<String>) {
+            match original {
+                Some(val) => std::env::set_var(key, val),
+                None => std::env::remove_var(key),
+            }
+        }
+        restore_or_remove("TZ", original_tz);
+        restore_or_remove("NO_COLOR", original_no_color);
+        restore_or_remove("TERM", original_term);
+        restore_or_remove("COLUMNS", original_columns);
+        restore_or_remove("LINES", original_lines);
+        restore_or_remove("CONDUIT_TEST_MODE", original_test_mode);
     }
 }
