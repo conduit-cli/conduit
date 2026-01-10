@@ -1,10 +1,23 @@
 ---
 import Layout from '../layouts/Layout.astro'
+import Hero from '../components/Hero.astro'
+import Features from '../components/Features.astro'
+import Install from '../components/Install.astro'
+import Footer from '../components/Footer.astro'
 import TeaserHero from '../components/TeaserHero.astro'
+
+const showWaitlist = Astro.url.searchParams.get('version') === 'waitlist'
 ---
 
-<Layout title="Conduit - Multi-Agent TUI for AI Coding Assistants | Coming Soon">
+<Layout title={showWaitlist ? "Conduit - Multi-Agent TUI for AI Coding Assistants | Coming Soon" : "Conduit - Multi-Agent TUI for AI Coding Assistants"}>
   <main>
-    <TeaserHero />
+    {showWaitlist ? <TeaserHero /> : (
+      <>
+        <Hero />
+        <Features />
+        <Install />
+      </>
+    )}
+    {!showWaitlist && <Footer />}
   </main>
 </Layout>
