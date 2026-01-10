@@ -3573,15 +3573,23 @@ impl App {
         self.state.confirmation_dialog_state.hide();
 
         // Return appropriate input mode based on context
-        if matches!(
-            ctx,
+        match ctx {
+            // PR/Fork dialogs originated from chat view, return to Normal
             Some(ConfirmationContext::CreatePullRequest { .. })
-                | Some(ConfirmationContext::OpenExistingPr { .. })
-                | Some(ConfirmationContext::ForkSession { .. })
-        ) {
-            InputMode::Normal
-        } else {
-            InputMode::SidebarNavigation
+            | Some(ConfirmationContext::OpenExistingPr { .. })
+            | Some(ConfirmationContext::ForkSession { .. }) => InputMode::Normal,
+            // Sidebar operations return to sidebar navigation
+            Some(ConfirmationContext::ArchiveWorkspace(_))
+            | Some(ConfirmationContext::RemoveProject(_)) => InputMode::SidebarNavigation,
+            // No context: return to Normal if tabs exist, otherwise SidebarNavigation
+            // (avoids unexpectedly flipping to sidebar when user has active tabs)
+            None => {
+                if !self.state.tab_manager.is_empty() {
+                    InputMode::Normal
+                } else {
+                    InputMode::SidebarNavigation
+                }
+            }
         }
     }
 
@@ -6417,6 +6425,11 @@ impl App {
         workspace_id: uuid::Uuid,
         repo_id: uuid::Uuid,
     ) -> Option<String> {
+        // Untrack workspace from git tracker first (must happen even on early returns)
+        if let Some(ref tracker) = self.git_tracker {
+            tracker.untrack_workspace(workspace_id);
+        }
+
         let workspace_dao = self.workspace_dao.as_ref()?;
         let repo_dao = self.repo_dao.as_ref()?;
 
@@ -6480,6 +6493,7 @@ impl App {
                 if let Err(e) = workspace_dao.delete(workspace_id) {
                     return Some(format!("Failed to delete workspace from database: {}", e));
                 }
+                self.refresh_sidebar_data();
                 return None;
             }
             Err(e) => {
@@ -6506,6 +6520,7 @@ impl App {
                         e, db_err
                     ));
                 }
+                self.refresh_sidebar_data();
                 return Some(format!(
                     "Failed to load repository: {} (workspace deleted from DB)",
                     e
@@ -6598,11 +6613,6 @@ impl App {
                 "Branch '{}' may need manual deletion (no repo base path)",
                 workspace.branch
             ));
-        }
-
-        // Untrack workspace from git tracker (safety net in case it was tracked)
-        if let Some(ref tracker) = self.git_tracker {
-            tracker.untrack_workspace(workspace_id);
         }
 
         // Delete workspace from database
