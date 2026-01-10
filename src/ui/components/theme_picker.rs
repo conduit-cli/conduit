@@ -271,6 +271,11 @@ impl ThemePickerState {
     fn dedupe_key(theme: &ThemeInfo) -> String {
         match &theme.source {
             ThemeSource::Builtin => format!("builtin:{}", theme.name.trim().to_lowercase()),
+            ThemeSource::ConduitToml { path } => format!(
+                "toml:{}:{}",
+                path.display(),
+                theme.name.trim().to_lowercase()
+            ),
             ThemeSource::VsCodeExtension { path } => format!(
                 "vscode:{}:{}",
                 path.display(),

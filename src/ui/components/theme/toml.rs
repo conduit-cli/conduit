@@ -460,8 +460,8 @@ impl<'a> ThemeBuilder<'a> {
         }
 
         // Try palette/section reference
-        if value.starts_with('$') {
-            return self.resolve_reference(field, &value[1..]);
+        if let Some(stripped) = value.strip_prefix('$') {
+            return self.resolve_reference(field, stripped);
         }
 
         // Try function call

@@ -375,13 +375,12 @@ fn extract_palette(theme: &Theme) -> HashMap<String, String> {
 
     // Only include colors used more than once
     let mut palette = HashMap::new();
-    let mut color_index = 0;
 
     // Sort by count (descending) for consistent naming
     let mut sorted: Vec<_> = color_counts.into_iter().filter(|(_, c)| *c > 1).collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
-    for (hex, _) in sorted {
+    for (color_index, (hex, _)) in sorted.into_iter().enumerate() {
         let name = match color_index {
             0 => "color_a".to_string(),
             1 => "color_b".to_string(),
@@ -392,7 +391,6 @@ fn extract_palette(theme: &Theme) -> HashMap<String, String> {
             _ => format!("color_{}", color_index),
         };
         palette.insert(name, hex);
-        color_index += 1;
     }
 
     palette
