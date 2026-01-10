@@ -347,7 +347,12 @@ impl App {
         // Restore active tab
         if let Ok(Some(index_str)) = app_state_dao.get("active_tab_index") {
             if let Ok(index) = index_str.parse::<usize>() {
-                self.state.tab_manager.switch_to(index);
+                let tab_count = self.state.tab_manager.len();
+                if tab_count > 0 {
+                    let max_index = tab_count.saturating_sub(1);
+                    let clamped_index = index.min(max_index);
+                    self.state.tab_manager.switch_to(clamped_index);
+                }
             }
         }
 
@@ -1630,6 +1635,22 @@ impl App {
                         let model_id = model.id.clone();
                         let agent_type = model.agent_type;
                         let display_name = model.display_name.clone();
+                        let required_tool = match agent_type {
+                            AgentType::Claude => crate::util::Tool::Claude,
+                            AgentType::Codex => crate::util::Tool::Codex,
+                        };
+                        if !self.tools.is_available(required_tool) {
+                            self.state.close_overlays();
+                            self.state.missing_tool_dialog_state.show_with_context(
+                                required_tool,
+                                format!(
+                                    "{} is required to use this model.",
+                                    required_tool.display_name()
+                                ),
+                            );
+                            self.state.input_mode = InputMode::MissingTool;
+                            return Ok(effects);
+                        }
                         if let Some(session) = self.state.tab_manager.active_session_mut() {
                             let agent_changed = session.agent_type != agent_type;
                             session.model = Some(model_id.clone());
@@ -2886,7 +2907,7 @@ impl App {
                 .as_deref()
                 .map(AgentMode::parse)
                 .unwrap_or_default();
-            Self::clamp_agent_mode(tab_agent_type, parsed_mode)
+            Self::clamp_agent_mode(saved.agent_type, parsed_mode)
         });
 
         let required_tool = match tab_agent_type {
@@ -4615,6 +4636,22 @@ impl App {
             if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     let agent_changed = session.agent_type != model.agent_type;
+                    let required_tool = match model.agent_type {
+                        AgentType::Claude => crate::util::Tool::Claude,
+                        AgentType::Codex => crate::util::Tool::Codex,
+                    };
+                    if !self.tools.is_available(required_tool) {
+                        self.state.close_overlays();
+                        self.state.missing_tool_dialog_state.show_with_context(
+                            required_tool,
+                            format!(
+                                "{} is required to use this model.",
+                                required_tool.display_name()
+                            ),
+                        );
+                        self.state.input_mode = InputMode::MissingTool;
+                        return None;
+                    }
                     session.model = Some(model.id.clone());
                     session.agent_type = model.agent_type;
                     session.agent_mode =
