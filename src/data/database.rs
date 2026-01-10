@@ -43,9 +43,13 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     tab_index INTEGER NOT NULL,
     workspace_id TEXT,
     agent_type TEXT NOT NULL,
+    agent_mode TEXT DEFAULT 'build',
     agent_session_id TEXT,
     model TEXT,
+    pr_number INTEGER,
     created_at TEXT NOT NULL,
+    pending_user_message TEXT,
+    queued_messages TEXT,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 );
 
@@ -182,6 +186,22 @@ impl Database {
         if !has_archived_commit_sha {
             conn.execute(
                 "ALTER TABLE workspaces ADD COLUMN archived_commit_sha TEXT",
+                [],
+            )?;
+        }
+
+        // Migration 6: Add queued_messages column to session_tabs table
+        let has_queued_messages: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='queued_messages'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_queued_messages {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN queued_messages TEXT",
                 [],
             )?;
         }

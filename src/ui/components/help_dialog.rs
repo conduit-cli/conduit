@@ -34,6 +34,7 @@ pub enum HelpCategory {
     Scrolling,
     Sidebar,
     Dialog,
+    Queue,
 }
 
 impl HelpCategory {
@@ -45,6 +46,7 @@ impl HelpCategory {
             HelpCategory::Scrolling => "SCROLLING",
             HelpCategory::Sidebar => "SIDEBAR",
             HelpCategory::Dialog => "DIALOG",
+            HelpCategory::Queue => "QUEUE",
         }
     }
 
@@ -57,6 +59,7 @@ impl HelpCategory {
             HelpCategory::Scrolling => 3,
             HelpCategory::Sidebar => 4,
             HelpCategory::Dialog => 5,
+            HelpCategory::Queue => 6,
         }
     }
 }
@@ -218,6 +221,7 @@ impl HelpDialogState {
                 KeyContext::Dialog | KeyContext::ProjectPicker | KeyContext::ModelSelector => {
                     Some(HelpCategory::Dialog)
                 }
+                KeyContext::QueueEditing => Some(HelpCategory::Queue),
                 _ => None,
             };
 

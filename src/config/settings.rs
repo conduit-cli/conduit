@@ -43,6 +43,63 @@ pub struct Config {
     pub theme_name: Option<String>,
     /// Custom theme path from config (takes precedence over name)
     pub theme_path: Option<PathBuf>,
+    /// Queue configuration
+    pub queue: QueueConfig,
+    /// Steering configuration
+    pub steer: SteerConfig,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueDelivery {
+    Separate,
+    Concat,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueMode {
+    All,
+    OneAtATime,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct QueueConfig {
+    pub delivery: QueueDelivery,
+    pub mode: QueueMode,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlQueueConfig {
+    pub delivery: Option<QueueDelivery>,
+    pub mode: Option<QueueMode>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SteerBehavior {
+    Hard,
+    Soft,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SteerFallback {
+    Queue,
+    Interrupt,
+    Prompt,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SteerConfig {
+    pub behavior: SteerBehavior,
+    pub fallback: SteerFallback,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlSteerConfig {
+    pub behavior: Option<SteerBehavior>,
+    pub fallback: Option<SteerFallback>,
 }
 
 impl Default for Config {
@@ -68,6 +125,14 @@ impl Default for Config {
             tool_paths: ToolPaths::default(),
             theme_name: None,
             theme_path: None,
+            queue: QueueConfig {
+                delivery: QueueDelivery::Separate,
+                mode: QueueMode::OneAtATime,
+            },
+            steer: SteerConfig {
+                behavior: SteerBehavior::Hard,
+                fallback: SteerFallback::Queue,
+            },
         }
     }
 }
@@ -105,6 +170,9 @@ pub struct TomlKeybindings {
 
     /// Raw events view keybindings
     pub raw_events: Option<HashMap<String, String>>,
+
+    /// Queue editor keybindings
+    pub queue: Option<HashMap<String, String>>,
 }
 
 /// TOML representation of theme configuration
@@ -125,6 +193,10 @@ pub struct TomlConfig {
     pub tools: Option<ToolPaths>,
     /// Theme configuration
     pub theme: Option<TomlThemeConfig>,
+    /// Queue configuration
+    pub queue: Option<TomlQueueConfig>,
+    /// Steering configuration
+    pub steer: Option<TomlSteerConfig>,
 }
 
 impl TomlKeybindings {
@@ -146,6 +218,7 @@ impl TomlKeybindings {
                     | "add_repository"
                     | "base_dir"
                     | "raw_events"
+                    | "queue"
             ) {
                 continue;
             }
@@ -184,6 +257,9 @@ impl TomlKeybindings {
         }
         if let Some(raw) = &self.raw_events {
             parse_context_bindings(&mut config, KeyContext::RawEvents, raw);
+        }
+        if let Some(queue) = &self.queue {
+            parse_context_bindings(&mut config, KeyContext::QueueEditing, queue);
         }
 
         config
@@ -253,6 +329,13 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "history_prev" => Some(Action::HistoryPrev),
         "history_next" => Some(Action::HistoryNext),
         "submit" => Some(Action::Submit),
+        "submit_steer" => Some(Action::SubmitSteer),
+        "open_queue_editor" => Some(Action::OpenQueueEditor),
+        "close_queue_editor" => Some(Action::CloseQueueEditor),
+        "queue_move_up" => Some(Action::QueueMoveUp),
+        "queue_move_down" => Some(Action::QueueMoveDown),
+        "queue_edit" => Some(Action::QueueEdit),
+        "queue_delete" => Some(Action::QueueDelete),
 
         // Navigation
         "select_next" => Some(Action::SelectNext),
@@ -347,6 +430,13 @@ pub const COMMAND_NAMES: &[&str] = &[
     "history_prev",
     "history_next",
     "submit",
+    "submit_steer",
+    "open_queue_editor",
+    "close_queue_editor",
+    "queue_move_up",
+    "queue_move_down",
+    "queue_edit",
+    "queue_delete",
     // Navigation
     "select_next",
     "select_prev",
@@ -420,6 +510,26 @@ impl Config {
                     if let Some(theme) = toml_config.theme {
                         config.theme_path = theme.path;
                         config.theme_name = theme.name;
+                    }
+
+                    // Load queue configuration
+                    if let Some(queue) = toml_config.queue {
+                        if let Some(delivery) = queue.delivery {
+                            config.queue.delivery = delivery;
+                        }
+                        if let Some(mode) = queue.mode {
+                            config.queue.mode = mode;
+                        }
+                    }
+
+                    // Load steering configuration
+                    if let Some(steer) = toml_config.steer {
+                        if let Some(behavior) = steer.behavior {
+                            config.steer.behavior = behavior;
+                        }
+                        if let Some(fallback) = steer.fallback {
+                            config.steer.fallback = fallback;
+                        }
                     }
                 }
             }

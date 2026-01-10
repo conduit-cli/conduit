@@ -55,6 +55,10 @@ pub struct StatusBar {
     scroll_active: bool,
     /// Context window state for display
     context_state: Option<ContextWindowState>,
+    /// Number of queued messages
+    queue_count: usize,
+    /// Whether plan mode is supported for this agent
+    supports_plan_mode: bool,
 }
 
 impl StatusBar {
@@ -81,6 +85,8 @@ impl StatusBar {
             scroll_events_per_sec: 0.0,
             scroll_active: false,
             context_state: None,
+            queue_count: 0,
+            supports_plan_mode: false,
         }
     }
 
@@ -107,6 +113,14 @@ impl StatusBar {
 
     pub fn set_context_state(&mut self, state: ContextWindowState) {
         self.context_state = Some(state);
+    }
+
+    pub fn set_queue_count(&mut self, count: usize) {
+        self.queue_count = count;
+    }
+
+    pub fn set_supports_plan_mode(&mut self, supports: bool) {
+        self.supports_plan_mode = supports;
     }
 
     /// Set PR status for display
@@ -195,8 +209,8 @@ impl StatusBar {
         // Leading spaces
         spans.push(Span::raw("  "));
 
-        // Mode indicator - ONLY for Claude, with accent color
-        if self.agent_type == AgentType::Claude {
+        // Mode indicator - only when plan mode is supported
+        if self.supports_plan_mode {
             spans.push(Span::styled(
                 self.agent_mode.display_name(),
                 Style::default().fg(accent_primary()),
@@ -218,6 +232,14 @@ impl StatusBar {
             model_display,
             Style::default().fg(text_bright()),
         ));
+
+        if self.queue_count > 0 {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format!("{} queued", self.queue_count),
+                Style::default().fg(text_muted()),
+            ));
+        }
 
         // Agent name - muted color
         spans.push(Span::styled(

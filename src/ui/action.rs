@@ -96,6 +96,20 @@ pub enum Action {
     HistoryNext,
     /// Submit the current input
     Submit,
+    /// Submit current input as a steer (best-effort)
+    SubmitSteer,
+    /// Open queue editor
+    OpenQueueEditor,
+    /// Close queue editor
+    CloseQueueEditor,
+    /// Move selected queued message up
+    QueueMoveUp,
+    /// Move selected queued message down
+    QueueMoveDown,
+    /// Edit selected queued message
+    QueueEdit,
+    /// Delete selected queued message
+    QueueDelete,
 
     // ========== List/Tree Navigation ==========
     /// Select next item in list
@@ -243,6 +257,13 @@ impl Action {
             Action::HistoryPrev => "Previous in history",
             Action::HistoryNext => "Next in history",
             Action::Submit => "Submit",
+            Action::SubmitSteer => "Submit (steer)",
+            Action::OpenQueueEditor => "Open queue editor",
+            Action::CloseQueueEditor => "Close queue editor",
+            Action::QueueMoveUp => "Move queued message up",
+            Action::QueueMoveDown => "Move queued message down",
+            Action::QueueEdit => "Edit queued message",
+            Action::QueueDelete => "Delete queued message",
 
             // List/Tree navigation
             Action::SelectNext => "Select next",
@@ -350,6 +371,7 @@ impl Action {
                 | Action::ArchiveOrRemove
                 // Agent/Session
                 | Action::ToggleAgentMode
+                | Action::OpenQueueEditor
                 | Action::OpenSessionImport
                 | Action::ShowHelp
         )

@@ -11,7 +11,9 @@ mod workspace;
 
 pub use app_state::AppStateStore;
 pub use database::Database;
-pub use models::{Repository, SessionTab, Workspace};
+pub use models::{
+    QueuedImageAttachment, QueuedMessage, QueuedMessageMode, Repository, SessionTab, Workspace,
+};
 pub use repository::RepositoryStore;
 pub use session_tab::SessionTabStore;
 pub use workspace::WorkspaceStore;

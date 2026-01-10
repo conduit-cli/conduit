@@ -1531,7 +1531,7 @@ impl ChatView {
 
     /// Render the chat view
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        self.render_with_indicator(area, buf, None);
+        self.render_with_indicator(area, buf, None, None);
     }
 
     /// Render the chat view with an optional thinking indicator
@@ -1540,6 +1540,7 @@ impl ChatView {
         area: Rect,
         buf: &mut Buffer,
         thinking_line: Option<Line<'static>>,
+        queue_lines: Option<Vec<Line<'static>>>,
     ) {
         let Some(content) = Self::content_area(area) else {
             return;
@@ -1559,9 +1560,20 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let indicator_len = if thinking_line.is_some() { 2 } else { 0 }; // indicator + blank line
 
-        let total_lines = cached_len + streaming_len + indicator_len;
+        let mut extra_lines = Vec::new();
+        if let Some(indicator) = thinking_line {
+            extra_lines.push(indicator);
+        }
+        if let Some(mut queue) = queue_lines {
+            extra_lines.append(&mut queue);
+        }
+        if !extra_lines.is_empty() {
+            extra_lines.push(Line::from(""));
+        }
+
+        let extra_len = extra_lines.len();
+        let total_lines = cached_len + streaming_len + extra_len;
         let visible_height = content.height as usize;
 
         // Clamp scroll offset (respect selection lock if active)
@@ -1612,15 +1624,16 @@ impl ChatView {
             }
         }
 
-        // Thinking indicator + blank line for spacing from input box
-        if let Some(indicator) = thinking_line {
-            let indicator_index = streaming_end;
-            let blank_index = streaming_end + 1;
-            if start_line <= indicator_index && end_line > indicator_index {
-                visible_lines.push((indicator, None));
-            }
-            if start_line <= blank_index && end_line > blank_index {
-                visible_lines.push((Line::from(""), None));
+        // Extra lines (thinking indicator, queued messages, spacing)
+        if extra_len > 0 {
+            let extra_start = streaming_end;
+            let extra_end = streaming_end + extra_len;
+            if start_line < extra_end && end_line > extra_start {
+                let range_start = start_line.max(extra_start) - extra_start;
+                let range_end = end_line.min(extra_end) - extra_start;
+                for line in extra_lines[range_start..range_end].iter().cloned() {
+                    visible_lines.push((line, None));
+                }
             }
         }
         let highlighted = self.apply_selection_highlight(visible_lines, content.width);

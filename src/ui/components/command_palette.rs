@@ -109,6 +109,7 @@ impl CommandPaletteState {
             Action::ShowModelSelector,
             Action::ToggleMetrics,
             Action::DumpDebugState,
+            Action::OpenQueueEditor,
             Action::CloseTab,
             Action::NextTab,
             Action::PrevTab,

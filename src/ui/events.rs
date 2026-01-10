@@ -162,6 +162,8 @@ pub enum InputMode {
     CommandPalette,
     /// Missing tool dialog is open
     MissingTool,
+    /// Editing queued messages inline
+    QueueEditing,
 }
 
 /// View mode for the main content area

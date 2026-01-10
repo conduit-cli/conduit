@@ -7,6 +7,37 @@ use uuid::Uuid;
 
 use crate::agent::AgentType;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueuedMessageMode {
+    Steer,
+    FollowUp,
+}
+
+impl QueuedMessageMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            QueuedMessageMode::Steer => "Steering",
+            QueuedMessageMode::FollowUp => "Follow-up",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueuedImageAttachment {
+    pub path: PathBuf,
+    pub placeholder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueuedMessage {
+    pub id: Uuid,
+    pub mode: QueuedMessageMode,
+    pub text: String,
+    pub images: Vec<QueuedImageAttachment>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Represents a git repository that can have multiple workspaces
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Repository {
@@ -146,6 +177,8 @@ pub struct SessionTab {
     pub created_at: DateTime<Utc>,
     /// Pending user message that hasn't been confirmed by agent yet
     pub pending_user_message: Option<String>,
+    /// Queued messages waiting to be delivered
+    pub queued_messages: Vec<QueuedMessage>,
 }
 
 impl SessionTab {
@@ -169,6 +202,7 @@ impl SessionTab {
             pr_number,
             created_at: Utc::now(),
             pending_user_message: None,
+            queued_messages: Vec::new(),
         }
     }
 }

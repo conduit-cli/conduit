@@ -1,6 +1,7 @@
 pub mod action;
 pub mod app;
 pub mod app_state;
+pub mod capabilities;
 pub mod clipboard_paste;
 pub mod components;
 pub mod effect;
@@ -13,6 +14,7 @@ pub mod terminal_guard;
 pub use action::Action;
 pub use app::App;
 pub use app_state::{AppState, PerformanceMetrics};
+pub use capabilities::AgentCapabilities;
 pub use effect::Effect;
 pub use events::{AppEvent, InputMode};
 pub use git_tracker::{GitTrackerHandle, GitTrackerUpdate};

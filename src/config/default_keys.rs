@@ -71,6 +71,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-p", Action::ToggleMetrics);
     bind(&mut config.global, "M-g", Action::DumpDebugState);
     bind(&mut config.global, "M-t", Action::ShowThemePicker);
+    bind(&mut config.global, "M-q", Action::OpenQueueEditor);
 
     // Agent mode toggle (Build/Plan) - Ctrl+\
     //
@@ -116,6 +117,10 @@ pub fn default_keybindings() -> KeybindingConfig {
     chat.insert(
         KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),
         Action::Submit,
+    );
+    chat.insert(
+        KeyCombo::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        Action::SubmitSteer,
     );
     chat.insert(
         KeyCombo::new(KeyCode::Enter, KeyModifiers::SHIFT),
@@ -224,6 +229,42 @@ pub fn default_keybindings() -> KeybindingConfig {
     );
     bind(scrolling, "q", Action::Cancel);
     bind(scrolling, "i", Action::Cancel);
+
+    // ========== Queue Editing Mode ==========
+    let queue = config.context.entry(KeyContext::QueueEditing).or_default();
+
+    queue.insert(
+        KeyCombo::new(KeyCode::Up, KeyModifiers::NONE),
+        Action::SelectPrev,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Down, KeyModifiers::NONE),
+        Action::SelectNext,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),
+        Action::QueueEdit,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Delete, KeyModifiers::NONE),
+        Action::QueueDelete,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
+        Action::QueueDelete,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE),
+        Action::CloseQueueEditor,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Char('k'), KeyModifiers::ALT),
+        Action::QueueMoveUp,
+    );
+    queue.insert(
+        KeyCombo::new(KeyCode::Char('j'), KeyModifiers::ALT),
+        Action::QueueMoveDown,
+    );
 
     // ========== Sidebar Navigation ==========
     let sidebar = config.context.entry(KeyContext::Sidebar).or_default();

@@ -44,6 +44,8 @@ pub enum ConfirmationContext {
         working_dir: PathBuf,
         pr_url: String,
     },
+    /// Steering fallback confirmation (interrupt current run)
+    SteerFallback { message_id: Uuid },
 }
 
 impl ConfirmationType {

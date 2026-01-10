@@ -97,6 +97,22 @@ impl InputBox {
         self.clear_selection();
     }
 
+    /// Set input text with attached images restored.
+    pub fn set_input_with_attachments(
+        &mut self,
+        text: String,
+        attachments: Vec<(PathBuf, String)>,
+    ) {
+        self.input = text;
+        self.cursor_pos = self.input.len();
+        self.pending_pastes.clear();
+        self.attached_images = attachments
+            .into_iter()
+            .map(|(path, placeholder)| AttachedImage { placeholder, path })
+            .collect();
+        self.clear_selection();
+    }
+
     /// Clear input
     pub fn clear(&mut self) {
         self.input.clear();

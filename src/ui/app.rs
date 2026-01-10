@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use crossterm::{
     event::{self, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
@@ -12,10 +13,13 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
     Frame, Terminal,
 };
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
+use uuid::Uuid;
 
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
@@ -26,19 +30,20 @@ use crate::config::{
     parse_action, parse_key_notation, Config, KeyCombo, KeyContext, COMMAND_NAMES,
 };
 use crate::data::{
-    AppStateStore, Database, Repository, RepositoryStore, SessionTab, SessionTabStore,
-    WorkspaceStore,
+    AppStateStore, Database, QueuedImageAttachment, QueuedMessage, QueuedMessageMode, Repository,
+    RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
 };
 use crate::git::{PrManager, WorktreeManager};
 use crate::ui::action::Action;
 use crate::ui::app_state::{AppState, ScrollDragTarget, SelectionDragTarget};
 use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
-    scrollbar_offset_from_point, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage,
-    CommandPalette, ConfirmationContext, ConfirmationDialog, ConfirmationType, ErrorDialog,
-    EventDirection, GlobalFooter, HelpDialog, MessageRole, MissingToolDialog, ModelSelector,
-    ProcessingState, ProjectPicker, RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics,
-    SessionImportPicker, Sidebar, SidebarData, TabBar, ThemePicker,
+    bg_highlight, scrollbar_offset_from_point, text_muted, text_primary, AddRepoDialog,
+    AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
+    ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
+    MessageRole, MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
+    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionImportPicker, Sidebar, SidebarData, TabBar,
+    ThemePicker,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -311,6 +316,10 @@ impl App {
                 }
             }
 
+            if !tab.queued_messages.is_empty() {
+                session.queued_messages = tab.queued_messages.clone();
+            }
+
             session.update_status();
 
             // Register workspace with git tracker if available
@@ -421,6 +430,8 @@ impl App {
                 tab.agent_mode = Some(session.agent_mode.as_str().to_string());
                 // Preserve pending user message for interrupted sessions
                 tab.pending_user_message = session.pending_user_message.clone();
+                // Preserve queued messages for interrupted sessions
+                tab.queued_messages = session.queued_messages.clone();
                 tab
             })
             .collect();
@@ -1192,8 +1203,8 @@ impl App {
             }
             Action::ToggleAgentMode => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    // Only toggle for Claude sessions - Codex doesn't support plan mode
-                    if session.agent_type == AgentType::Claude {
+                    // Only toggle when agent supports plan mode
+                    if session.capabilities.supports_plan_mode {
                         session.agent_mode = session.agent_mode.toggle();
                         session.update_status();
                     }
@@ -1479,10 +1490,18 @@ impl App {
                 }
             }
             Action::MoveCursorUp => {
+                let mut dequeued = None;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if !session.input_box.move_up() && session.input_box.is_cursor_on_first_line() {
-                        session.input_box.history_prev();
+                        if session.input_box.is_empty() && !session.queued_messages.is_empty() {
+                            dequeued = session.dequeue_last();
+                        } else {
+                            session.input_box.history_prev();
+                        }
                     }
+                }
+                if let Some(message) = dequeued {
+                    self.restore_queued_to_input(message);
                 }
             }
             Action::MoveCursorDown => {
@@ -1504,17 +1523,59 @@ impl App {
                 }
             }
             Action::Submit => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    if !session.input_box.is_empty() {
-                        let submission = session.input_box.submit();
-                        if !submission.text.trim().is_empty() || !submission.image_paths.is_empty()
-                        {
-                            effects.extend(self.submit_prompt(
-                                submission.text,
-                                submission.image_paths,
-                                submission.image_placeholders,
-                            )?);
+                effects
+                    .extend(self.handle_submit_action(crate::data::QueuedMessageMode::FollowUp)?);
+            }
+            Action::SubmitSteer => {
+                effects.extend(self.handle_submit_action(crate::data::QueuedMessageMode::Steer)?);
+            }
+            Action::OpenQueueEditor => {
+                self.open_queue_editor();
+            }
+            Action::CloseQueueEditor => {
+                self.close_queue_editor();
+            }
+            Action::QueueMoveUp => {
+                if self.state.input_mode == InputMode::QueueEditing {
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        session.move_queue_up();
+                    }
+                }
+            }
+            Action::QueueMoveDown => {
+                if self.state.input_mode == InputMode::QueueEditing {
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        session.move_queue_down();
+                    }
+                }
+            }
+            Action::QueueEdit => {
+                if self.state.input_mode == InputMode::QueueEditing {
+                    let mut message = None;
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        message = session.dequeue_selected();
+                    }
+                    if let Some(msg) = message {
+                        self.close_queue_editor();
+                        self.restore_queued_to_input(msg);
+                    } else {
+                        self.close_queue_editor();
+                    }
+                }
+            }
+            Action::QueueDelete => {
+                if self.state.input_mode == InputMode::QueueEditing {
+                    let mut should_close = false;
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        if let Some(idx) = session.queue_selection {
+                            session.remove_queue_at(idx);
                         }
+                        if session.queued_messages.is_empty() {
+                            should_close = true;
+                        }
+                    }
+                    if should_close {
+                        self.close_queue_editor();
                     }
                 }
             }
@@ -1546,6 +1607,11 @@ impl App {
                 InputMode::CommandPalette => {
                     self.state.command_palette_state.select_next();
                 }
+                InputMode::QueueEditing => {
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        session.select_queue_next();
+                    }
+                }
                 _ => {}
             },
             Action::SelectPrev => match self.state.input_mode {
@@ -1573,6 +1639,11 @@ impl App {
                 }
                 InputMode::CommandPalette => {
                     self.state.command_palette_state.select_prev();
+                }
+                InputMode::QueueEditing => {
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        session.select_queue_prev();
+                    }
                 }
                 _ => {}
             },
@@ -1728,6 +1799,12 @@ impl App {
                                     effects.push(Effect::OpenPrInBrowser { working_dir });
                                     return Ok(effects);
                                 }
+                                ConfirmationContext::SteerFallback { message_id } => {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.state.input_mode = InputMode::Normal;
+                                    effects.extend(self.confirm_steer_fallback(message_id)?);
+                                    return Ok(effects);
+                                }
                             }
                         }
                     }
@@ -1737,6 +1814,7 @@ impl App {
                         self.state.confirmation_dialog_state.context,
                         Some(ConfirmationContext::CreatePullRequest { .. })
                             | Some(ConfirmationContext::OpenExistingPr { .. })
+                            | Some(ConfirmationContext::SteerFallback { .. })
                     ) {
                         self.state.input_mode = InputMode::Normal;
                     } else {
@@ -1819,6 +1897,7 @@ impl App {
                         self.state.confirmation_dialog_state.context,
                         Some(ConfirmationContext::CreatePullRequest { .. })
                             | Some(ConfirmationContext::OpenExistingPr { .. })
+                            | Some(ConfirmationContext::SteerFallback { .. })
                     ) {
                         self.state.input_mode = InputMode::Normal;
                     } else {
@@ -1851,6 +1930,9 @@ impl App {
                 InputMode::CommandPalette => {
                     self.state.command_palette_state.hide();
                     self.state.input_mode = InputMode::Normal;
+                }
+                InputMode::QueueEditing => {
+                    self.close_queue_editor();
                 }
                 _ => {}
             },
@@ -2066,6 +2148,11 @@ impl App {
                                 self.state.input_mode = InputMode::Normal;
                                 effects.push(Effect::OpenPrInBrowser { working_dir });
                             }
+                            ConfirmationContext::SteerFallback { message_id } => {
+                                self.state.confirmation_dialog_state.hide();
+                                self.state.input_mode = InputMode::Normal;
+                                effects.extend(self.confirm_steer_fallback(message_id)?);
+                            }
                         }
                     }
                 }
@@ -2073,7 +2160,14 @@ impl App {
             Action::ConfirmNo => {
                 if self.state.input_mode == InputMode::Confirming {
                     self.state.confirmation_dialog_state.hide();
-                    self.state.input_mode = InputMode::SidebarNavigation;
+                    if matches!(
+                        self.state.confirmation_dialog_state.context,
+                        Some(ConfirmationContext::SteerFallback { .. })
+                    ) {
+                        self.state.input_mode = InputMode::Normal;
+                    } else {
+                        self.state.input_mode = InputMode::SidebarNavigation;
+                    }
                 }
             }
             Action::ConfirmToggle => {
@@ -2926,6 +3020,10 @@ impl App {
                         session.chat_view.push(display.to_chat_message());
                         session.pending_user_message = Some(pending.clone());
                     }
+                }
+
+                if !saved.queued_messages.is_empty() {
+                    session.queued_messages = saved.queued_messages.clone();
                 }
             }
         }
@@ -4002,6 +4100,7 @@ impl App {
                 self.state.confirmation_dialog_state.context,
                 Some(ConfirmationContext::CreatePullRequest { .. })
                     | Some(ConfirmationContext::OpenExistingPr { .. })
+                    | Some(ConfirmationContext::SteerFallback { .. })
             ) {
                 self.state.input_mode = InputMode::Normal;
             } else {
@@ -4817,6 +4916,10 @@ impl App {
                 if was_processing && is_active_tab {
                     self.state.stop_footer_spinner();
                 }
+
+                if let Ok(mut queued_effects) = self.drain_queue_for_tab(tab_index) {
+                    effects.append(&mut queued_effects);
+                }
             }
             AppEvent::SessionsCacheLoaded { sessions } => {
                 // Load cached sessions immediately - fast path
@@ -5164,15 +5267,25 @@ impl App {
     fn submit_prompt(
         &mut self,
         prompt: String,
+        images: Vec<PathBuf>,
+        image_placeholders: Vec<String>,
+    ) -> anyhow::Result<Vec<Effect>> {
+        let tab_index = self.state.tab_manager.active_index();
+        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders)
+    }
+
+    fn submit_prompt_for_tab(
+        &mut self,
+        tab_index: usize,
+        prompt: String,
         mut images: Vec<PathBuf>,
         image_placeholders: Vec<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
-        let tab_index = self.state.tab_manager.active_index();
 
         // Extract session info in a limited borrow scope
         let (agent_type, agent_mode, model, session_id_to_use, working_dir) = {
-            let Some(session) = self.state.tab_manager.active_session_mut() else {
+            let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
                 return Ok(effects);
             };
 
@@ -5217,7 +5330,7 @@ impl App {
         }
 
         // Add user message to chat and start processing (after validation passes)
-        if let Some(session) = self.state.tab_manager.active_session_mut() {
+        if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
             let display = MessageDisplay::User {
                 content: prompt.clone(),
             };
@@ -5226,7 +5339,9 @@ impl App {
             session.pending_user_message = Some(prompt.clone());
             session.start_processing();
         }
-        self.state.start_footer_spinner(None);
+        if self.state.tab_manager.active_index() == tab_index {
+            self.state.start_footer_spinner(None);
+        }
 
         // Start agent
         // Strip placeholders unconditionally for Codex (handles edge case where user
@@ -5261,7 +5376,7 @@ impl App {
                 .collect();
             debug_payload["images"] = serde_json::json!(image_paths);
         }
-        if let Some(session) = self.state.tab_manager.active_session_mut() {
+        if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
             session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
         }
 
@@ -5285,6 +5400,118 @@ impl App {
             agent_type,
             config,
         });
+
+        Ok(effects)
+    }
+
+    fn handle_submit_action(&mut self, mode: QueuedMessageMode) -> anyhow::Result<Vec<Effect>> {
+        let mut effects = Vec::new();
+        let mut immediate_submit: Option<(String, Vec<PathBuf>, Vec<String>)> = None;
+        let mut interrupt_before_submit = false;
+        let mut prompt_fallback_id: Option<Uuid> = None;
+        let mut footer_message: Option<String> = None;
+        let mut queued_handled = false;
+
+        {
+            let Some(session) = self.state.tab_manager.active_session_mut() else {
+                return Ok(effects);
+            };
+
+            if session.input_box.is_empty() {
+                return Ok(effects);
+            }
+
+            let submission = session.input_box.submit();
+            if submission.text.trim().is_empty() && submission.image_paths.is_empty() {
+                return Ok(effects);
+            }
+
+            let submission_text = submission.text;
+            let submission_image_paths = submission.image_paths;
+            let submission_image_placeholders = submission.image_placeholders;
+
+            let effective_mode = if mode == QueuedMessageMode::Steer
+                && self.config.steer.behavior == crate::config::SteerBehavior::Soft
+            {
+                QueuedMessageMode::FollowUp
+            } else {
+                mode
+            };
+
+            if session.is_processing {
+                let images = submission_image_paths
+                    .iter()
+                    .cloned()
+                    .zip(submission_image_placeholders.iter().cloned())
+                    .map(|(path, placeholder)| QueuedImageAttachment { path, placeholder })
+                    .collect::<Vec<_>>();
+                let queued = QueuedMessage {
+                    id: Uuid::new_v4(),
+                    mode: effective_mode,
+                    text: submission_text.clone(),
+                    images,
+                    created_at: Utc::now(),
+                };
+
+                if mode == QueuedMessageMode::Steer && effective_mode == QueuedMessageMode::Steer {
+                    match self.config.steer.fallback {
+                        crate::config::SteerFallback::Interrupt => {
+                            let (text, image_paths, image_placeholders) =
+                                queued_to_submission(&queued);
+                            immediate_submit = Some((text, image_paths, image_placeholders));
+                            interrupt_before_submit = true;
+                            queued_handled = true;
+                        }
+                        crate::config::SteerFallback::Prompt => {
+                            session.queue_message(queued.clone());
+                            prompt_fallback_id = Some(queued.id);
+                            footer_message = Some(
+                                "Steering queued · press Enter to confirm interrupt".to_string(),
+                            );
+                            queued_handled = true;
+                        }
+                        crate::config::SteerFallback::Queue => {
+                            session.queue_message(queued);
+                            footer_message = Some("Steering queued".to_string());
+                            queued_handled = true;
+                        }
+                    }
+                } else {
+                    session.queue_message(queued);
+                    footer_message = Some(if mode == QueuedMessageMode::Steer {
+                        "Steering queued (soft mode)".to_string()
+                    } else {
+                        "Message queued".to_string()
+                    });
+                    queued_handled = true;
+                }
+            }
+
+            if !queued_handled {
+                immediate_submit = Some((
+                    submission_text,
+                    submission_image_paths,
+                    submission_image_placeholders,
+                ));
+            }
+        }
+
+        if let Some(message) = footer_message {
+            self.state
+                .set_timed_footer_message(message, Duration::from_secs(3));
+        }
+
+        if let Some(message_id) = prompt_fallback_id {
+            self.show_steer_fallback_prompt(message_id);
+            return Ok(effects);
+        }
+
+        if let Some((text, images, placeholders)) = immediate_submit {
+            if interrupt_before_submit {
+                self.interrupt_agent();
+            }
+            effects.extend(self.submit_prompt(text, images, placeholders)?);
+        }
 
         Ok(effects)
     }
@@ -5459,6 +5686,229 @@ impl App {
 
         // Submit to current chat session
         self.submit_prompt(prompt, Vec::new(), Vec::new())
+    }
+
+    fn build_queue_lines(
+        session: &AgentSession,
+        width: u16,
+        input_mode: InputMode,
+    ) -> Option<Vec<Line<'static>>> {
+        if session.queued_messages.is_empty() {
+            return None;
+        }
+
+        let max_width = width.saturating_sub(2) as usize;
+        let selected = if input_mode == InputMode::QueueEditing {
+            session.queue_selection
+        } else {
+            None
+        };
+
+        let mut lines = Vec::new();
+        for (idx, msg) in session.queued_messages.iter().enumerate() {
+            let raw = msg.text.trim();
+            let mut preview = raw.lines().next().unwrap_or("").trim().to_string();
+            if preview.is_empty() {
+                preview = "<empty>".to_string();
+            }
+            if raw.contains('\n') {
+                preview.push_str(" ...");
+            }
+            let mut text = format!("{}: {}", msg.mode.label(), preview);
+            if !msg.images.is_empty() {
+                let count = msg.images.len();
+                let suffix = if count == 1 { "image" } else { "images" };
+                text.push_str(&format!(" [{} {}]", count, suffix));
+            }
+
+            if max_width > 0 {
+                text = truncate_queue_line(&text, max_width);
+            }
+
+            let prefix = if selected == Some(idx) { "› " } else { "  " };
+            let line_text = format!("{prefix}{text}");
+            let style = if selected == Some(idx) {
+                Style::default()
+                    .fg(text_primary())
+                    .bg(bg_highlight())
+                    .add_modifier(Modifier::ITALIC)
+            } else {
+                Style::default()
+                    .fg(text_muted())
+                    .add_modifier(Modifier::ITALIC)
+            };
+            lines.push(Line::from(Span::styled(line_text, style)));
+        }
+
+        Some(lines)
+    }
+
+    fn restore_queued_to_input(&mut self, message: crate::data::QueuedMessage) {
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            let attachments = message
+                .images
+                .iter()
+                .map(|img| (img.path.clone(), img.placeholder.clone()))
+                .collect();
+            session
+                .input_box
+                .set_input_with_attachments(message.text, attachments);
+            session.input_box.move_end();
+        }
+    }
+
+    fn open_queue_editor(&mut self) {
+        let has_queue = {
+            let Some(session) = self.state.tab_manager.active_session_mut() else {
+                return;
+            };
+            !session.queued_messages.is_empty()
+        };
+
+        if !has_queue {
+            self.state
+                .set_timed_footer_message("No queued messages".to_string(), Duration::from_secs(3));
+            return;
+        }
+
+        self.state.close_overlays();
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            if session.queue_selection.is_none() {
+                session.queue_selection = Some(session.queued_messages.len() - 1);
+            }
+        }
+        self.state.input_mode = InputMode::QueueEditing;
+    }
+
+    fn close_queue_editor(&mut self) {
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            session.queue_selection = None;
+        }
+        self.state.input_mode = InputMode::Normal;
+    }
+
+    fn show_steer_fallback_prompt(&mut self, message_id: Uuid) {
+        self.state.close_overlays();
+        self.state.confirmation_dialog_state.show(
+            "Interrupt to Steer",
+            "Steering isn't supported by this harness.\nInterrupt the current run and send now?",
+            vec![
+                "In-flight tool execution will be stopped.".to_string(),
+                "Queued message will be sent immediately.".to_string(),
+            ],
+            ConfirmationType::Warning,
+            "Interrupt",
+            Some(ConfirmationContext::SteerFallback { message_id }),
+        );
+        self.state.input_mode = InputMode::Confirming;
+    }
+
+    fn confirm_steer_fallback(&mut self, message_id: Uuid) -> anyhow::Result<Vec<Effect>> {
+        let mut effects = Vec::new();
+        let mut queued: Option<QueuedMessage> = None;
+
+        {
+            if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if let Some(idx) = session
+                    .queued_messages
+                    .iter()
+                    .position(|msg| msg.id == message_id)
+                {
+                    queued = session.remove_queue_at(idx);
+                }
+            }
+        }
+
+        if let Some(message) = queued {
+            self.interrupt_agent();
+            let (text, images, placeholders) = queued_to_submission(&message);
+            effects.extend(self.submit_prompt(text, images, placeholders)?);
+        } else {
+            self.state.set_timed_footer_message(
+                "Queued steering message not found".to_string(),
+                Duration::from_secs(3),
+            );
+        }
+
+        Ok(effects)
+    }
+
+    fn drain_queue_for_tab(&mut self, tab_index: usize) -> anyhow::Result<Vec<Effect>> {
+        let mut effects = Vec::new();
+        let mut queued: Vec<QueuedMessage> = Vec::new();
+        let (queue_mode, queue_delivery) = (self.config.queue.mode, self.config.queue.delivery);
+
+        {
+            let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
+                return Ok(effects);
+            };
+
+            if session.queued_messages.is_empty() {
+                return Ok(effects);
+            }
+
+            let mut indices = Vec::new();
+            match queue_mode {
+                crate::config::QueueMode::OneAtATime => {
+                    if let Some(idx) = session
+                        .queued_messages
+                        .iter()
+                        .position(|msg| msg.mode == QueuedMessageMode::Steer)
+                    {
+                        indices.push(idx);
+                    } else {
+                        indices.push(0);
+                    }
+                }
+                crate::config::QueueMode::All => {
+                    for (idx, msg) in session.queued_messages.iter().enumerate() {
+                        if msg.mode == QueuedMessageMode::Steer {
+                            indices.push(idx);
+                        }
+                    }
+                    for (idx, msg) in session.queued_messages.iter().enumerate() {
+                        if msg.mode == QueuedMessageMode::FollowUp {
+                            indices.push(idx);
+                        }
+                    }
+                }
+            }
+
+            let mut selected = vec![false; session.queued_messages.len()];
+            for idx in indices {
+                if idx < selected.len() {
+                    selected[idx] = true;
+                }
+            }
+
+            let mut remaining = Vec::new();
+            for (idx, msg) in session.queued_messages.drain(..).enumerate() {
+                if selected.get(idx).copied().unwrap_or(false) {
+                    queued.push(msg);
+                } else {
+                    remaining.push(msg);
+                }
+            }
+
+            if queue_delivery == crate::config::QueueDelivery::Separate && queued.len() > 1 {
+                let mut requeue = queued.split_off(1);
+                requeue.extend(remaining);
+                session.queued_messages = requeue;
+            } else {
+                session.queued_messages = remaining;
+            }
+            session.queue_selection = None;
+            session.update_status();
+        }
+
+        if queued.is_empty() {
+            return Ok(effects);
+        }
+
+        let (prompt, images, placeholders) = build_queued_submission(&queued, queue_delivery);
+        effects.extend(self.submit_prompt_for_tab(tab_index, prompt, images, placeholders)?);
+
+        Ok(effects)
     }
 
     fn draw(&mut self, f: &mut Frame) {
@@ -5842,10 +6292,13 @@ impl App {
                     } else {
                         None
                     };
+                    let input_mode = self.state.input_mode;
+                    let queue_lines = Self::build_queue_lines(session, chunks[1].width, input_mode);
                     session.chat_view.render_with_indicator(
                         chunks[1],
                         f.buffer_mut(),
                         thinking_line,
+                        queue_lines,
                     );
 
                     // Render input box (not in command mode)
@@ -6318,6 +6771,72 @@ impl App {
 
         Ok(full_path)
     }
+}
+
+fn truncate_queue_line(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let current_width = UnicodeWidthStr::width(text);
+    if current_width <= max_width {
+        return text.to_string();
+    }
+    if max_width <= ellipsis_width {
+        return ellipsis[..max_width.min(ellipsis.len())].to_string();
+    }
+    let target = max_width - ellipsis_width;
+    let mut width = 0;
+    let mut result = String::new();
+    for c in text.chars() {
+        let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + char_width > target {
+            break;
+        }
+        result.push(c);
+        width += char_width;
+    }
+    result.push_str(ellipsis);
+    result
+}
+
+fn queued_to_submission(message: &QueuedMessage) -> (String, Vec<PathBuf>, Vec<String>) {
+    let image_paths = message.images.iter().map(|img| img.path.clone()).collect();
+    let placeholders = message
+        .images
+        .iter()
+        .map(|img| img.placeholder.clone())
+        .collect();
+    (message.text.clone(), image_paths, placeholders)
+}
+
+fn build_queued_submission(
+    messages: &[QueuedMessage],
+    delivery: crate::config::QueueDelivery,
+) -> (String, Vec<PathBuf>, Vec<String>) {
+    let mut lines = Vec::new();
+    if messages.len() == 1 || delivery == crate::config::QueueDelivery::Concat {
+        for msg in messages {
+            lines.push(msg.text.trim().to_string());
+        }
+    } else {
+        for (idx, msg) in messages.iter().enumerate() {
+            lines.push(format!("[Queued {} of {}]", idx + 1, messages.len()));
+            lines.push(msg.text.trim().to_string());
+        }
+    }
+
+    let mut image_paths = Vec::new();
+    let mut placeholders = Vec::new();
+    for msg in messages {
+        for img in &msg.images {
+            image_paths.push(img.path.clone());
+            placeholders.push(img.placeholder.clone());
+        }
+    }
+
+    (lines.join("\n\n"), image_paths, placeholders)
 }
 
 struct SessionStateSnapshot {
