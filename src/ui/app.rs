@@ -1,6 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
 use std::fs::File;
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,6 +18,7 @@ use ratatui::{
     text::{Line, Span},
     Frame, Terminal,
 };
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -1871,12 +1870,9 @@ impl App {
                             }
                         }
                     }
-                    // Cancel selected - use same context-aware logic
+                    // Cancel selected - cache context before hide() clears it
                     let context = self.state.confirmation_dialog_state.context.clone();
-                    if matches!(
-                        self.state.confirmation_dialog_state.context,
-                        Some(ConfirmationContext::ForkSession { .. })
-                    ) {
+                    if matches!(&context, Some(ConfirmationContext::ForkSession { .. })) {
                         self.state.pending_fork_request = None;
                     }
                     self.state.confirmation_dialog_state.hide();
@@ -1964,8 +1960,9 @@ impl App {
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::Confirming => {
+                    // Cache context before hide() clears it
                     let context = self.state.confirmation_dialog_state.context.clone();
-                    if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
+                    if matches!(&context, Some(ConfirmationContext::ForkSession { .. })) {
                         self.state.pending_fork_request = None;
                     }
                     self.state.confirmation_dialog_state.hide();
@@ -3379,9 +3376,9 @@ impl App {
     }
 
     fn compute_seed_prompt_hash(seed_prompt: &str) -> String {
-        let mut hasher = DefaultHasher::new();
-        seed_prompt.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
+        let mut hasher = Sha256::new();
+        hasher.update(seed_prompt.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     fn format_fork_message(msg: &ChatMessage) -> String {
@@ -3460,7 +3457,18 @@ impl App {
     }
 
     fn sanitize_fork_header_value(value: &str) -> String {
-        value.replace('\"', "'").replace('\n', " ")
+        value
+            .chars()
+            .map(|c| {
+                if c == '"' {
+                    '\''
+                } else if c.is_control() {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect()
     }
 
     /// Populate the debug pane with history loading debug entries
@@ -6274,6 +6282,11 @@ impl App {
             return Err(anyhow!(
                 "Failed to start forked agent: no start-agent effect produced."
             ));
+        }
+
+        // Clear pending_user_message so the large seed prompt doesn't get persisted
+        if let Some(active) = self.state.tab_manager.active_session_mut() {
+            active.pending_user_message = None;
         }
 
         if let Some(active) = self.state.tab_manager.active_session_mut() {

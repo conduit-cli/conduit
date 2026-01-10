@@ -141,9 +141,9 @@ impl InputBox {
         }
 
         // Only add non-whitespace entries (matches submit() behavior)
-        let trimmed = expanded.trim();
-        if !trimmed.is_empty() {
-            self.history.push(trimmed.to_string());
+        // Use trim_end() to preserve leading whitespace while removing trailing noise
+        if !expanded.trim().is_empty() {
+            self.history.push(expanded.trim_end().to_string());
         }
     }
 
@@ -165,7 +165,10 @@ impl InputBox {
 
         let (image_paths, image_placeholders) = self.take_attached_images(&expanded);
 
-        self.add_to_history(&expanded);
+        // Add to history with trim_end() to preserve leading whitespace
+        if !expanded.trim().is_empty() {
+            self.history.push(expanded.trim_end().to_string());
+        }
 
         InputSubmit {
             text: expanded,

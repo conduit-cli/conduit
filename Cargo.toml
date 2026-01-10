@@ -54,6 +54,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5.0"
 rand = "0.9.2"
 
+# Cryptography
+sha2 = "0.10"
+
 # Concurrency
 parking_lot = "0.12"
 

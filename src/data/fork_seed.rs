@@ -76,13 +76,23 @@ impl ForkSeedStore {
         let seed_ack_filtered: i64 = row.get(9)?;
 
         Ok(ForkSeed {
-            id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
+            id: Uuid::parse_str(&id_str).unwrap_or_else(|e| {
+                tracing::warn!("Invalid UUID in fork_seeds table: {}, error: {}", id_str, e);
+                Uuid::new_v4()
+            }),
             agent_type: AgentType::parse(&agent_type_str),
             parent_session_id: row.get(2)?,
             parent_workspace_id: parent_workspace_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "Invalid DateTime in fork_seeds table: {}, error: {}",
+                        created_at_str,
+                        e
+                    );
+                    Utc::now()
+                }),
             seed_prompt_hash: row.get(5)?,
             seed_prompt_path: row.get(6)?,
             token_estimate: row.get(7)?,

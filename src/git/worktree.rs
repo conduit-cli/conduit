@@ -161,7 +161,12 @@ impl WorktreeManager {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // If branch already exists, try adding worktree directly
-            if stderr.contains("already exists") || stderr.contains("already used") {
+            // Use specific patterns to avoid matching unrelated errors
+            if stderr.contains("already exists") || stderr.contains("already used by") {
+                tracing::debug!(
+                    "Branch {} already exists, retrying without -b flag",
+                    new_branch
+                );
                 let output = Command::new("git")
                     .args(["worktree", "add"])
                     .arg(&worktree_path)

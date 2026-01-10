@@ -1,8 +1,7 @@
 //! SQLite database management
 
 use rusqlite::{params, Connection, Result as SqliteResult};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -96,9 +95,9 @@ pub struct Database {
 }
 
 fn hash_seed_prompt(text: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 impl Database {
