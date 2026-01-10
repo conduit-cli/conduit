@@ -268,6 +268,12 @@ impl TestRepo {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    /// Set up a remote URL for the repository
+    #[allow(dead_code)] // Used in integration tests via #[path] includes
+    pub fn set_remote(&self, name: &str, url: &str) {
+        Self::git(&self.path, &["remote", "add", name, url]);
+    }
+
     /// Execute a git command in the repository
     fn git(path: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -454,12 +460,19 @@ mod tests {
     fn test_checkout_existing_branch() {
         let repo = TestRepo::with_branches(&["develop"]);
 
-        // Should be on main/master initially
+        // Save initial branch (whatever git's default is - typically main or master)
         let initial_branch = repo.current_branch();
-        assert!(initial_branch == "main" || initial_branch == "master");
+        assert!(
+            !initial_branch.is_empty(),
+            "Should have a default branch after init"
+        );
 
         // Checkout existing branch
         repo.checkout("develop");
         assert_eq!(repo.current_branch(), "develop");
+
+        // Can checkout back to initial branch
+        repo.checkout(&initial_branch);
+        assert_eq!(repo.current_branch(), initial_branch);
     }
 }

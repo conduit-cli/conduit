@@ -279,7 +279,7 @@ impl PrManager {
 
     /// Parse repository name from git remote URL
     /// Handles HTTPS (github.com/user/repo.git) and SSH (git@github.com:user/repo.git) formats
-    pub fn parse_repo_name_from_url(url: &str) -> Option<String> {
+    fn parse_repo_name_from_url(url: &str) -> Option<String> {
         // Remove .git suffix if present
         let url = url.strip_suffix(".git").unwrap_or(url);
 
@@ -597,5 +597,41 @@ mod tests {
         assert!(prompt.contains("origin/main"));
         assert!(prompt.contains("no upstream branch"));
         assert!(prompt.contains("gh pr create --base main"));
+    }
+
+    #[test]
+    fn test_parse_repo_name_from_url_https() {
+        let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo.git");
+        assert_eq!(name, Some("awesome-repo".to_string()));
+
+        let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo");
+        assert_eq!(name, Some("awesome-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repo_name_from_url_ssh() {
+        let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo.git");
+        assert_eq!(name, Some("awesome-repo".to_string()));
+
+        let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo");
+        assert_eq!(name, Some("awesome-repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repo_name_from_url_nested_paths() {
+        // GitLab style nested groups
+        let name = PrManager::parse_repo_name_from_url("https://gitlab.com/org/subgroup/repo.git");
+        assert_eq!(name, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn test_parse_repo_name_from_url_fallback() {
+        // Fallback: plain strings return the string itself (handles local paths)
+        let name = PrManager::parse_repo_name_from_url("my-local-repo");
+        assert_eq!(name, Some("my-local-repo".to_string()));
+
+        // Paths with directories use the last component
+        let name = PrManager::parse_repo_name_from_url("/home/user/projects/my-repo");
+        assert_eq!(name, Some("my-repo".to_string()));
     }
 }

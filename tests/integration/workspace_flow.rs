@@ -8,7 +8,7 @@ mod common;
 
 use common::git_fixtures::TestRepo;
 use conduit::{generate_branch_name, generate_workspace_name};
-use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore};
+use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore, WorktreeManager};
 use std::path::PathBuf;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -86,55 +86,9 @@ fn test_branch_name_sanitization() {
     );
 }
 
-/// Test creating a git worktree for an existing branch
-#[test]
-fn test_worktree_creation_existing_branch() {
-    let repo = TestRepo::with_branches(&["feature-1"]);
-
-    // Use a unique path within the repo's parent temp dir to avoid collisions
-    let unique_id = Uuid::new_v4().as_simple().to_string();
-    let worktree_path = repo
-        .path
-        .parent()
-        .unwrap()
-        .join(format!("wt-feature-1-{}", &unique_id[..8]));
-
-    // Use tracked worktree creation for automatic cleanup
-    repo.create_tracked_worktree(&worktree_path, "feature-1");
-
-    assert!(worktree_path.exists(), "Worktree directory should exist");
-    assert!(
-        worktree_path.join(".git").exists(),
-        "Worktree should have .git"
-    );
-}
-
-/// Test creating a worktree with a new branch
-#[test]
-fn test_worktree_creation_new_branch() {
-    let repo = TestRepo::new();
-
-    // Use a unique path to avoid collisions
-    let unique_id = Uuid::new_v4().as_simple().to_string();
-    let worktree_path = repo
-        .path
-        .parent()
-        .unwrap()
-        .join(format!("wt-new-feature-{}", &unique_id[..8]));
-
-    // create_tracked_worktree will auto-create a new branch if it doesn't exist
-    repo.create_tracked_worktree(&worktree_path, "new-feature");
-
-    assert!(worktree_path.exists(), "Worktree directory should exist");
-
-    // Verify branch was created
-    let branches = repo.branches();
-    assert!(
-        branches.iter().any(|b| b == "new-feature"),
-        "New branch should exist, got: {:?}",
-        branches
-    );
-}
+// NOTE: Worktree creation tests have been moved to use WorktreeManager directly
+// (see test_worktree_manager_existing_branch, test_worktree_manager_new_branch)
+// to ensure production code paths are exercised rather than test fixtures.
 
 /// Test workspace persistence to database
 #[test]
@@ -326,4 +280,93 @@ fn test_workspace_isolation() {
     // Verify isolation both ways
     assert!(!wt1_path.join("wt2_only.txt").exists());
     assert!(wt2_path.join("wt2_only.txt").exists());
+}
+
+/// Test WorktreeManager::create_worktree with existing branch
+///
+/// Exercises the production WorktreeManager to ensure it handles
+/// existing branches correctly.
+#[test]
+fn test_worktree_manager_existing_branch() {
+    let repo = TestRepo::with_branches(&["feature-1"]);
+    let manager = WorktreeManager::new();
+
+    let unique_id = Uuid::new_v4().as_simple().to_string();
+    let worktree_name = format!("wt-manager-{}", &unique_id[..8]);
+
+    let result = manager.create_worktree(&repo.path, "feature-1", &worktree_name);
+
+    assert!(
+        result.is_ok(),
+        "WorktreeManager should create worktree: {:?}",
+        result.err()
+    );
+
+    let worktree_path = result.unwrap();
+    assert!(worktree_path.exists(), "Worktree should exist");
+    assert!(
+        worktree_path.join(".git").exists(),
+        "Worktree should have .git"
+    );
+
+    // Clean up (WorktreeManager doesn't auto-cleanup like TestRepo)
+    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+}
+
+/// Test WorktreeManager::create_worktree with new branch
+///
+/// Exercises the production WorktreeManager to ensure it auto-creates
+/// branches that don't exist.
+#[test]
+fn test_worktree_manager_new_branch() {
+    let repo = TestRepo::new();
+    let manager = WorktreeManager::new();
+
+    let unique_id = Uuid::new_v4().as_simple().to_string();
+    let worktree_name = format!("wt-newbranch-{}", &unique_id[..8]);
+    let branch_name = format!("feature-new-{}", &unique_id[..8]);
+
+    let result = manager.create_worktree(&repo.path, &branch_name, &worktree_name);
+
+    assert!(
+        result.is_ok(),
+        "WorktreeManager should create worktree with new branch: {:?}",
+        result.err()
+    );
+
+    let worktree_path = result.unwrap();
+    assert!(worktree_path.exists(), "Worktree should exist");
+
+    // Verify branch was created
+    let branches = repo.branches();
+    assert!(
+        branches.iter().any(|b| b == &branch_name),
+        "New branch should exist: {:?}",
+        branches
+    );
+
+    // Clean up
+    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+}
+
+/// Test WorktreeManager error handling for already-existing worktree
+#[test]
+fn test_worktree_manager_already_exists_error() {
+    let repo = TestRepo::with_branches(&["feature-1"]);
+    let manager = WorktreeManager::new();
+
+    let unique_id = Uuid::new_v4().as_simple().to_string();
+    let worktree_name = format!("wt-duplicate-{}", &unique_id[..8]);
+
+    // Create first worktree
+    let result1 = manager.create_worktree(&repo.path, "feature-1", &worktree_name);
+    assert!(result1.is_ok());
+    let worktree_path = result1.unwrap();
+
+    // Try to create another with same name - should fail
+    let result2 = manager.create_worktree(&repo.path, "feature-1", &worktree_name);
+    assert!(result2.is_err(), "Should fail when worktree already exists");
+
+    // Clean up
+    let _ = manager.remove_worktree(&repo.path, &worktree_path);
 }

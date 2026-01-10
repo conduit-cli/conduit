@@ -149,40 +149,31 @@ fn test_pr_prompt_with_upstream() {
     );
 }
 
-/// Test repo name parsing from various URL formats
+/// Test repo name extraction via PrManager::get_repo_name
 ///
-/// Uses the production PrManager::parse_repo_name_from_url to ensure
-/// tests catch regressions in the actual parsing logic.
+/// Tests the full flow of extracting repo name from a git remote URL.
+/// URL parsing logic is tested in unit tests in src/git/pr.rs.
 #[test]
-fn test_repo_name_parsing() {
-    // HTTPS format
-    let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo.git");
+fn test_get_repo_name_from_remote() {
+    let repo = TestRepo::new();
+
+    // Add a remote with HTTPS URL
+    repo.set_remote("origin", "https://github.com/user/awesome-repo.git");
+
+    let name = PrManager::get_repo_name(&repo.path);
     assert_eq!(name, Some("awesome-repo".to_string()));
+}
 
-    // HTTPS without .git
-    let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo");
-    assert_eq!(name, Some("awesome-repo".to_string()));
+/// Test repo name falls back to directory name when no remote exists
+#[test]
+fn test_get_repo_name_fallback_to_directory() {
+    let repo = TestRepo::new();
 
-    // SSH format
-    let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo.git");
-    assert_eq!(name, Some("awesome-repo".to_string()));
+    // No remote configured, should fall back to directory name
+    let name = PrManager::get_repo_name(&repo.path);
 
-    // SSH without .git
-    let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo");
-    assert_eq!(name, Some("awesome-repo".to_string()));
-
-    // Nested paths (GitLab style)
-    let name = PrManager::parse_repo_name_from_url("https://gitlab.com/org/subgroup/repo.git");
-    assert_eq!(name, Some("repo".to_string()));
-
-    // Fallback behavior: plain strings return the string itself
-    // This handles local directory paths passed as URLs
-    let name = PrManager::parse_repo_name_from_url("my-local-repo");
-    assert_eq!(name, Some("my-local-repo".to_string()));
-
-    // Paths with directories use the last component
-    let name = PrManager::parse_repo_name_from_url("/home/user/projects/my-repo");
-    assert_eq!(name, Some("my-repo".to_string()));
+    // The temp directory name is random, but should be Some
+    assert!(name.is_some(), "Should fall back to directory name");
 }
 
 /// Test that preflight works with a feature branch

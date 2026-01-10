@@ -1217,78 +1217,91 @@ mod tests {
 ```rust
 //! Integration tests for workspace creation flow
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::git_fixtures::TestRepo;
-use conduit::git::worktree::WorktreeManager;
-use conduit::data::database::Database;
-use conduit::data::workspace::Workspace;
-use conduit::data::repository::Repository;
+use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore, WorktreeManager};
+use std::path::PathBuf;
 use tempfile::TempDir;
+use uuid::Uuid;
 
-fn create_test_db() -> (Database, TempDir) {
-    let dir = TempDir::new().unwrap();
+fn create_test_db() -> (Database, RepositoryStore, WorkspaceStore, TempDir) {
+    let dir = TempDir::new().expect("Failed to create temp dir");
     let db_path = dir.path().join("test.db");
-    let db = Database::open(db_path).unwrap();
-    (db, dir)
+    let db = Database::open(db_path).expect("Failed to open database");
+    let repo_store = RepositoryStore::new(db.connection());
+    let ws_store = WorkspaceStore::new(db.connection());
+    (db, repo_store, ws_store, dir)
 }
 
+/// Test WorktreeManager::create_worktree with existing branch
 #[test]
-fn test_worktree_creation_existing_branch() {
+fn test_worktree_manager_existing_branch() {
     let repo = TestRepo::with_branches(&["feature-1"]);
+    let manager = WorktreeManager::new();
 
-    // Use a unique path to avoid collisions
     let unique_id = Uuid::new_v4().as_simple().to_string();
-    let worktree_path = repo.path.parent().unwrap()
-        .join(format!("wt-feature-1-{}", &unique_id[..8]));
+    let worktree_name = format!("wt-manager-{}", &unique_id[..8]);
 
-    // Use tracked worktree creation for automatic cleanup
-    repo.create_tracked_worktree(&worktree_path, "feature-1");
+    let result = manager.create_worktree(&repo.path, "feature-1", &worktree_name);
 
-    assert!(worktree_path.exists());
-    assert!(worktree_path.join(".git").exists());
+    assert!(result.is_ok(), "WorktreeManager should create worktree: {:?}", result.err());
+
+    let worktree_path = result.unwrap();
+    assert!(worktree_path.exists(), "Worktree should exist");
+    assert!(worktree_path.join(".git").exists(), "Worktree should have .git");
+
+    // Clean up
+    let _ = manager.remove_worktree(&repo.path, &worktree_path);
 }
 
+/// Test WorktreeManager::create_worktree with new branch (auto-creates)
 #[test]
-fn test_worktree_creation_new_branch() {
+fn test_worktree_manager_new_branch() {
     let repo = TestRepo::new();
+    let manager = WorktreeManager::new();
 
-    // Use a unique path to avoid collisions
     let unique_id = Uuid::new_v4().as_simple().to_string();
-    let worktree_path = repo.path.parent().unwrap()
-        .join(format!("wt-new-feature-{}", &unique_id[..8]));
+    let worktree_name = format!("wt-newbranch-{}", &unique_id[..8]);
+    let branch_name = format!("feature-new-{}", &unique_id[..8]);
 
-    // create_tracked_worktree auto-creates the branch if it doesn't exist
-    repo.create_tracked_worktree(&worktree_path, "new-feature");
+    let result = manager.create_worktree(&repo.path, &branch_name, &worktree_name);
 
-    assert!(worktree_path.exists());
+    assert!(result.is_ok(), "WorktreeManager should create worktree: {:?}", result.err());
+
+    let worktree_path = result.unwrap();
+    assert!(worktree_path.exists(), "Worktree should exist");
 
     // Verify branch was created
     let branches = repo.branches();
-    assert!(branches.iter().any(|b| b == "new-feature"));
+    assert!(branches.iter().any(|b| b == &branch_name), "New branch should exist");
+
+    // Clean up
+    let _ = manager.remove_worktree(&repo.path, &worktree_path);
 }
 
 #[test]
 fn test_workspace_persists_to_database() {
-    let (db, _dir) = create_test_db();
+    let (_db, repo_store, ws_store, _dir) = create_test_db();
 
     // Create repository first
-    let repo = Repository::new("/test/path", "test-repo");
-    repo.save(&db).unwrap();
+    let repo = Repository::from_local_path("test-repo", PathBuf::from("/test/path"));
+    repo_store.create(&repo).expect("Failed to save repository");
 
     // Create workspace
     let workspace = Workspace::new(
-        &repo.id,
-        "bold-fox",
-        "fcoury/bold-fox",
-        "/test/path/worktrees/bold-fox",
+        repo.id.clone(),
+        "bold-fox".to_string(),
+        "fcoury/bold-fox".to_string(),
+        PathBuf::from("/test/path/worktrees/bold-fox"),
     );
-    workspace.save(&db).unwrap();
+    ws_store.create(&workspace).expect("Failed to save workspace");
 
     // Verify it can be retrieved
-    let loaded = Workspace::find_by_id(&db, &workspace.id)
-        .unwrap()
-        .unwrap();
+    let loaded = ws_store.find_by_id(&workspace.id)
+        .expect("Failed to load workspace")
+        .expect("Workspace not found");
 
     assert_eq!(loaded.name, "bold-fox");
     assert_eq!(loaded.branch, "fcoury/bold-fox");
@@ -1296,66 +1309,65 @@ fn test_workspace_persists_to_database() {
 
 #[test]
 fn test_workspace_unique_names_per_repo() {
-    let (db, _dir) = create_test_db();
+    let (_db, repo_store, ws_store, _dir) = create_test_db();
 
-    let repo = Repository::new("/test/path", "test-repo");
-    repo.save(&db).unwrap();
+    let repo = Repository::from_local_path("test-repo", PathBuf::from("/test/path"));
+    repo_store.create(&repo).expect("Failed to save repository");
 
     // Get existing workspace names
-    let existing = Workspace::names_for_repository(&db, &repo.id).unwrap();
+    let existing = ws_store.names_for_repository(&repo.id).expect("Failed to get names");
     assert!(existing.is_empty());
 
     // Create workspace
-    let ws1 = Workspace::new(&repo.id, "bold-fox", "branch1", "/path1");
-    ws1.save(&db).unwrap();
+    let ws1 = Workspace::new(
+        repo.id.clone(),
+        "bold-fox".to_string(),
+        "branch1".to_string(),
+        PathBuf::from("/path1"),
+    );
+    ws_store.create(&ws1).expect("Failed to save workspace");
 
     // Now existing should contain the new name
-    let existing = Workspace::names_for_repository(&db, &repo.id).unwrap();
-    assert!(existing.contains("bold-fox"));
+    let existing = ws_store.names_for_repository(&repo.id).expect("Failed to get names");
+    assert!(existing.contains(&"bold-fox".to_string()));
 }
 
 #[test]
 fn test_full_workspace_creation_flow() {
     let repo = TestRepo::new();
-    let (db, _db_dir) = create_test_db();
+    let (_db, repo_store, ws_store, _db_dir) = create_test_db();
 
     // 1. Register repository
-    let db_repo = Repository::new(
-        repo.path.to_str().unwrap(),
-        "test-repo",
-    );
-    db_repo.save(&db).unwrap();
+    let db_repo = Repository::from_local_path("test-repo", repo.path.clone());
+    repo_store.create(&db_repo).expect("Failed to save repository");
 
     // 2. Generate unique workspace name
-    let existing = Workspace::names_for_repository(&db, &db_repo.id).unwrap();
-    let workspace_name = conduit::util::names::generate_workspace_name(&existing);
+    let existing = ws_store.names_for_repository(&db_repo.id).expect("Failed to get names");
+    let workspace_name = conduit::generate_workspace_name(&existing);
 
     // 3. Generate branch name
-    let branch_name = conduit::util::names::generate_branch_name("testuser", &workspace_name);
+    let branch_name = conduit::generate_branch_name("testuser", &workspace_name);
 
-    // 4. Create worktree
-    let worktree_path = repo.path.parent().unwrap().join(&workspace_name);
+    // 4. Create worktree (auto-creates branch if it doesn't exist)
     let manager = WorktreeManager::new();
-    manager
-        .create_worktree_new_branch(
-            &repo.path,
-            &branch_name,
-            worktree_path.to_str().unwrap(),
-        )
+    let worktree_path = manager
+        .create_worktree(&repo.path, &branch_name, &workspace_name)
         .unwrap();
 
     // 5. Persist to database
     let workspace = Workspace::new(
-        &db_repo.id,
-        &workspace_name,
-        &branch_name,
-        worktree_path.to_str().unwrap(),
+        db_repo.id.clone(),
+        workspace_name.clone(),
+        branch_name.clone(),
+        worktree_path.clone(),
     );
-    workspace.save(&db).unwrap();
+    ws_store.create(&workspace).expect("Failed to save workspace");
 
     // Verify everything
     assert!(worktree_path.exists());
-    let loaded = Workspace::find_by_id(&db, &workspace.id).unwrap().unwrap();
+    let loaded = ws_store.find_by_id(&workspace.id)
+        .expect("Failed to load workspace")
+        .expect("Workspace not found");
     assert_eq!(loaded.name, workspace_name);
 }
 ```
