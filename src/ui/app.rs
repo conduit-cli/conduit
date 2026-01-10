@@ -2458,6 +2458,8 @@ impl App {
                             // Use the base_branch that was computed when the dialog was shown
                             // to ensure consistency between what was displayed and what is used
 
+                            // Get ALL workspace names (including archived) to prevent resurrection
+                            // of old workspace names when creating new ones
                             let existing_names: Vec<String> = workspace_dao
                                 .get_all_names_by_repository(parent_workspace.repository_id)
                                 .unwrap_or_default();
@@ -6366,7 +6368,10 @@ impl App {
             vec![],
         ) {
             Ok(effects) if effects.is_empty() => {
-                // Remove the broken tab
+                // Remove the broken tab and untrack workspace
+                if let Some(ref tracker) = self.git_tracker {
+                    tracker.untrack_workspace(workspace_id);
+                }
                 self.state.tab_manager.close_tab(new_index);
                 let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                 self.state.tab_manager.switch_to(fallback);
@@ -6376,7 +6381,10 @@ impl App {
             }
             Ok(effects) => effects,
             Err(e) => {
-                // Remove the broken tab
+                // Remove the broken tab and untrack workspace
+                if let Some(ref tracker) = self.git_tracker {
+                    tracker.untrack_workspace(workspace_id);
+                }
                 self.state.tab_manager.close_tab(new_index);
                 let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                 self.state.tab_manager.switch_to(fallback);
@@ -6410,8 +6418,32 @@ impl App {
             Err(e) => return Some(format!("Failed to load workspace: {}", e)),
         };
 
-        // Check if workspace path is under managed root (security guard)
-        let path_is_managed = workspace.path.starts_with(&managed_root);
+        // Check if workspace path is under managed root using canonicalization (security guard)
+        // This prevents path traversal attacks like /managed/root/../../../etc
+        let path_is_managed = match (
+            std::fs::canonicalize(&managed_root),
+            std::fs::canonicalize(&workspace.path),
+        ) {
+            (Ok(canonical_root), Ok(canonical_path)) => canonical_path.starts_with(&canonical_root),
+            (Err(e), _) => {
+                tracing::warn!(
+                    error = %e,
+                    managed_root = %managed_root.display(),
+                    "Cannot canonicalize managed root; refusing removal for safety"
+                );
+                false
+            }
+            (_, Err(e)) => {
+                // Path doesn't exist or can't be canonicalized - may already be deleted
+                // Log but don't treat as managed (safe default)
+                tracing::debug!(
+                    error = %e,
+                    path = %workspace.path.display(),
+                    "Cannot canonicalize workspace path; may already be deleted"
+                );
+                false
+            }
+        };
 
         let repo = match repo_dao.get_by_id(repo_id) {
             Ok(Some(r)) => r,
@@ -6536,6 +6568,11 @@ impl App {
                 "Branch '{}' may need manual deletion (no repo base path)",
                 workspace.branch
             ));
+        }
+
+        // Untrack workspace from git tracker (safety net in case it was tracked)
+        if let Some(ref tracker) = self.git_tracker {
+            tracker.untrack_workspace(workspace_id);
         }
 
         // Delete workspace from database
