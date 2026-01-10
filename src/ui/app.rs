@@ -2852,6 +2852,26 @@ impl App {
             .map(|saved| saved.agent_type)
             .unwrap_or(AgentType::Claude);
 
+        if let Some(saved) = saved_tab.as_ref() {
+            let required_tool = match saved.agent_type {
+                AgentType::Claude => crate::util::Tool::Claude,
+                AgentType::Codex => crate::util::Tool::Codex,
+            };
+            if !self.tools.is_available(required_tool) {
+                self.state.close_overlays();
+                self.state.missing_tool_dialog_state.show(required_tool);
+                self.state.missing_tool_dialog_state.context_message = Some(format!(
+                    "{} is required to open this workspace's saved session.",
+                    required_tool.display_name()
+                ));
+                self.state.input_mode = InputMode::MissingTool;
+                if close_sidebar {
+                    self.state.sidebar_state.hide();
+                }
+                return;
+            }
+        }
+
         // Create a new tab with the workspace's working directory
         self.state
             .tab_manager
@@ -2867,6 +2887,11 @@ impl App {
             if let Some(saved) = saved_tab {
                 session.agent_type = saved.agent_type;
                 session.model = saved.model;
+                session.agent_mode = saved
+                    .agent_mode
+                    .as_deref()
+                    .map(AgentMode::parse)
+                    .unwrap_or_default();
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
