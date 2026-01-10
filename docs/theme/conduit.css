@@ -1,0 +1,226 @@
+/* Conduit Documentation Theme
+ * Dark theme with green accent (#00ff88)
+ */
+
+:root {
+  --conduit-green: #00ff88;
+  --conduit-green-dim: #00cc6a;
+  --conduit-green-glow: rgba(0, 255, 136, 0.1);
+  --conduit-bg-dark: #0d0d0d;
+  --conduit-bg-surface: #1a1a1a;
+  --conduit-text: #e0e0e0;
+  --conduit-text-muted: #808080;
+}
+
+/* Override coal theme variables */
+.coal {
+  --bg: #0d0d0d;
+  --fg: #e0e0e0;
+  --sidebar-bg: #141414;
+  --sidebar-fg: #c0c0c0;
+  --sidebar-active: var(--conduit-green);
+  --links: var(--conduit-green);
+  --inline-code-color: var(--conduit-green);
+  --theme-popup-bg: #1a1a1a;
+  --theme-popup-border: #333;
+  --quote-bg: var(--conduit-green-glow);
+  --quote-border: var(--conduit-green-dim);
+  --table-border-color: #333;
+  --table-header-bg: #1a1a1a;
+  --table-alternate-bg: #141414;
+  --searchbar-border-color: #333;
+  --searchbar-bg: #1a1a1a;
+  --searchbar-fg: #e0e0e0;
+  --searchresults-header-fg: var(--conduit-green);
+  --searchresults-border-color: #333;
+  --searchresults-li-bg: #1a1a1a;
+  --warning-border: #f0ad4e;
+  --icons: #808080;
+  --icons-hover: var(--conduit-green);
+}
+
+/* Active link styling */
+.sidebar a.active {
+  color: var(--conduit-green) !important;
+  border-left: 3px solid var(--conduit-green);
+  padding-left: 10px;
+  margin-left: -13px;
+}
+
+/* Hover effects */
+.sidebar a:hover {
+  color: var(--conduit-green);
+}
+
+a:hover {
+  color: var(--conduit-green-dim);
+}
+
+/* Code block styling */
+pre {
+  background-color: #141414 !important;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+code {
+  border-radius: 3px;
+}
+
+/* Inline code */
+:not(pre) > code {
+  background-color: #1a1a1a;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--conduit-green);
+}
+
+/* Keyboard shortcuts styling */
+kbd {
+  background-color: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: monospace;
+  box-shadow: 0 2px 0 #333;
+  color: var(--conduit-green);
+}
+
+/* Tables */
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+table th {
+  background-color: #1a1a1a;
+  color: var(--conduit-green);
+  font-weight: 600;
+  text-align: left;
+  padding: 12px;
+}
+
+table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #333;
+}
+
+table tr:hover td {
+  background-color: var(--conduit-green-glow);
+}
+
+/* Admonish styling */
+.admonition {
+  border-radius: 6px;
+  border-left: 4px solid;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.admonition.note {
+  background-color: rgba(0, 255, 136, 0.05);
+  border-color: var(--conduit-green);
+}
+
+.admonition.warning {
+  background-color: rgba(240, 173, 78, 0.1);
+  border-color: #f0ad4e;
+}
+
+.admonition.tip {
+  background-color: rgba(0, 200, 255, 0.05);
+  border-color: #00c8ff;
+}
+
+/* Search results */
+.search-results a {
+  color: var(--conduit-green) !important;
+}
+
+/* Chapter titles */
+.chapter li a.active {
+  color: var(--conduit-green) !important;
+}
+
+/* Headers */
+h1, h2, h3, h4, h5, h6 {
+  color: #fff;
+}
+
+h1 {
+  border-bottom: 2px solid var(--conduit-green-dim);
+  padding-bottom: 8px;
+}
+
+/* Blockquotes for tips */
+blockquote {
+  border-left: 4px solid var(--conduit-green-dim);
+  background-color: var(--conduit-green-glow);
+  padding: 10px 16px;
+  margin: 16px 0;
+  border-radius: 0 6px 6px 0;
+}
+
+/* Focus states for accessibility */
+a:focus,
+button:focus {
+  outline: 2px solid var(--conduit-green);
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #141414;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--conduit-green-dim);
+}
+
+/* Copy button styling */
+.copy-button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 4px 8px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+pre:hover .copy-button {
+  opacity: 1;
+}
+
+.copy-button:hover {
+  background: var(--conduit-green);
+  color: #000;
+}
+
+/* Print styles */
+@media print {
+  .sidebar,
+  .nav-chapters,
+  .menu-bar {
+    display: none !important;
+  }
+
+  .content {
+    max-width: 100% !important;
+  }
+}

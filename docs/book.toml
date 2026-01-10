@@ -1,0 +1,35 @@
+[book]
+title = "Conduit Documentation"
+description = "Multi-agent TUI for Claude Code and Codex CLI"
+authors = ["Felipe Coury"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/conduit-cli/conduit"
+site-url = "https://getconduit.sh/docs/"
+additional-css = ["theme/conduit.css"]
+additional-js = ["theme/conduit.js"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 20
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+optional = true
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.2"
+optional = true
