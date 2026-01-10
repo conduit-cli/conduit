@@ -168,12 +168,18 @@ impl SessionTabStore {
 }
 
 fn serialize_queued_messages(messages: &[QueuedMessage]) -> String {
-    serde_json::to_string(messages).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(messages).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "Failed to serialize queued_messages");
+        "[]".to_string()
+    })
 }
 
 fn deserialize_queued_messages(raw: Option<&str>) -> Vec<QueuedMessage> {
     match raw {
-        Some(value) => serde_json::from_str::<Vec<QueuedMessage>>(value).unwrap_or_default(),
+        Some(value) => serde_json::from_str::<Vec<QueuedMessage>>(value).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "Failed to deserialize queued_messages");
+            Vec::new()
+        }),
         None => Vec::new(),
     }
 }
@@ -275,6 +281,13 @@ mod tests {
         tab.agent_session_id = Some("updated-session".to_string());
         tab.model = Some("claude-sonnet".to_string());
         tab.pr_number = Some(42);
+        tab.queued_messages = vec![QueuedMessage {
+            id: Uuid::new_v4(),
+            mode: QueuedMessageMode::FollowUp,
+            text: "test".to_string(),
+            images: vec![],
+            created_at: Utc::now(),
+        }];
         dao.update(&tab).unwrap();
 
         let retrieved = dao.get_by_id(tab.id).unwrap().unwrap();
@@ -284,5 +297,6 @@ mod tests {
         );
         assert_eq!(retrieved.model, Some("claude-sonnet".to_string()));
         assert_eq!(retrieved.pr_number, Some(42));
+        assert_eq!(retrieved.queued_messages.len(), 1);
     }
 }
