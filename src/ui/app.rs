@@ -317,6 +317,23 @@ impl App {
             // Register workspace with git tracker if available
             let track_info = session.workspace_id.zip(session.working_dir.clone());
 
+            let required_tool = match session.agent_type {
+                AgentType::Claude => crate::util::Tool::Claude,
+                AgentType::Codex => crate::util::Tool::Codex,
+            };
+            if !self.tools.is_available(required_tool) {
+                self.state.close_overlays();
+                self.state.missing_tool_dialog_state.show_with_context(
+                    required_tool,
+                    format!(
+                        "{} is required to restore this session.",
+                        required_tool.display_name()
+                    ),
+                );
+                self.state.input_mode = InputMode::MissingTool;
+                continue;
+            }
+
             self.state.tab_manager.add_session(session);
 
             // Track workspace after session is added
@@ -1617,6 +1634,8 @@ impl App {
                             let agent_changed = session.agent_type != agent_type;
                             session.model = Some(model_id.clone());
                             session.agent_type = agent_type;
+                            session.agent_mode =
+                                Self::clamp_agent_mode(agent_type, session.agent_mode);
                             session.update_status();
                             let msg = if agent_changed {
                                 format!("Switched to {} with model: {}", agent_type, display_name)
@@ -2851,7 +2870,15 @@ impl App {
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
-            .unwrap_or(AgentType::Claude);
+            .unwrap_or_else(|| {
+                if self.tools.is_available(crate::util::Tool::Claude) {
+                    AgentType::Claude
+                } else if self.tools.is_available(crate::util::Tool::Codex) {
+                    AgentType::Codex
+                } else {
+                    AgentType::Claude
+                }
+            });
 
         let saved_agent_mode = saved_tab.as_ref().map(|saved| {
             let parsed_mode = saved
@@ -2862,26 +2889,24 @@ impl App {
             Self::clamp_agent_mode(tab_agent_type, parsed_mode)
         });
 
-        if let Some(saved) = saved_tab.as_ref() {
-            let required_tool = match saved.agent_type {
-                AgentType::Claude => crate::util::Tool::Claude,
-                AgentType::Codex => crate::util::Tool::Codex,
-            };
-            if !self.tools.is_available(required_tool) {
-                self.state.close_overlays();
-                self.state.missing_tool_dialog_state.show_with_context(
-                    required_tool,
-                    format!(
-                        "{} is required to open this workspace's saved session.",
-                        required_tool.display_name()
-                    ),
-                );
-                self.state.input_mode = InputMode::MissingTool;
-                if close_sidebar {
-                    self.state.sidebar_state.hide();
-                }
-                return;
+        let required_tool = match tab_agent_type {
+            AgentType::Claude => crate::util::Tool::Claude,
+            AgentType::Codex => crate::util::Tool::Codex,
+        };
+        if !self.tools.is_available(required_tool) {
+            self.state.close_overlays();
+            self.state.missing_tool_dialog_state.show_with_context(
+                required_tool,
+                format!(
+                    "{} is required to open this workspace's saved session.",
+                    required_tool.display_name()
+                ),
+            );
+            self.state.input_mode = InputMode::MissingTool;
+            if close_sidebar {
+                self.state.sidebar_state.hide();
             }
+            return;
         }
 
         // Create a new tab with the workspace's working directory
@@ -2899,7 +2924,9 @@ impl App {
             if let Some(saved) = saved_tab {
                 session.agent_type = saved.agent_type;
                 session.model = saved.model;
-                session.agent_mode = saved_agent_mode.unwrap_or_default();
+                if let Some(saved_mode) = saved_agent_mode {
+                    session.agent_mode = saved_mode;
+                }
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
@@ -4590,6 +4617,8 @@ impl App {
                     let agent_changed = session.agent_type != model.agent_type;
                     session.model = Some(model.id.clone());
                     session.agent_type = model.agent_type;
+                    session.agent_mode =
+                        Self::clamp_agent_mode(model.agent_type, session.agent_mode);
                     session.update_status();
 
                     // Add system message about the change
