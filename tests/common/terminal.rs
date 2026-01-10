@@ -165,4 +165,52 @@ mod tests {
         assert_eq!(char_at(terminal.backend().buffer(), 1, 0), Some("B"));
         assert_eq!(char_at(terminal.backend().buffer(), 2, 0), Some("C"));
     }
+
+    #[test]
+    fn test_buffer_region_to_string() {
+        let mut terminal = create_test_terminal_sized(20, 5);
+        terminal
+            .draw(|f| {
+                let para = Paragraph::new("Line 1\nLine 2\nLine 3");
+                f.render_widget(para, f.area());
+            })
+            .unwrap();
+
+        // Extract just the first 6 characters of the first 2 lines
+        let region = Rect::new(0, 0, 6, 2);
+        let output = buffer_region_to_string(terminal.backend().buffer(), region);
+        assert!(output.contains("Line 1"));
+        assert!(output.contains("Line 2"));
+        assert!(!output.contains("Line 3"));
+    }
+
+    #[test]
+    fn test_assert_buffer_contains_success() {
+        let mut terminal = create_test_terminal_sized(20, 5);
+        terminal
+            .draw(|f| {
+                let para = Paragraph::new("Hello World");
+                f.render_widget(para, f.area());
+            })
+            .unwrap();
+
+        let region = Rect::new(0, 0, 20, 1);
+        // This should not panic
+        assert_buffer_contains(terminal.backend().buffer(), region, "Hello");
+        assert_buffer_contains(terminal.backend().buffer(), region, "World");
+    }
+
+    #[test]
+    fn test_assert_buffer_eq_success() {
+        let mut terminal = create_test_terminal_sized(5, 1);
+        terminal
+            .draw(|f| {
+                let para = Paragraph::new("Test");
+                f.render_widget(para, f.area());
+            })
+            .unwrap();
+
+        // Buffer will be "Test " (with trailing space to fill width)
+        assert_buffer_eq(terminal.backend().buffer(), "Test");
+    }
 }

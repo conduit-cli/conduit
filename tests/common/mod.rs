@@ -8,7 +8,3 @@
 pub mod determinism;
 pub mod git_fixtures;
 pub mod terminal;
-
-pub use determinism::*;
-pub use git_fixtures::*;
-pub use terminal::*;

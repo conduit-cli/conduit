@@ -318,4 +318,69 @@ mod tests {
         let commit_count = log_output.lines().count();
         assert_eq!(commit_count, 4);
     }
+
+    #[test]
+    fn test_with_mixed_changes() {
+        let repo = TestRepo::with_mixed_changes();
+
+        assert!(repo.is_dirty());
+        assert_eq!(repo.uncommitted_count(), 2); // 1 staged + 1 unstaged
+        assert!(repo.path.join("staged.txt").exists());
+        assert!(repo.path.join("unstaged.txt").exists());
+    }
+
+    #[test]
+    fn test_with_worktree() {
+        let unique_id = uuid::Uuid::new_v4().as_simple().to_string();
+        let wt_name = format!("test-wt-{}", &unique_id[..8]);
+
+        let (repo, worktree_path) = TestRepo::with_worktree(&wt_name, "feature-branch");
+
+        assert!(worktree_path.exists(), "Worktree should exist");
+        assert!(
+            worktree_path.join(".git").exists(),
+            "Worktree should have .git"
+        );
+
+        // Verify branch exists
+        let branches = repo.branches();
+        assert!(branches.iter().any(|b| b == "feature-branch"));
+    }
+
+    #[test]
+    fn test_create_file_with_nested_path() {
+        let repo = TestRepo::new();
+
+        // Create file in nested directory (should auto-create parent dirs)
+        repo.create_file("src/nested/deep/file.rs", "fn main() {}");
+
+        assert!(repo.path.join("src/nested/deep/file.rs").exists());
+        assert!(repo.is_dirty()); // File is untracked
+    }
+
+    #[test]
+    fn test_stage_file() {
+        let repo = TestRepo::new();
+
+        // Create and stage a file
+        repo.create_file("new_file.txt", "content");
+        repo.stage_file("new_file.txt");
+
+        // Check that file is staged (will show as 'A' in porcelain output)
+        let output = repo.git_output(&["status", "--porcelain"]);
+        assert!(output.contains("A  new_file.txt") || output.contains("A new_file.txt"));
+    }
+
+    #[test]
+    fn test_checkout_existing_branch() {
+        let repo = TestRepo::with_branches(&["develop"]);
+
+        // Should be on main/master initially
+        let initial_branch = repo.current_branch();
+        assert!(initial_branch == "main" || initial_branch == "master");
+
+        // Checkout existing branch
+        repo.checkout("develop");
+        assert_eq!(repo.current_branch(), "develop");
+    }
 }

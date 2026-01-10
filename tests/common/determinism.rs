@@ -115,4 +115,24 @@ mod tests {
         assert_eq!(ts.month(), 1);
         assert_eq!(ts.day(), 1);
     }
+
+    #[test]
+    fn test_timestamp_string_format() {
+        let ts_str = test_timestamp_string();
+        assert_eq!(ts_str, "2024-01-01T00:00:00Z");
+        // Verify it's valid ISO 8601 / RFC 3339
+        assert!(chrono::DateTime::parse_from_rfc3339(&ts_str).is_ok());
+    }
+
+    #[test]
+    fn test_setup_deterministic_env() {
+        setup_deterministic_env();
+
+        assert_eq!(std::env::var("TZ").unwrap(), "UTC");
+        assert_eq!(std::env::var("NO_COLOR").unwrap(), "1");
+        assert_eq!(std::env::var("TERM").unwrap(), "dumb");
+        assert_eq!(std::env::var("COLUMNS").unwrap(), "80");
+        assert_eq!(std::env::var("LINES").unwrap(), "24");
+        assert_eq!(std::env::var("CONDUIT_TEST_MODE").unwrap(), "1");
+    }
 }

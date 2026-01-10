@@ -7,10 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use conduit::agent::events::{
-    AgentEvent, AssistantMessageEvent, SessionInitEvent, TokenUsage, ToolCompletedEvent,
-    ToolStartedEvent, TurnCompletedEvent,
-};
+use conduit::agent::events::{AgentEvent, AssistantMessageEvent, SessionInitEvent};
 use conduit::agent::mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
 use conduit::agent::runner::{AgentRunner, AgentStartConfig, AgentType};
 use conduit::agent::session::SessionId;
