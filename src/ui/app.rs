@@ -1796,6 +1796,7 @@ impl App {
                                 if let Err(e) = crate::config::save_tool_path(tool, &path) {
                                     tracing::warn!("Failed to save tool path to config: {}", e);
                                 }
+                                self.refresh_runners();
                                 self.state.missing_tool_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
                             }
@@ -2889,6 +2890,8 @@ impl App {
         let _ = workspace_dao.update_last_accessed(workspace_id);
 
         let has_saved_session = saved_tab.is_some();
+        let no_agents_available = !self.tools.is_available(crate::util::Tool::Claude)
+            && !self.tools.is_available(crate::util::Tool::Codex);
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
@@ -2924,6 +2927,9 @@ impl App {
                         "{} is required to open this workspace's saved session.",
                         required_tool.display_name()
                     )
+                } else if no_agents_available {
+                    "An agent tool (Claude Code or Codex CLI) is required to open this workspace."
+                        .to_string()
                 } else {
                     format!(
                         "{} is required to open this workspace.",
@@ -3046,6 +3052,21 @@ impl App {
         } else {
             mode
         }
+    }
+
+    /// Refresh agent runners using the latest tool configuration.
+    fn refresh_runners(&mut self) {
+        self.claude_runner = match self.tools.get_path(crate::util::Tool::Claude) {
+            Some(path) => Arc::new(ClaudeCodeRunner::with_path(path.clone())),
+            None => Arc::new(ClaudeCodeRunner::new()),
+        };
+        self.codex_runner = match self.tools.get_path(crate::util::Tool::Codex) {
+            Some(path) => Arc::new(CodexCliRunner::with_path(path.clone())),
+            None => Arc::new(CodexCliRunner::new()),
+        };
+        self.state
+            .agent_selector_state
+            .update_available_agents(&self.tools);
     }
 
     /// Find the tab index for a workspace if it's already open
