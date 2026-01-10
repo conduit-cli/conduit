@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
 
+use crate::agent::{AgentMode, AgentType};
 use crate::ui::components::{
     AddRepoDialogState, AgentSelectorState, BaseDirDialogState, CommandPaletteState,
     ConfirmationDialogState, ErrorDialogState, HelpDialogState, KnightRiderSpinner,
@@ -11,7 +12,6 @@ use crate::ui::components::{
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
-use crate::agent::{AgentMode, AgentType};
 use uuid::Uuid;
 
 /// Performance metrics for monitoring frame timing.

@@ -59,7 +59,10 @@ impl ForkSeedStore {
     /// Delete a fork seed by ID
     pub fn delete(&self, id: Uuid) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM fork_seeds WHERE id = ?1", params![id.to_string()])?;
+        conn.execute(
+            "DELETE FROM fork_seeds WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 

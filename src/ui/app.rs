@@ -1854,7 +1854,9 @@ impl App {
                                     effects.extend(self.confirm_steer_fallback(message_id)?);
                                     return Ok(effects);
                                 }
-                                ConfirmationContext::ForkSession { parent_workspace_id } => {
+                                ConfirmationContext::ForkSession {
+                                    parent_workspace_id,
+                                } => {
                                     self.state.confirmation_dialog_state.hide();
                                     self.state.input_mode = InputMode::Normal;
                                     if let Some(effect) =
@@ -2226,11 +2228,12 @@ impl App {
                                 self.state.input_mode = InputMode::Normal;
                                 effects.extend(self.confirm_steer_fallback(message_id)?);
                             }
-                            ConfirmationContext::ForkSession { parent_workspace_id } => {
+                            ConfirmationContext::ForkSession {
+                                parent_workspace_id,
+                            } => {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
-                                if let Some(effect) =
-                                    self.execute_fork_session(parent_workspace_id)
+                                if let Some(effect) = self.execute_fork_session(parent_workspace_id)
                                 {
                                     effects.push(effect);
                                 }
@@ -2457,7 +2460,9 @@ impl App {
                         let _ = event_tx.send(AppEvent::WorkspaceCreated { result });
                     });
                 }
-                Effect::ForkWorkspace { parent_workspace_id } => {
+                Effect::ForkWorkspace {
+                    parent_workspace_id,
+                } => {
                     let repo_dao = self.repo_dao.clone();
                     let workspace_dao = self.workspace_dao.clone();
                     let worktree_manager = self.worktree_manager.clone();
@@ -2467,8 +2472,8 @@ impl App {
                         let result: Result<ForkWorkspaceCreated, String> = (|| {
                             let workspace_dao = workspace_dao
                                 .ok_or_else(|| "No workspace DAO available".to_string())?;
-                            let repo_dao =
-                                repo_dao.ok_or_else(|| "No repository DAO available".to_string())?;
+                            let repo_dao = repo_dao
+                                .ok_or_else(|| "No repository DAO available".to_string())?;
 
                             let parent_workspace = workspace_dao
                                 .get_by_id(parent_workspace_id)
@@ -2525,17 +2530,15 @@ impl App {
                                             "Failed to clean up worktree after DB error"
                                         );
                                     });
-                                return Err(format!(
-                                    "Failed to save workspace to database: {}",
-                                    e
-                                ));
+                                return Err(format!("Failed to save workspace to database: {}", e));
                             }
 
                             Ok(ForkWorkspaceCreated {
                                 repo_id: parent_workspace.repository_id,
                                 workspace_id,
                             })
-                        })();
+                        })(
+                        );
 
                         let _ = event_tx.send(AppEvent::ForkWorkspaceCreated { result });
                     });
@@ -6172,7 +6175,10 @@ impl App {
         );
 
         if let Err(e) = fork_seed_dao.create(&fork_seed) {
-            self.show_error("Fork Failed", &format!("Failed to save fork metadata: {}", e));
+            self.show_error(
+                "Fork Failed",
+                &format!("Failed to save fork metadata: {}", e),
+            );
             self.state.pending_fork_request = None;
             return None;
         }
