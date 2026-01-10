@@ -1833,6 +1833,7 @@ impl App {
                                 ConfirmationContext::RemoveProject(id) => {
                                     effects.push(self.execute_remove_project(id));
                                     self.state.confirmation_dialog_state.hide();
+                                    self.state.input_mode = InputMode::SidebarNavigation;
                                     return Ok(effects);
                                 }
                                 ConfirmationContext::CreatePullRequest { preflight, .. } => {
@@ -2179,6 +2180,7 @@ impl App {
                             ConfirmationContext::RemoveProject(id) => {
                                 effects.push(self.execute_remove_project(id));
                                 self.state.confirmation_dialog_state.hide();
+                                self.state.input_mode = InputMode::SidebarNavigation;
                             }
                             ConfirmationContext::CreatePullRequest { preflight, .. } => {
                                 self.state.confirmation_dialog_state.hide();
@@ -5533,7 +5535,10 @@ impl App {
             };
 
             // Mark non-active tabs as needing attention when content arrives
-            if !is_active_tab && is_content_event {
+            // Exclude suppressed assistant messages (like fork seed ACKs)
+            let is_suppressed_assistant = matches!(&event, AgentEvent::AssistantMessage(_))
+                && session.suppress_next_assistant_reply;
+            if !is_active_tab && is_content_event && !is_suppressed_assistant {
                 session.needs_attention = true;
             }
 
@@ -5869,8 +5874,18 @@ impl App {
         }
 
         // Record user input for debug view (post-processing)
-        let mut debug_payload =
-            serde_json::json!({ "prompt": &prompt, "agent_type": agent_type.as_str() });
+        // For hidden prompts (like fork seeds), redact content to avoid storing ~500KB
+        let mut debug_payload = serde_json::json!({
+            "agent_type": agent_type.as_str(),
+            "hidden": hidden,
+        });
+        if hidden {
+            debug_payload["prompt_len"] = serde_json::json!(prompt.len());
+            debug_payload["prompt_hash"] =
+                serde_json::json!(Self::compute_seed_prompt_hash(&prompt));
+        } else {
+            debug_payload["prompt"] = serde_json::json!(&prompt);
+        }
         if !images.is_empty() {
             let image_paths: Vec<String> = images
                 .iter()
@@ -6291,6 +6306,9 @@ impl App {
             .flatten()
             .map(|repo| repo.name);
 
+        // Keep track of where we came from so we can recover cleanly on failure
+        let prev_index = self.state.tab_manager.active_index();
+
         let mut session =
             AgentSession::with_working_dir(pending.agent_type, workspace.path.clone());
         session.workspace_id = Some(workspace_id);
@@ -6328,6 +6346,10 @@ impl App {
             vec![],
         )?;
         if effects.is_empty() {
+            // Remove the broken tab; the AppEvent handler can still do repo/worktree cleanup
+            self.state.tab_manager.close_tab(new_index);
+            let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
+            self.state.tab_manager.switch_to(fallback);
             return Err(anyhow!(
                 "Failed to start forked agent: no start-agent effect produced."
             ));
