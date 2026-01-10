@@ -194,11 +194,11 @@ impl App {
         self.state.show_first_time_splash = false;
 
         // Try to restore saved tabs
-        let Some(session_tab_dao) = &self.session_tab_dao else {
+        let Some(session_tab_dao) = self.session_tab_dao.clone() else {
             tracing::warn!("Session tab DAO unavailable; skipping session restore");
             return;
         };
-        let Some(app_state_dao) = &self.app_state_dao else {
+        let Some(app_state_dao) = self.app_state_dao.clone() else {
             tracing::warn!("App state DAO unavailable; skipping session restore");
             return;
         };
@@ -221,21 +221,16 @@ impl App {
 
         // Restore each tab
         for tab in saved_tabs {
-            let required_tool = match tab.agent_type {
-                AgentType::Claude => crate::util::Tool::Claude,
-                AgentType::Codex => crate::util::Tool::Codex,
-            };
+            let required_tool = Self::required_tool(tab.agent_type);
             if !self.tools.is_available(required_tool) {
-                self.state.close_overlays();
-                self.state.missing_tool_dialog_state.show_with_context(
+                self.show_missing_tool(
                     required_tool,
                     format!(
                         "{} is required to restore this session.",
                         required_tool.display_name()
                     ),
                 );
-                self.state.input_mode = InputMode::MissingTool;
-                continue;
+                break;
             }
 
             let mut session = AgentSession::new(tab.agent_type);
@@ -1635,20 +1630,15 @@ impl App {
                         let model_id = model.id.clone();
                         let agent_type = model.agent_type;
                         let display_name = model.display_name.clone();
-                        let required_tool = match agent_type {
-                            AgentType::Claude => crate::util::Tool::Claude,
-                            AgentType::Codex => crate::util::Tool::Codex,
-                        };
+                        let required_tool = Self::required_tool(agent_type);
                         if !self.tools.is_available(required_tool) {
-                            self.state.close_overlays();
-                            self.state.missing_tool_dialog_state.show_with_context(
+                            self.show_missing_tool(
                                 required_tool,
                                 format!(
                                     "{} is required to use this model.",
                                     required_tool.display_name()
                                 ),
                             );
-                            self.state.input_mode = InputMode::MissingTool;
                             return Ok(effects);
                         }
                         if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -2914,13 +2904,9 @@ impl App {
             Self::clamp_agent_mode(saved.agent_type, parsed_mode)
         });
 
-        let required_tool = match tab_agent_type {
-            AgentType::Claude => crate::util::Tool::Claude,
-            AgentType::Codex => crate::util::Tool::Codex,
-        };
+        let required_tool = Self::required_tool(tab_agent_type);
         if !self.tools.is_available(required_tool) {
-            self.state.close_overlays();
-            self.state.missing_tool_dialog_state.show_with_context(
+            self.show_missing_tool(
                 required_tool,
                 if has_saved_session {
                     format!(
@@ -2937,7 +2923,6 @@ impl App {
                     )
                 },
             );
-            self.state.input_mode = InputMode::MissingTool;
             if close_sidebar {
                 self.state.sidebar_state.hide();
             }
@@ -3052,6 +3037,23 @@ impl App {
         } else {
             mode
         }
+    }
+
+    /// Map an agent type to its required tool.
+    fn required_tool(agent_type: AgentType) -> crate::util::Tool {
+        match agent_type {
+            AgentType::Claude => crate::util::Tool::Claude,
+            AgentType::Codex => crate::util::Tool::Codex,
+        }
+    }
+
+    /// Show missing tool dialog and enter MissingTool mode.
+    fn show_missing_tool(&mut self, tool: crate::util::Tool, message: impl Into<String>) {
+        self.state.close_overlays();
+        self.state
+            .missing_tool_dialog_state
+            .show_with_context(tool, message);
+        self.state.input_mode = InputMode::MissingTool;
     }
 
     /// Refresh agent runners using the latest tool configuration.
@@ -4665,20 +4667,15 @@ impl App {
             if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     let agent_changed = session.agent_type != model.agent_type;
-                    let required_tool = match model.agent_type {
-                        AgentType::Claude => crate::util::Tool::Claude,
-                        AgentType::Codex => crate::util::Tool::Codex,
-                    };
+                    let required_tool = Self::required_tool(model.agent_type);
                     if !self.tools.is_available(required_tool) {
-                        self.state.close_overlays();
-                        self.state.missing_tool_dialog_state.show_with_context(
+                        self.show_missing_tool(
                             required_tool,
                             format!(
                                 "{} is required to use this model.",
                                 required_tool.display_name()
                             ),
                         );
-                        self.state.input_mode = InputMode::MissingTool;
                         return None;
                     }
                     session.model = Some(model.id.clone());
