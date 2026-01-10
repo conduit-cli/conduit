@@ -76,6 +76,10 @@ pub enum AppEvent {
     WorkspaceCreated {
         result: Result<WorkspaceCreated, String>,
     },
+    /// Fork workspace creation completed
+    ForkWorkspaceCreated {
+        result: Result<ForkWorkspaceCreated, String>,
+    },
 
     /// Workspace archive completed
     WorkspaceArchived {
@@ -107,6 +111,12 @@ pub enum AppEvent {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceCreated {
+    pub repo_id: Uuid,
+    pub workspace_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct ForkWorkspaceCreated {
     pub repo_id: Uuid,
     pub workspace_id: Uuid,
 }

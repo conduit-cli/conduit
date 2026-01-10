@@ -4,6 +4,7 @@
 
 mod app_state;
 mod database;
+mod fork_seed;
 mod models;
 mod repository;
 mod session_tab;
@@ -11,8 +12,10 @@ mod workspace;
 
 pub use app_state::AppStateStore;
 pub use database::Database;
+pub use fork_seed::ForkSeedStore;
 pub use models::{
-    QueuedImageAttachment, QueuedMessage, QueuedMessageMode, Repository, SessionTab, Workspace,
+    ForkSeed, QueuedImageAttachment, QueuedMessage, QueuedMessageMode, Repository, SessionTab,
+    Workspace,
 };
 pub use repository::RepositoryStore;
 pub use session_tab::SessionTabStore;

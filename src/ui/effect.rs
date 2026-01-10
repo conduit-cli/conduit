@@ -23,6 +23,9 @@ pub enum Effect {
     CreateWorkspace {
         repo_id: Uuid,
     },
+    ForkWorkspace {
+        parent_workspace_id: Uuid,
+    },
     ArchiveWorkspace {
         workspace_id: Uuid,
     },

@@ -179,6 +179,8 @@ pub struct SessionTab {
     pub pending_user_message: Option<String>,
     /// Queued messages waiting to be delivered
     pub queued_messages: Vec<QueuedMessage>,
+    /// Fork seed ID (if this tab was created via fork)
+    pub fork_seed_id: Option<Uuid>,
 }
 
 impl SessionTab {
@@ -203,6 +205,53 @@ impl SessionTab {
             created_at: Utc::now(),
             pending_user_message: None,
             queued_messages: Vec::new(),
+            fork_seed_id: None,
+        }
+    }
+}
+
+/// Metadata for a forked session seed prompt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForkSeed {
+    /// Unique identifier
+    pub id: Uuid,
+    /// Agent type (Claude or Codex)
+    pub agent_type: AgentType,
+    /// Parent agent session ID
+    pub parent_session_id: Option<String>,
+    /// Parent workspace ID
+    pub parent_workspace_id: Option<Uuid>,
+    /// When the fork seed was created
+    pub created_at: DateTime<Utc>,
+    /// Seed prompt text injected into the new session
+    pub seed_prompt_text: String,
+    /// Estimated tokens for the seed prompt
+    pub token_estimate: i64,
+    /// Context window size for the model at fork time
+    pub context_window: i64,
+    /// Whether the first assistant reply should be suppressed
+    pub seed_ack_filtered: bool,
+}
+
+impl ForkSeed {
+    pub fn new(
+        agent_type: AgentType,
+        parent_session_id: Option<String>,
+        parent_workspace_id: Option<Uuid>,
+        seed_prompt_text: String,
+        token_estimate: i64,
+        context_window: i64,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            agent_type,
+            parent_session_id,
+            parent_workspace_id,
+            created_at: Utc::now(),
+            seed_prompt_text,
+            token_estimate,
+            context_window,
+            seed_ack_filtered: true,
         }
     }
 }

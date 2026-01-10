@@ -130,6 +130,66 @@ impl WorktreeManager {
         Ok(worktree_path)
     }
 
+    /// Create a new worktree from a base branch into a new branch
+    pub fn create_worktree_from_branch(
+        &self,
+        repo_path: &Path,
+        base_branch: &str,
+        new_branch: &str,
+        name: &str,
+    ) -> Result<PathBuf, WorktreeError> {
+        self.validate_git_repo(repo_path)?;
+
+        let worktree_path = self.worktree_path(repo_path, name);
+
+        if worktree_path.exists() {
+            return Err(WorktreeError::AlreadyExists(worktree_path));
+        }
+
+        if let Some(parent) = worktree_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Create a new branch from the base branch in the worktree
+        let output = Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                "-b",
+                new_branch,
+                worktree_path.to_str().unwrap(),
+                base_branch,
+            ])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // If branch already exists, try adding worktree directly
+            if stderr.contains("already exists") || stderr.contains("already used") {
+                let output = Command::new("git")
+                    .args([
+                        "worktree",
+                        "add",
+                        worktree_path.to_str().unwrap(),
+                        new_branch,
+                    ])
+                    .current_dir(repo_path)
+                    .output()?;
+
+                if !output.status.success() {
+                    return Err(WorktreeError::CommandFailed(
+                        String::from_utf8_lossy(&output.stderr).to_string(),
+                    ));
+                }
+            } else {
+                return Err(WorktreeError::CommandFailed(stderr.to_string()));
+            }
+        }
+
+        Ok(worktree_path)
+    }
+
     /// Remove a worktree
     pub fn remove_worktree(
         &self,

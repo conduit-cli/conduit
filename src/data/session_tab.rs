@@ -24,8 +24,8 @@ impl SessionTabStore {
         let conn = self.conn.lock().unwrap();
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
         conn.execute(
-            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -38,6 +38,7 @@ impl SessionTabStore {
                 tab.created_at.to_rfc3339(),
                 tab.pending_user_message,
                 queued_messages,
+                tab.fork_seed_id.map(|id| id.to_string()),
             ],
         )?;
         Ok(())
@@ -47,7 +48,7 @@ impl SessionTabStore {
     pub fn get_all(&self) -> SqliteResult<Vec<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id
              FROM session_tabs ORDER BY tab_index",
         )?;
 
@@ -63,7 +64,7 @@ impl SessionTabStore {
     pub fn get_by_id(&self, id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id
              FROM session_tabs WHERE id = ?1",
         )?;
 
@@ -81,7 +82,7 @@ impl SessionTabStore {
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
         conn.execute(
             "UPDATE session_tabs SET tab_index = ?2, workspace_id = ?3, agent_type = ?4, agent_mode = ?5,
-             agent_session_id = ?6, model = ?7, pr_number = ?8, pending_user_message = ?9, queued_messages = ?10 WHERE id = ?1",
+             agent_session_id = ?6, model = ?7, pr_number = ?8, pending_user_message = ?9, queued_messages = ?10, fork_seed_id = ?11 WHERE id = ?1",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -93,6 +94,7 @@ impl SessionTabStore {
                 tab.pr_number,
                 tab.pending_user_message,
                 queued_messages,
+                tab.fork_seed_id.map(|id| id.to_string()),
             ],
         )?;
         Ok(())
@@ -127,7 +129,7 @@ impl SessionTabStore {
     pub fn get_by_workspace_id(&self, workspace_id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id
              FROM session_tabs WHERE workspace_id = ?1",
         )?;
 
@@ -140,7 +142,7 @@ impl SessionTabStore {
     }
 
     /// Convert a database row to a SessionTab
-    /// Row order: id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages
+    /// Row order: id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id
     fn row_to_session_tab(row: &rusqlite::Row) -> SqliteResult<SessionTab> {
         let id_str: String = row.get(0)?;
         let workspace_id_str: Option<String> = row.get(2)?;
@@ -148,6 +150,7 @@ impl SessionTabStore {
         let created_at_str: String = row.get(8)?;
         let queued_messages_json: Option<String> = row.get(10)?;
         let queued_messages = deserialize_queued_messages(queued_messages_json.as_deref());
+        let fork_seed_id_str: Option<String> = row.get(11)?;
 
         Ok(SessionTab {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
@@ -163,6 +166,7 @@ impl SessionTabStore {
                 .unwrap_or_else(|_| Utc::now()),
             pending_user_message: row.get(9)?,
             queued_messages,
+            fork_seed_id: fork_seed_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 }

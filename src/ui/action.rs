@@ -18,6 +18,8 @@ pub enum Action {
     NewProject,
     /// Open/create pull request
     OpenPr,
+    /// Fork current session into a new workspace and tab
+    ForkSession,
     /// Interrupt current agent processing
     InterruptAgent,
     /// Toggle between Chat and RawEvents view
@@ -215,6 +217,7 @@ impl Action {
             Action::ToggleSidebar => "Toggle sidebar",
             Action::NewProject => "New project",
             Action::OpenPr => "Open/create PR",
+            Action::ForkSession => "Fork session",
             Action::InterruptAgent => "Interrupt agent",
             Action::ToggleViewMode => "Toggle view mode",
             Action::ShowModelSelector => "Select model",
@@ -336,6 +339,7 @@ impl Action {
                 | Action::AddRepository
                 | Action::OpenSettings
                 | Action::OpenCommandPalette
+                | Action::ForkSession
         )
     }
 
@@ -348,6 +352,7 @@ impl Action {
                 | Action::ToggleSidebar
                 | Action::NewProject
                 | Action::OpenPr
+                | Action::ForkSession
                 | Action::InterruptAgent
                 | Action::ToggleViewMode
                 | Action::ShowModelSelector

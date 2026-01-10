@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use chrono::Utc;
 use crossterm::{
     event::{self, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
@@ -24,18 +25,18 @@ use uuid::Uuid;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
     AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
-    MessageDisplay, SessionId,
+    MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{
     parse_action, parse_key_notation, Config, KeyCombo, KeyContext, COMMAND_NAMES,
 };
 use crate::data::{
-    AppStateStore, Database, QueuedImageAttachment, QueuedMessage, QueuedMessageMode, Repository,
-    RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
+    AppStateStore, Database, ForkSeed, ForkSeedStore, QueuedImageAttachment, QueuedMessage,
+    QueuedMessageMode, Repository, RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
 };
 use crate::git::{PrManager, WorktreeManager};
 use crate::ui::action::Action;
-use crate::ui::app_state::{AppState, ScrollDragTarget, SelectionDragTarget};
+use crate::ui::app_state::{AppState, PendingForkRequest, ScrollDragTarget, SelectionDragTarget};
 use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
     bg_highlight, scrollbar_offset_from_point, text_muted, text_primary, AddRepoDialog,
@@ -47,7 +48,8 @@ use crate::ui::components::{
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
-    AppEvent, InputMode, RemoveProjectResult, ViewMode, WorkspaceArchived, WorkspaceCreated,
+    AppEvent, ForkWorkspaceCreated, InputMode, RemoveProjectResult, ViewMode, WorkspaceArchived,
+    WorkspaceCreated,
 };
 use crate::ui::session::AgentSession;
 use crate::ui::terminal_guard::TerminalGuard;
@@ -79,6 +81,8 @@ pub struct App {
     app_state_dao: Option<AppStateStore>,
     /// Session tab DAO (for persisting open tabs)
     session_tab_dao: Option<SessionTabStore>,
+    /// Fork seed DAO (for persisting fork metadata)
+    fork_seed_dao: Option<ForkSeedStore>,
     /// Worktree manager
     worktree_manager: WorktreeManager,
     /// Background git/PR status tracker
@@ -94,23 +98,25 @@ impl App {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         // Initialize database and DAOs
-        let (repo_dao, workspace_dao, app_state_dao, session_tab_dao) =
+        let (repo_dao, workspace_dao, app_state_dao, session_tab_dao, fork_seed_dao) =
             match Database::open_default() {
                 Ok(db) => {
                     let repo_dao = RepositoryStore::new(db.connection());
                     let workspace_dao = WorkspaceStore::new(db.connection());
                     let app_state_dao = AppStateStore::new(db.connection());
                     let session_tab_dao = SessionTabStore::new(db.connection());
+                    let fork_seed_dao = ForkSeedStore::new(db.connection());
                     (
                         Some(repo_dao),
                         Some(workspace_dao),
                         Some(app_state_dao),
                         Some(session_tab_dao),
+                        Some(fork_seed_dao),
                     )
                 }
                 Err(e) => {
                     eprintln!("Warning: Failed to open database: {}", e);
-                    (None, None, None, None)
+                    (None, None, None, None, None)
                 }
             };
 
@@ -159,6 +165,7 @@ impl App {
             workspace_dao,
             app_state_dao,
             session_tab_dao,
+            fork_seed_dao,
             worktree_manager,
             git_tracker,
         };
@@ -242,6 +249,7 @@ impl App {
             session.workspace_id = tab.workspace_id;
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
+            session.fork_seed_id = tab.fork_seed_id;
             // Restore agent mode (defaults to Build if not set)
             let parsed_mode = tab
                 .agent_mode
@@ -450,6 +458,7 @@ impl App {
                 tab.pending_user_message = session.pending_user_message.clone();
                 // Preserve queued messages for interrupted sessions
                 tab.queued_messages = session.queued_messages.clone();
+                tab.fork_seed_id = session.fork_seed_id;
                 tab
             })
             .collect();
@@ -1162,6 +1171,11 @@ impl App {
                     effects.push(effect);
                 }
             }
+            Action::ForkSession => {
+                if let Some(effect) = self.initiate_fork_session() {
+                    effects.push(effect);
+                }
+            }
             Action::InterruptAgent => {
                 self.interrupt_agent();
             }
@@ -1840,17 +1854,34 @@ impl App {
                                     effects.extend(self.confirm_steer_fallback(message_id)?);
                                     return Ok(effects);
                                 }
+                                ConfirmationContext::ForkSession { parent_workspace_id } => {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.state.input_mode = InputMode::Normal;
+                                    if let Some(effect) =
+                                        self.execute_fork_session(parent_workspace_id)
+                                    {
+                                        effects.push(effect);
+                                    }
+                                    return Ok(effects);
+                                }
                             }
                         }
                     }
                     // Cancel selected - use same context-aware logic
                     let context = self.state.confirmation_dialog_state.context.clone();
+                    if matches!(
+                        self.state.confirmation_dialog_state.context,
+                        Some(ConfirmationContext::ForkSession { .. })
+                    ) {
+                        self.state.pending_fork_request = None;
+                    }
                     self.state.confirmation_dialog_state.hide();
                     if matches!(
                         context,
                         Some(ConfirmationContext::CreatePullRequest { .. })
                             | Some(ConfirmationContext::OpenExistingPr { .. })
                             | Some(ConfirmationContext::SteerFallback { .. })
+                            | Some(ConfirmationContext::ForkSession { .. })
                     ) {
                         self.state.input_mode = InputMode::Normal;
                     } else {
@@ -1930,12 +1961,16 @@ impl App {
                 }
                 InputMode::Confirming => {
                     let context = self.state.confirmation_dialog_state.context.clone();
+                    if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
+                        self.state.pending_fork_request = None;
+                    }
                     self.state.confirmation_dialog_state.hide();
                     if matches!(
                         context,
                         Some(ConfirmationContext::CreatePullRequest { .. })
                             | Some(ConfirmationContext::OpenExistingPr { .. })
                             | Some(ConfirmationContext::SteerFallback { .. })
+                            | Some(ConfirmationContext::ForkSession { .. })
                     ) {
                         self.state.input_mode = InputMode::Normal;
                     } else {
@@ -2191,6 +2226,15 @@ impl App {
                                 self.state.input_mode = InputMode::Normal;
                                 effects.extend(self.confirm_steer_fallback(message_id)?);
                             }
+                            ConfirmationContext::ForkSession { parent_workspace_id } => {
+                                self.state.confirmation_dialog_state.hide();
+                                self.state.input_mode = InputMode::Normal;
+                                if let Some(effect) =
+                                    self.execute_fork_session(parent_workspace_id)
+                                {
+                                    effects.push(effect);
+                                }
+                            }
                         }
                     }
                 }
@@ -2198,8 +2242,15 @@ impl App {
             Action::ConfirmNo => {
                 if self.state.input_mode == InputMode::Confirming {
                     let context = self.state.confirmation_dialog_state.context.clone();
+                    if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
+                        self.state.pending_fork_request = None;
+                    }
                     self.state.confirmation_dialog_state.hide();
-                    if matches!(context, Some(ConfirmationContext::SteerFallback { .. })) {
+                    if matches!(
+                        context,
+                        Some(ConfirmationContext::SteerFallback { .. })
+                            | Some(ConfirmationContext::ForkSession { .. })
+                    ) {
                         self.state.input_mode = InputMode::Normal;
                     } else {
                         self.state.input_mode = InputMode::SidebarNavigation;
@@ -2404,6 +2455,89 @@ impl App {
                         })();
 
                         let _ = event_tx.send(AppEvent::WorkspaceCreated { result });
+                    });
+                }
+                Effect::ForkWorkspace { parent_workspace_id } => {
+                    let repo_dao = self.repo_dao.clone();
+                    let workspace_dao = self.workspace_dao.clone();
+                    let worktree_manager = self.worktree_manager.clone();
+                    let event_tx = self.event_tx.clone();
+
+                    tokio::task::spawn_blocking(move || {
+                        let result: Result<ForkWorkspaceCreated, String> = (|| {
+                            let workspace_dao = workspace_dao
+                                .ok_or_else(|| "No workspace DAO available".to_string())?;
+                            let repo_dao =
+                                repo_dao.ok_or_else(|| "No repository DAO available".to_string())?;
+
+                            let parent_workspace = workspace_dao
+                                .get_by_id(parent_workspace_id)
+                                .map_err(|e| format!("Failed to load workspace: {}", e))?
+                                .ok_or_else(|| "Workspace not found".to_string())?;
+
+                            let repo = repo_dao
+                                .get_by_id(parent_workspace.repository_id)
+                                .map_err(|e| format!("Failed to load repository: {}", e))?
+                                .ok_or_else(|| "Repository not found".to_string())?;
+
+                            let base_path = repo
+                                .base_path
+                                .clone()
+                                .ok_or_else(|| "Repository has no base path".to_string())?;
+
+                            let base_branch = worktree_manager
+                                .get_current_branch(&parent_workspace.path)
+                                .unwrap_or_else(|_| parent_workspace.branch.clone());
+
+                            let existing_names: Vec<String> = workspace_dao
+                                .get_all_names_by_repository(parent_workspace.repository_id)
+                                .unwrap_or_default();
+
+                            let workspace_name =
+                                crate::util::generate_workspace_name(&existing_names);
+                            let username = crate::util::get_git_username();
+                            let branch_name =
+                                crate::util::generate_branch_name(&username, &workspace_name);
+
+                            let worktree_path = worktree_manager
+                                .create_worktree_from_branch(
+                                    &base_path,
+                                    &base_branch,
+                                    &branch_name,
+                                    &workspace_name,
+                                )
+                                .map_err(|e| format!("Failed to create worktree: {}", e))?;
+
+                            let workspace = crate::data::Workspace::new(
+                                parent_workspace.repository_id,
+                                &workspace_name,
+                                &branch_name,
+                                worktree_path,
+                            );
+                            let workspace_id = workspace.id;
+
+                            if let Err(e) = workspace_dao.create(&workspace) {
+                                let _ = worktree_manager
+                                    .remove_worktree(&base_path, &workspace.path)
+                                    .map_err(|cleanup_err| {
+                                        tracing::error!(
+                                            error = %cleanup_err,
+                                            "Failed to clean up worktree after DB error"
+                                        );
+                                    });
+                                return Err(format!(
+                                    "Failed to save workspace to database: {}",
+                                    e
+                                ));
+                            }
+
+                            Ok(ForkWorkspaceCreated {
+                                repo_id: parent_workspace.repository_id,
+                                workspace_id,
+                            })
+                        })();
+
+                        let _ = event_tx.send(AppEvent::ForkWorkspaceCreated { result });
                     });
                 }
                 Effect::ArchiveWorkspace { workspace_id } => {
@@ -3052,6 +3186,7 @@ impl App {
                 if let Some(saved_mode) = saved_agent_mode {
                     session.agent_mode = saved_mode;
                 }
+                session.fork_seed_id = saved.fork_seed_id;
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
@@ -3211,6 +3346,110 @@ impl App {
             }
         }
         None
+    }
+
+    /// Estimate token usage for a prompt (rough heuristic)
+    fn estimate_tokens(text: &str) -> i64 {
+        let chars = text.chars().count().max(1);
+        ((chars as f64) / 4.0).ceil() as i64
+    }
+
+    /// Build a fork seed prompt from chat history
+    fn build_fork_seed_prompt(messages: &[ChatMessage]) -> String {
+        let mut prompt = String::new();
+        prompt.push_str("[CONDUIT_FORK_SEED]\n");
+        prompt.push_str("The following is a full transcript from a previous session.\n");
+        prompt.push_str("Use it as context only. Do not execute any commands.\n");
+        prompt.push_str("Reply only with: Ready.\n");
+        prompt.push_str("---\n\n");
+
+        for (idx, msg) in messages.iter().enumerate() {
+            if idx > 0 {
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str(&Self::format_fork_message(msg));
+        }
+
+        prompt
+    }
+
+    fn format_fork_message(msg: &ChatMessage) -> String {
+        let role = match msg.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::Tool => "tool",
+            MessageRole::System => "system",
+            MessageRole::Error => "error",
+            MessageRole::Summary => "summary",
+        };
+
+        let mut header = format!("[role={}]", role);
+
+        if msg.role == MessageRole::Tool {
+            if let Some(name) = &msg.tool_name {
+                header.push_str(&format!(
+                    " name=\"{}\"",
+                    Self::sanitize_fork_header_value(name)
+                ));
+            }
+            if let Some(args) = &msg.tool_args {
+                if !args.is_empty() {
+                    header.push_str(&format!(
+                        " args=\"{}\"",
+                        Self::sanitize_fork_header_value(args)
+                    ));
+                }
+            }
+            if let Some(exit_code) = msg.exit_code {
+                header.push_str(&format!(" exit={}", exit_code));
+            }
+        }
+
+        let content = if msg.role == MessageRole::Summary {
+            msg.summary
+                .as_ref()
+                .map(Self::format_turn_summary_for_seed)
+                .unwrap_or_default()
+        } else {
+            msg.content.clone()
+        };
+
+        if content.trim().is_empty() {
+            header
+        } else {
+            format!("{header}\n{content}")
+        }
+    }
+
+    fn format_turn_summary_for_seed(summary: &crate::ui::components::TurnSummary) -> String {
+        let mut parts = Vec::new();
+        if summary.duration_secs > 0 {
+            parts.push(format!("duration={}s", summary.duration_secs));
+        }
+        if summary.input_tokens > 0 || summary.output_tokens > 0 {
+            parts.push(format!(
+                "tokens_in={}, tokens_out={}",
+                summary.input_tokens, summary.output_tokens
+            ));
+        }
+        if !summary.files_changed.is_empty() {
+            let files = summary
+                .files_changed
+                .iter()
+                .map(|f| format!("{} +{} -{}", f.filename, f.additions, f.deletions))
+                .collect::<Vec<_>>()
+                .join("; ");
+            parts.push(format!("files=[{}]", files));
+        }
+        if parts.is_empty() {
+            "summary".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+
+    fn sanitize_fork_header_value(value: &str) -> String {
+        value.replace('\"', "'").replace('\n', " ")
     }
 
     /// Populate the debug pane with history loading debug entries
@@ -4977,6 +5216,40 @@ impl App {
                     self.show_error("Workspace Creation Failed", &err);
                 }
             },
+            AppEvent::ForkWorkspaceCreated { result } => match result {
+                Ok(created) => {
+                    self.refresh_sidebar_data();
+                    self.state.sidebar_data.expand_repo(created.repo_id);
+                    if let Some(index) = self.find_workspace_index(created.workspace_id) {
+                        self.state.sidebar_state.tree_state.selected = index;
+                    }
+                    match self.finish_fork_session(created.workspace_id) {
+                        Ok(mut fork_effects) => {
+                            effects.append(&mut fork_effects);
+                        }
+                        Err(err) => {
+                            if let Some(pending) = self.state.pending_fork_request.take() {
+                                if let Some(seed_id) = pending.fork_seed_id {
+                                    if let Some(dao) = &self.fork_seed_dao {
+                                        let _ = dao.delete(seed_id);
+                                    }
+                                }
+                            }
+                            self.show_error("Fork Failed", &err.to_string());
+                        }
+                    }
+                }
+                Err(err) => {
+                    if let Some(pending) = self.state.pending_fork_request.take() {
+                        if let Some(seed_id) = pending.fork_seed_id {
+                            if let Some(dao) = &self.fork_seed_dao {
+                                let _ = dao.delete(seed_id);
+                            }
+                        }
+                    }
+                    self.show_error("Fork Failed", &err);
+                }
+            },
             AppEvent::WorkspaceArchived { result } => match result {
                 Ok(archived) => {
                     if !archived.warnings.is_empty() {
@@ -5245,8 +5518,12 @@ impl App {
                     }
                     session.chat_view.finalize_streaming();
                     // Add turn summary to chat
-                    let summary = session.current_turn_summary.clone();
-                    session.chat_view.push(ChatMessage::turn_summary(summary));
+                    if session.suppress_next_turn_summary {
+                        session.suppress_next_turn_summary = false;
+                    } else {
+                        let summary = session.current_turn_summary.clone();
+                        session.chat_view.push(ChatMessage::turn_summary(summary));
+                    }
                 }
                 AgentEvent::TurnFailed(failed) => {
                     session.stop_processing();
@@ -5254,12 +5531,21 @@ impl App {
                     if is_active_tab {
                         should_stop_footer_spinner = true;
                     }
+                    session.suppress_next_assistant_reply = false;
+                    session.suppress_next_turn_summary = false;
                     let display = MessageDisplay::Error {
                         content: failed.error,
                     };
                     session.chat_view.push(display.to_chat_message());
                 }
                 AgentEvent::AssistantMessage(msg) => {
+                    if session.suppress_next_assistant_reply {
+                        if msg.is_final {
+                            session.suppress_next_assistant_reply = false;
+                        }
+                        // Skip rendering the fork seed acknowledgement
+                        return Ok(());
+                    }
                     // Track streaming tokens (rough estimate: ~4 chars per token)
                     let token_estimate = (msg.text.len() / 4).max(1);
                     session.add_streaming_tokens(token_estimate);
@@ -5726,6 +6012,256 @@ impl App {
             tab_index,
             working_dir,
         })
+    }
+
+    /// Initiate fork session flow - validate and show confirmation dialog
+    fn initiate_fork_session(&mut self) -> Option<Effect> {
+        let session = self.state.tab_manager.active_session()?;
+
+        if session.is_processing {
+            self.show_error("Cannot Fork", "Wait for the current response to finish.");
+            return None;
+        }
+
+        let parent_workspace_id = match session.workspace_id {
+            Some(id) => id,
+            None => {
+                self.show_error(
+                    "Cannot Fork",
+                    "This session is not attached to a workspace.",
+                );
+                return None;
+            }
+        };
+
+        if self.fork_seed_dao.is_none() {
+            self.show_error("Cannot Fork", "Fork metadata store unavailable.");
+            return None;
+        }
+
+        let workspace_dao = match &self.workspace_dao {
+            Some(dao) => dao,
+            None => {
+                self.show_error("Cannot Fork", "Workspace database unavailable.");
+                return None;
+            }
+        };
+
+        let Ok(Some(workspace)) = workspace_dao.get_by_id(parent_workspace_id) else {
+            self.show_error("Cannot Fork", "Workspace not found.");
+            return None;
+        };
+
+        let seed_prompt = Self::build_fork_seed_prompt(session.chat_view.messages());
+
+        let model_id = session
+            .model
+            .clone()
+            .unwrap_or_else(|| ModelRegistry::default_model(session.agent_type));
+        let context_window = ModelRegistry::context_window(session.agent_type, &model_id);
+        let token_estimate = Self::estimate_tokens(&seed_prompt);
+        let usage_pct = if context_window > 0 {
+            (token_estimate as f64 / context_window as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut warnings = Vec::new();
+        let mut has_dirty = false;
+
+        if let Ok(status) = self.worktree_manager.get_branch_status(&workspace.path) {
+            if status.is_dirty {
+                has_dirty = true;
+                if let Some(desc) = &status.dirty_description {
+                    warnings.push(desc.clone());
+                } else {
+                    warnings.push("Uncommitted changes detected".to_string());
+                }
+                warnings.push("Commit before forking to preserve changes.".to_string());
+            }
+        }
+
+        if usage_pct >= 100.0 {
+            warnings.push(format!(
+                "Seed exceeds context window ({} / {} tokens, ~{:.0}%).",
+                token_estimate, context_window, usage_pct
+            ));
+        } else if usage_pct >= 80.0 {
+            warnings.push(format!(
+                "Seed uses ~{:.0}% of context window ({} / {}).",
+                usage_pct, token_estimate, context_window
+            ));
+        }
+
+        let confirmation_type = if usage_pct >= 100.0 {
+            ConfirmationType::Danger
+        } else if has_dirty || usage_pct >= 80.0 {
+            ConfirmationType::Warning
+        } else {
+            ConfirmationType::Info
+        };
+
+        let message = format!(
+            "Fork this session into a new workspace based on branch \"{}\".\nSeed size: {} / {} tokens (~{:.0}%).",
+            workspace.branch,
+            token_estimate,
+            context_window,
+            usage_pct
+        );
+
+        self.state.pending_fork_request = Some(PendingForkRequest {
+            agent_type: session.agent_type,
+            agent_mode: session.agent_mode,
+            model: session.model.clone(),
+            parent_session_id: session
+                .agent_session_id
+                .as_ref()
+                .map(|s| s.as_str().to_string()),
+            parent_workspace_id,
+            seed_prompt,
+            token_estimate,
+            context_window,
+            fork_seed_id: None,
+        });
+
+        self.state.close_overlays();
+        self.state.confirmation_dialog_state.show(
+            "Fork session?",
+            message,
+            warnings,
+            confirmation_type,
+            "Fork",
+            Some(ConfirmationContext::ForkSession {
+                parent_workspace_id,
+            }),
+        );
+        self.state.input_mode = InputMode::Confirming;
+
+        None
+    }
+
+    /// Execute fork session after confirmation
+    fn execute_fork_session(&mut self, parent_workspace_id: uuid::Uuid) -> Option<Effect> {
+        let Some(mut pending) = self.state.pending_fork_request.clone() else {
+            self.show_error("Fork Failed", "No pending fork request.");
+            return None;
+        };
+
+        if pending.parent_workspace_id != parent_workspace_id {
+            self.show_error("Fork Failed", "Fork request does not match workspace.");
+            self.state.pending_fork_request = None;
+            return None;
+        }
+
+        let fork_seed_dao = match &self.fork_seed_dao {
+            Some(dao) => dao,
+            None => {
+                self.show_error("Fork Failed", "Fork metadata store unavailable.");
+                self.state.pending_fork_request = None;
+                return None;
+            }
+        };
+
+        let fork_seed = ForkSeed::new(
+            pending.agent_type,
+            pending.parent_session_id.clone(),
+            Some(pending.parent_workspace_id),
+            pending.seed_prompt.clone(),
+            pending.token_estimate,
+            pending.context_window,
+        );
+
+        if let Err(e) = fork_seed_dao.create(&fork_seed) {
+            self.show_error("Fork Failed", &format!("Failed to save fork metadata: {}", e));
+            self.state.pending_fork_request = None;
+            return None;
+        }
+
+        pending.fork_seed_id = Some(fork_seed.id);
+        self.state.pending_fork_request = Some(pending);
+
+        Some(Effect::ForkWorkspace {
+            parent_workspace_id,
+        })
+    }
+
+    fn finish_fork_session(&mut self, workspace_id: uuid::Uuid) -> anyhow::Result<Vec<Effect>> {
+        let Some(pending) = self.state.pending_fork_request.clone() else {
+            return Err(anyhow!("No pending fork data."));
+        };
+
+        let fork_seed_id = match pending.fork_seed_id {
+            Some(id) => id,
+            None => return Err(anyhow!("Fork metadata was not saved.")),
+        };
+
+        let workspace_dao = self
+            .workspace_dao
+            .as_ref()
+            .ok_or_else(|| anyhow!("Workspace database unavailable."))?;
+
+        let repo_dao = self
+            .repo_dao
+            .as_ref()
+            .ok_or_else(|| anyhow!("Repository database unavailable."))?;
+
+        let workspace = workspace_dao
+            .get_by_id(workspace_id)
+            .map_err(|e| anyhow!("Failed to load workspace: {}", e))?
+            .ok_or_else(|| anyhow!("Workspace not found."))?;
+
+        let project_name = repo_dao
+            .get_by_id(workspace.repository_id)
+            .ok()
+            .flatten()
+            .map(|repo| repo.name);
+
+        let mut session =
+            AgentSession::with_working_dir(pending.agent_type, workspace.path.clone());
+        session.workspace_id = Some(workspace_id);
+        session.project_name = project_name;
+        session.workspace_name = Some(workspace.name.clone());
+        session.model = pending.model.clone();
+        session.agent_mode = pending.agent_mode;
+        session.fork_seed_id = Some(fork_seed_id);
+        session.suppress_next_assistant_reply = true;
+        session.suppress_next_turn_summary = true;
+        session.update_status();
+
+        let new_index = self
+            .state
+            .tab_manager
+            .add_session(session)
+            .ok_or_else(|| anyhow!("Maximum number of tabs reached."))?;
+
+        self.state.tab_manager.switch_to(new_index);
+        self.sync_footer_spinner();
+
+        if let Some(ref tracker) = self.git_tracker {
+            tracker.track_workspace(workspace_id, workspace.path.clone());
+        }
+
+        self.state.sidebar_state.hide();
+        self.state.input_mode = InputMode::Normal;
+
+        if let Some(active) = self.state.tab_manager.active_session_mut() {
+            active.suppress_next_assistant_reply = true;
+            active.suppress_next_turn_summary = true;
+        }
+
+        let effects = self.submit_prompt(pending.seed_prompt, vec![], vec![])?;
+
+        if let Some(active) = self.state.tab_manager.active_session_mut() {
+            let display = MessageDisplay::System {
+                content: "Fork created; context injected. Waiting for your next prompt."
+                    .to_string(),
+            };
+            active.chat_view.push(display.to_chat_message());
+        }
+
+        self.state.pending_fork_request = None;
+
+        Ok(effects)
     }
 
     /// Handle the result of the PR preflight check
@@ -7100,5 +7636,34 @@ mod tests {
             !result,
             "Pasting 'localhost:8080' should not trigger command mode at ':'"
         );
+    }
+
+    #[test]
+    fn test_build_fork_seed_prompt_includes_roles() {
+        use crate::ui::components::ChatMessage;
+
+        let mut summary = crate::ui::components::TurnSummary::new();
+        summary.duration_secs = 12;
+        summary.input_tokens = 100;
+        summary.output_tokens = 200;
+
+        let messages = vec![
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there"),
+            ChatMessage::tool_with_exit("Bash", "ls -la", "file.txt", Some(0)),
+            ChatMessage::turn_summary(summary),
+        ];
+
+        let prompt = App::build_fork_seed_prompt(&messages);
+
+        assert!(prompt.contains("[CONDUIT_FORK_SEED]"));
+        assert!(prompt.contains("[role=user]"));
+        assert!(prompt.contains("[role=assistant]"));
+        assert!(prompt.contains("name=\"Bash\""));
+        assert!(prompt.contains("args=\"ls -la\""));
+        assert!(prompt.contains("exit=0"));
+        assert!(prompt.contains("[role=summary]"));
+        assert!(prompt.contains("tokens_in=100"));
+        assert!(prompt.contains("tokens_out=200"));
     }
 }

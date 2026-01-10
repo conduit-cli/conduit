@@ -50,10 +50,26 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     created_at TEXT NOT NULL,
     pending_user_message TEXT,
     queued_messages TEXT NOT NULL DEFAULT '[]',
+    fork_seed_id TEXT,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_tabs_order ON session_tabs(tab_index);
+
+CREATE TABLE IF NOT EXISTS fork_seeds (
+    id TEXT PRIMARY KEY,
+    agent_type TEXT NOT NULL,
+    parent_session_id TEXT,
+    parent_workspace_id TEXT,
+    created_at TEXT NOT NULL,
+    seed_prompt_text TEXT NOT NULL,
+    token_estimate INTEGER NOT NULL,
+    context_window INTEGER NOT NULL,
+    seed_ack_filtered INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fork_seeds_parent_session ON fork_seeds(parent_session_id);
 "#;
 
 #[derive(Error, Debug)]
@@ -210,6 +226,19 @@ impl Database {
             "UPDATE session_tabs SET queued_messages = '[]' WHERE queued_messages IS NULL",
             [],
         )?;
+
+        // Migration 7: Add fork_seed_id column to session_tabs table
+        let has_fork_seed_id: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='fork_seed_id'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_fork_seed_id {
+            conn.execute("ALTER TABLE session_tabs ADD COLUMN fork_seed_id TEXT", [])?;
+        }
 
         Ok(())
     }

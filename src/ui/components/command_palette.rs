@@ -104,6 +104,7 @@ impl CommandPaletteState {
             Action::ToggleSidebar,
             Action::NewProject,
             Action::OpenPr,
+            Action::ForkSession,
             Action::InterruptAgent,
             Action::ToggleViewMode,
             Action::ShowModelSelector,

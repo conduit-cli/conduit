@@ -76,6 +76,12 @@ pub struct AgentSession {
     pub context_state: ContextWindowState,
     /// Pending context warning to display (cleared after display)
     pub pending_context_warning: Option<ContextWarning>,
+    /// Fork seed ID (if this tab was created via fork)
+    pub fork_seed_id: Option<Uuid>,
+    /// Suppress the next assistant reply (used for fork seed ack)
+    pub suppress_next_assistant_reply: bool,
+    /// Suppress the next turn summary (paired with fork seed ack)
+    pub suppress_next_turn_summary: bool,
 }
 
 /// Context warning notification
@@ -118,6 +124,9 @@ impl AgentSession {
             queued_messages: Vec::new(),
             queue_selection: None,
             capabilities: AgentCapabilities::for_agent(agent_type),
+            fork_seed_id: None,
+            suppress_next_assistant_reply: false,
+            suppress_next_turn_summary: false,
         };
         session.update_status();
         session

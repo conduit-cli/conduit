@@ -11,6 +11,8 @@ use crate::ui::components::{
 };
 use crate::ui::events::{InputMode, ViewMode};
 use crate::ui::tab_manager::TabManager;
+use crate::agent::{AgentMode, AgentType};
+use uuid::Uuid;
 
 /// Performance metrics for monitoring frame timing.
 #[derive(Debug, Clone)]
@@ -198,6 +200,22 @@ pub struct AppState {
     pub logo_shine: LogoShineAnimation,
     /// Track if splash screen was visible (for resetting shine animation)
     pub was_splash_visible: bool,
+    /// Pending fork request data (set during confirmation)
+    pub pending_fork_request: Option<PendingForkRequest>,
+}
+
+/// Pending fork request data captured before workspace creation
+#[derive(Debug, Clone)]
+pub struct PendingForkRequest {
+    pub agent_type: AgentType,
+    pub agent_mode: AgentMode,
+    pub model: Option<String>,
+    pub parent_session_id: Option<String>,
+    pub parent_workspace_id: Uuid,
+    pub seed_prompt: String,
+    pub token_estimate: i64,
+    pub context_window: i64,
+    pub fork_seed_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,6 +280,7 @@ impl AppState {
             last_esc_press: None,
             logo_shine: LogoShineAnimation::new(),
             was_splash_visible: true, // Start on splash screen
+            pending_fork_request: None,
         }
     }
 
