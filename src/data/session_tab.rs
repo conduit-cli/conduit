@@ -181,7 +181,7 @@ fn deserialize_queued_messages(raw: Option<&str>) -> Vec<QueuedMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::Database;
+    use crate::data::{Database, QueuedImageAttachment, QueuedMessageMode};
     use std::path::PathBuf;
     use tempfile::tempdir;
 
