@@ -16,6 +16,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
+    widgets::Widget,
     Frame, Terminal,
 };
 use sha2::{Digest, Sha256};
@@ -44,13 +45,13 @@ use crate::ui::components::{
     AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
     ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
     MessageRole, MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
-    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionImportPicker, Sidebar, SidebarData, TabBar,
-    ThemePicker,
+    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
+    SidebarData, TabBar, ThemePicker,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
-    AppEvent, ForkWorkspaceCreated, InputMode, RemoveProjectResult, ViewMode, WorkspaceArchived,
-    WorkspaceCreated,
+    AppEvent, ForkWorkspaceCreated, InputMode, RemoveProjectResult, TitleGeneratedResult,
+    ViewMode, WorkspaceArchived, WorkspaceCreated,
 };
 use crate::ui::session::AgentSession;
 use crate::ui::terminal_guard::TerminalGuard;
@@ -251,6 +252,8 @@ impl App {
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
             session.fork_seed_id = tab.fork_seed_id;
+            // Restore AI-generated session title
+            session.title = tab.title.clone();
             // Restore agent mode (defaults to Build if not set)
             let parsed_mode = tab
                 .agent_mode
@@ -466,6 +469,8 @@ impl App {
                 // Preserve queued messages for interrupted sessions
                 tab.queued_messages = session.queued_messages.clone();
                 tab.fork_seed_id = session.fork_seed_id;
+                // Preserve AI-generated session title
+                tab.title = session.title.clone();
                 tab
             })
             .collect();
@@ -2746,6 +2751,37 @@ impl App {
                         working_dir,
                     )
                     .await?;
+                }
+                Effect::GenerateTitleAndBranch {
+                    tab_index,
+                    user_message,
+                    working_dir,
+                    workspace_id,
+                    current_branch,
+                } => {
+                    let tools = self.tools.clone();
+                    let event_tx = self.event_tx.clone();
+                    let worktree_manager = self.worktree_manager.clone();
+                    let workspace_dao = self.workspace_dao.clone();
+
+                    tokio::spawn(async move {
+                        let result = tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            generate_title_and_branch_impl(
+                                tools,
+                                user_message,
+                                working_dir,
+                                workspace_id,
+                                current_branch,
+                                worktree_manager,
+                                workspace_dao,
+                            ),
+                        )
+                        .await
+                        .unwrap_or_else(|_| Err("Timeout generating title".into()));
+
+                        let _ = event_tx.send(AppEvent::TitleGenerated { tab_index, result });
+                    });
                 }
             }
         }
@@ -5483,6 +5519,35 @@ Acknowledge that you have received this context by replying ONLY with the single
             AppEvent::GitTracker(update) => {
                 self.handle_git_tracker_update(update);
             }
+            AppEvent::TitleGenerated { tab_index, result } => {
+                match result {
+                    Ok(generated) => {
+                        tracing::info!(
+                            tab_index,
+                            title = %generated.title,
+                            new_branch = ?generated.new_branch,
+                            "Session title generated"
+                        );
+
+                        // Update session title
+                        if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                            session.title = Some(generated.title.clone());
+
+                            // Update workspace_name if branch was renamed
+                            if let Some(new_branch) = &generated.new_branch {
+                                session.workspace_name = Some(new_branch.clone());
+                            }
+                        }
+
+                        // Save session state to persist the title
+                        effects.push(Effect::SaveSessionState);
+                    }
+                    Err(e) => {
+                        tracing::warn!(tab_index, error = %e, "Failed to generate session title");
+                        // Non-fatal - continue without title
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -5965,6 +6030,10 @@ Acknowledge that you have received this context by replying ONLY with the single
             session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
         }
 
+        // Save copies for potential title generation before consuming in config
+        let prompt_for_title = prompt.clone();
+        let working_dir_for_title = working_dir.clone();
+
         let mut config = AgentStartConfig::new(prompt, working_dir)
             .with_tools(self.config.claude_allowed_tools.clone())
             .with_images(images)
@@ -5985,6 +6054,30 @@ Acknowledge that you have received this context by replying ONLY with the single
             agent_type,
             config,
         });
+
+        // Generate title on first message (turn_count == 0 and no title yet)
+        let should_generate_title = {
+            if let Some(session) = self.state.tab_manager.active_session() {
+                session.turn_count == 0 && session.title.is_none()
+            } else {
+                false
+            }
+        };
+
+        if should_generate_title {
+            if let Some(session) = self.state.tab_manager.active_session() {
+                let current_branch = session.workspace_name.clone().unwrap_or_default();
+                let workspace_id = session.workspace_id;
+
+                effects.push(Effect::GenerateTitleAndBranch {
+                    tab_index,
+                    user_message: prompt_for_title.clone(),
+                    working_dir: working_dir_for_title.clone(),
+                    workspace_id,
+                    current_branch,
+                });
+            }
+        }
 
         Ok(effects)
     }
@@ -7276,11 +7369,12 @@ Acknowledge that you have received this context by replying ONLY with the single
                     3 // Minimum height
                 };
 
-                // Chat layout with input box, status bar, and gap
+                // Chat layout with session header, input box, status bar, and gap
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),            // Tab bar
+                        Constraint::Length(1),            // Session header
                         Constraint::Min(5),               // Chat view
                         Constraint::Length(input_height), // Input box (dynamic)
                         Constraint::Length(1),            // Status bar
@@ -7290,22 +7384,22 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 // Create margin-adjusted areas for input, status bar, and gap rows
                 let input_area_inner = Rect {
-                    x: chunks[2].x + INPUT_MARGIN_LEFT,
-                    y: chunks[2].y,
-                    width: chunks[2].width.saturating_sub(input_total_margin),
-                    height: chunks[2].height,
-                };
-                let status_bar_area_inner = Rect {
                     x: chunks[3].x + INPUT_MARGIN_LEFT,
                     y: chunks[3].y,
                     width: chunks[3].width.saturating_sub(input_total_margin),
                     height: chunks[3].height,
                 };
-                let gap_area_inner = Rect {
+                let status_bar_area_inner = Rect {
                     x: chunks[4].x + INPUT_MARGIN_LEFT,
                     y: chunks[4].y,
                     width: chunks[4].width.saturating_sub(input_total_margin),
                     height: chunks[4].height,
+                };
+                let gap_area_inner = Rect {
+                    x: chunks[5].x + INPUT_MARGIN_LEFT,
+                    y: chunks[5].y,
+                    width: chunks[5].width.saturating_sub(input_total_margin),
+                    height: chunks[5].height,
                 };
 
                 // Fill margin areas so they match the app background.
@@ -7342,9 +7436,9 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 use crate::ui::components::bg_base;
                 let margin_bg = bg_base();
-                fill_margins(buf, chunks[2], margin_bg);
                 fill_margins(buf, chunks[3], margin_bg);
                 fill_margins(buf, chunks[4], margin_bg);
+                fill_margins(buf, chunks[5], margin_bg);
 
                 // Draw separator line in the gap row (▀ characters)
                 // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
@@ -7357,7 +7451,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 // Store layout areas for mouse hit-testing
                 self.state.tab_bar_area = Some(chunks[0]);
-                self.state.chat_area = Some(chunks[1]);
+                self.state.chat_area = Some(chunks[2]); // Chat view is now chunks[2]
                 self.state.raw_events_area = None;
                 self.state.input_area = Some(input_area_inner);
                 self.state.status_bar_area = Some(status_bar_area_inner);
@@ -7399,6 +7493,14 @@ Acknowledge that you have received this context by replying ONLY with the single
                 .with_spinner_frame(self.state.spinner_frame);
                 tab_bar.render(chunks[0], f.buffer_mut());
 
+                // Draw session header (below tab bar)
+                let session_title = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .and_then(|s| s.title.as_deref());
+                SessionHeader::new(session_title).render(chunks[1], f.buffer_mut());
+
                 // Draw active session components
                 let is_command_mode = self.state.input_mode == InputMode::Command;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -7411,7 +7513,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     let input_mode = self.state.input_mode;
                     let queue_lines = Self::build_queue_lines(session, chunks[1].width, input_mode);
                     session.chat_view.render_with_indicator(
-                        chunks[1],
+                        chunks[2],
                         f.buffer_mut(),
                         thinking_line,
                         queue_lines,
@@ -7961,6 +8063,79 @@ struct SessionStateSnapshot {
     sidebar_visible: bool,
     tree_selected_index: usize,
     collapsed_repo_ids: Vec<uuid::Uuid>,
+}
+
+/// Async helper for generating title and branch name
+async fn generate_title_and_branch_impl(
+    tools: ToolAvailability,
+    user_message: String,
+    working_dir: PathBuf,
+    workspace_id: Option<uuid::Uuid>,
+    current_branch: String,
+    worktree_manager: WorktreeManager,
+    workspace_dao: Option<WorkspaceStore>,
+) -> Result<TitleGeneratedResult, String> {
+    use crate::util::{generate_title_and_branch, get_git_username, sanitize_branch_suffix};
+
+    // Call AI for title generation
+    let metadata = generate_title_and_branch(&tools, &user_message, &working_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Try to rename branch if workspace exists
+    let new_branch = if workspace_id.is_some() && !current_branch.is_empty() {
+        let username = get_git_username();
+        let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
+        let new_branch_name = format!("{}/{}", username, suffix);
+
+        // Only rename if the new name differs from current
+        if new_branch_name != current_branch {
+            let wd = working_dir.clone();
+            let old = current_branch.clone();
+            let new_name = new_branch_name.clone();
+            let wm = worktree_manager.clone();
+
+            let rename_ok =
+                tokio::task::spawn_blocking(move || wm.rename_branch(&wd, &old, &new_name).is_ok())
+                    .await
+                    .unwrap_or(false);
+
+            if rename_ok {
+                // Update database if rename succeeded
+                if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
+                    let _ = tokio::task::spawn_blocking({
+                        let dao = dao.clone();
+                        let new_branch = new_branch_name.clone();
+                        move || {
+                            if let Ok(Some(mut ws)) = dao.get_by_id(ws_id) {
+                                ws.branch = new_branch;
+                                let _ = dao.update(&ws);
+                            }
+                        }
+                    })
+                    .await;
+                }
+                Some(new_branch_name)
+            } else {
+                tracing::warn!(
+                    "Failed to rename branch from {} to {}",
+                    current_branch,
+                    new_branch_name
+                );
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(TitleGeneratedResult {
+        title: metadata.title,
+        new_branch,
+        workspace_id,
+    })
 }
 
 #[cfg(test)]

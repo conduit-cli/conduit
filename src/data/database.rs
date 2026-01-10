@@ -360,6 +360,19 @@ CREATE TABLE IF NOT EXISTS fork_seeds_new (
             }
         }
 
+        // Migration 8: Add title column to session_tabs table
+        let has_title: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='title'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_title {
+            conn.execute("ALTER TABLE session_tabs ADD COLUMN title TEXT", [])?;
+        }
+
         Ok(())
     }
 

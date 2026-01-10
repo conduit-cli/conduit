@@ -22,6 +22,7 @@ mod raw_events_types;
 mod raw_events_view;
 mod scrollbar;
 mod searchable_list;
+mod session_header;
 mod session_import_picker;
 mod sidebar;
 mod spinner;
@@ -64,6 +65,7 @@ pub use raw_events_types::{
 pub use raw_events_view::{RawEventsClick, RawEventsScrollbarMetrics, RawEventsView};
 pub use scrollbar::{render_minimal_scrollbar, scrollbar_offset_from_point, ScrollbarMetrics};
 pub use searchable_list::SearchableListState;
+pub use session_header::SessionHeader;
 pub use session_import_picker::{AgentFilter, SessionImportPicker, SessionImportPickerState};
 pub use sidebar::{Sidebar, SidebarState};
 pub use spinner::Spinner;

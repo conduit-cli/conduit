@@ -181,6 +181,8 @@ pub struct SessionTab {
     pub queued_messages: Vec<QueuedMessage>,
     /// Fork seed ID (if this tab was created via fork)
     pub fork_seed_id: Option<Uuid>,
+    /// AI-generated session title/description
+    pub title: Option<String>,
 }
 
 impl SessionTab {
@@ -206,6 +208,7 @@ impl SessionTab {
             pending_user_message: None,
             queued_messages: Vec::new(),
             fork_seed_id: None,
+            title: None,
         }
     }
 }

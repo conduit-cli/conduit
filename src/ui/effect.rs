@@ -38,4 +38,12 @@ pub enum Effect {
     DiscoverSessions,
     /// Import an external session
     ImportSession(ExternalSession),
+    /// Generate session title and branch name from first message
+    GenerateTitleAndBranch {
+        tab_index: usize,
+        user_message: String,
+        working_dir: PathBuf,
+        workspace_id: Option<Uuid>,
+        current_branch: String,
+    },
 }

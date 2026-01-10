@@ -84,6 +84,8 @@ pub struct AgentSession {
     pub suppress_next_assistant_reply: bool,
     /// Suppress the next turn summary (paired with fork seed ack)
     pub suppress_next_turn_summary: bool,
+    /// AI-generated session title/description (set after first message)
+    pub title: Option<String>,
 }
 
 /// Context warning notification
@@ -130,6 +132,7 @@ impl AgentSession {
             fork_welcome_shown: false,
             suppress_next_assistant_reply: false,
             suppress_next_turn_summary: false,
+            title: None,
         };
         session.update_status();
         session

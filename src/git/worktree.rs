@@ -383,6 +383,36 @@ impl WorktreeManager {
         Ok(())
     }
 
+    /// Rename a local branch in the repository
+    ///
+    /// # Arguments
+    /// * `worktree_path` - Path to the worktree (used for git commands)
+    /// * `old_name` - Current branch name
+    /// * `new_name` - New branch name
+    pub fn rename_branch(
+        &self,
+        worktree_path: &Path,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<(), WorktreeError> {
+        if !worktree_path.exists() {
+            return Err(WorktreeError::NotFound(worktree_path.to_path_buf()));
+        }
+
+        let output = Command::new("git")
+            .args(["branch", "-m", old_name, new_name])
+            .current_dir(worktree_path)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(WorktreeError::CommandFailed(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Check if a worktree has uncommitted changes
     pub fn is_dirty(&self, worktree_path: &Path) -> Result<(bool, Option<String>), WorktreeError> {
         if !worktree_path.exists() {

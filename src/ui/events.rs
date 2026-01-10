@@ -107,6 +107,23 @@ pub enum AppEvent {
 
     /// Git tracker update (PR status, git stats, branch changes)
     GitTracker(GitTrackerUpdate),
+
+    /// Title/branch generation completed
+    TitleGenerated {
+        tab_index: usize,
+        result: Result<TitleGeneratedResult, String>,
+    },
+}
+
+/// Result of successful title/branch generation
+#[derive(Debug, Clone)]
+pub struct TitleGeneratedResult {
+    /// AI-generated session title
+    pub title: String,
+    /// New branch name (None if rename failed/skipped)
+    pub new_branch: Option<String>,
+    /// Associated workspace ID
+    pub workspace_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
