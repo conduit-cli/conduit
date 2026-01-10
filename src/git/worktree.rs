@@ -97,8 +97,11 @@ impl WorktreeManager {
         }
 
         // Try to add worktree for existing branch
+        // Use -- to prevent branch/path names starting with - from being misinterpreted
         let output = Command::new("git")
-            .args(["worktree", "add", worktree_path.to_str().unwrap(), branch])
+            .args(["worktree", "add", "--"])
+            .arg(&worktree_path)
+            .arg(branch)
             .current_dir(repo_path)
             .output()?;
 
@@ -107,13 +110,8 @@ impl WorktreeManager {
             // If branch doesn't exist, create it
             if stderr.contains("not a valid reference") || stderr.contains("invalid reference") {
                 let output = Command::new("git")
-                    .args([
-                        "worktree",
-                        "add",
-                        "-b",
-                        branch,
-                        worktree_path.to_str().unwrap(),
-                    ])
+                    .args(["worktree", "add", "-b", branch, "--"])
+                    .arg(&worktree_path)
                     .current_dir(repo_path)
                     .output()?;
 
@@ -151,36 +149,45 @@ impl WorktreeManager {
         }
 
         // Create a new branch from the base branch in the worktree
+        // Use -- to prevent branch/path names starting with - from being misinterpreted
         let output = Command::new("git")
-            .args(["worktree", "add", "-b", new_branch])
+            .args(["worktree", "add", "-b", new_branch, "--"])
             .arg(&worktree_path)
             .arg(base_branch)
             .current_dir(repo_path)
             .output()?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let initial_stderr = String::from_utf8_lossy(&output.stderr);
             // If branch already exists, try adding worktree directly
-            // Use specific patterns to avoid matching unrelated errors
-            if stderr.contains("already exists") || stderr.contains("already used by") {
+            // Require "branch" context to reduce false positives
+            let is_branch_exists = (initial_stderr.contains("branch")
+                && initial_stderr.contains("already exists"))
+                || initial_stderr.contains("already used by worktree");
+
+            if is_branch_exists {
                 tracing::debug!(
                     "Branch {} already exists, retrying without -b flag",
                     new_branch
                 );
-                let output = Command::new("git")
-                    .args(["worktree", "add"])
+                let retry_output = Command::new("git")
+                    .args(["worktree", "add", "--"])
                     .arg(&worktree_path)
                     .arg(new_branch)
                     .current_dir(repo_path)
                     .output()?;
 
-                if !output.status.success() {
-                    return Err(WorktreeError::CommandFailed(
-                        String::from_utf8_lossy(&output.stderr).to_string(),
-                    ));
+                if !retry_output.status.success() {
+                    // Include both original and retry stderr for better diagnostics
+                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                    return Err(WorktreeError::CommandFailed(format!(
+                        "Initial: {}; Retry: {}",
+                        initial_stderr.trim(),
+                        retry_stderr.trim()
+                    )));
                 }
             } else {
-                return Err(WorktreeError::CommandFailed(stderr.to_string()));
+                return Err(WorktreeError::CommandFailed(initial_stderr.to_string()));
             }
         }
 

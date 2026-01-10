@@ -267,6 +267,23 @@ impl Database {
                 .unwrap_or(false);
 
             if !has_seed_prompt_hash {
+                // Verify old schema has seed_prompt_text column before attempting migration
+                let has_seed_prompt_text: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pragma_table_info('fork_seeds') WHERE name='seed_prompt_text'",
+                        [],
+                        |row| row.get::<_, i64>(0).map(|c| c > 0),
+                    )
+                    .unwrap_or(false);
+
+                if !has_seed_prompt_text {
+                    // Old schema doesn't match expectations, skip migration
+                    tracing::warn!(
+                        "fork_seeds table exists but lacks seed_prompt_text column; skipping migration"
+                    );
+                    return Ok(());
+                }
+
                 conn.execute_batch(
                     r#"
 CREATE TABLE IF NOT EXISTS fork_seeds_new (

@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
@@ -212,7 +213,8 @@ pub struct PendingForkRequest {
     pub model: Option<String>,
     pub parent_session_id: Option<String>,
     pub parent_workspace_id: Uuid,
-    pub seed_prompt: String,
+    /// Uses Arc to avoid cloning large seed prompts during struct clones
+    pub seed_prompt: Arc<String>,
     pub token_estimate: i64,
     pub context_window: i64,
     pub fork_seed_id: Option<Uuid>,

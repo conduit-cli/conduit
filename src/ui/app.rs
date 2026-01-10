@@ -2491,7 +2491,15 @@ impl App {
 
                             let base_branch = worktree_manager
                                 .get_current_branch(&parent_workspace.path)
-                                .unwrap_or_else(|_| parent_workspace.branch.clone());
+                                .unwrap_or_else(|e| {
+                                    tracing::warn!(
+                                        error = %e,
+                                        workspace_id = %parent_workspace_id,
+                                        path = %parent_workspace.path.display(),
+                                        "Failed to get current branch, falling back to workspace branch"
+                                    );
+                                    parent_workspace.branch.clone()
+                                });
 
                             let existing_names: Vec<String> = workspace_dao
                                 .get_all_names_by_repository(parent_workspace.repository_id)
@@ -5251,6 +5259,7 @@ impl App {
                             effects.append(&mut fork_effects);
                         }
                         Err(err) => {
+                            // Clean up fork seed
                             if let Some(pending) = self.state.pending_fork_request.take() {
                                 if let Some(seed_id) = pending.fork_seed_id {
                                     if let Some(dao) = &self.fork_seed_dao {
@@ -5258,7 +5267,18 @@ impl App {
                                     }
                                 }
                             }
-                            self.show_error("Fork Failed", &err.to_string());
+                            // Attempt to clean up the created workspace
+                            let cleanup_msg =
+                                self.cleanup_fork_workspace(created.workspace_id, created.repo_id);
+                            let error_msg = match cleanup_msg {
+                                Some(cleanup_err) => format!(
+                                    "{}\n\nWorkspace cleanup failed: {}. \
+                                     You may need to manually remove it from the sidebar.",
+                                    err, cleanup_err
+                                ),
+                                None => err.to_string(),
+                            };
+                            self.show_error("Fork Failed", &error_msg);
                         }
                     }
                 }
@@ -6141,7 +6161,7 @@ impl App {
                 .as_ref()
                 .map(|s| s.as_str().to_string()),
             parent_workspace_id,
-            seed_prompt,
+            seed_prompt: Arc::new(seed_prompt),
             token_estimate,
             context_window,
             fork_seed_id: None,
@@ -6277,7 +6297,7 @@ impl App {
             active.suppress_next_turn_summary = true;
         }
 
-        let effects = self.submit_prompt(pending.seed_prompt, vec![], vec![])?;
+        let effects = self.submit_prompt((*pending.seed_prompt).clone(), vec![], vec![])?;
         if effects.is_empty() {
             return Err(anyhow!(
                 "Failed to start forked agent: no start-agent effect produced."
@@ -6300,6 +6320,59 @@ impl App {
         self.state.pending_fork_request = None;
 
         Ok(effects)
+    }
+
+    /// Attempt to clean up a fork workspace after finish_fork_session fails.
+    /// Returns Some(error_message) if cleanup failed, None if successful.
+    fn cleanup_fork_workspace(
+        &mut self,
+        workspace_id: uuid::Uuid,
+        repo_id: uuid::Uuid,
+    ) -> Option<String> {
+        let workspace_dao = self.workspace_dao.as_ref()?;
+        let repo_dao = self.repo_dao.as_ref()?;
+
+        // Get workspace and repo info for worktree cleanup
+        let workspace = match workspace_dao.get_by_id(workspace_id) {
+            Ok(Some(ws)) => ws,
+            Ok(None) => return None, // Already gone
+            Err(e) => return Some(format!("Failed to load workspace: {}", e)),
+        };
+
+        let repo = match repo_dao.get_by_id(repo_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                // Repo not found, just try to delete workspace from DB
+                if let Err(e) = workspace_dao.delete(workspace_id) {
+                    return Some(format!("Failed to delete workspace from database: {}", e));
+                }
+                return None;
+            }
+            Err(e) => return Some(format!("Failed to load repository: {}", e)),
+        };
+
+        // Try to remove the worktree first
+        if let Some(base_path) = &repo.base_path {
+            if let Err(e) = self
+                .worktree_manager
+                .remove_worktree(base_path, &workspace.path)
+            {
+                tracing::warn!(
+                    error = %e,
+                    workspace_id = %workspace_id,
+                    "Failed to remove worktree during fork cleanup"
+                );
+                // Continue to try database cleanup even if worktree removal fails
+            }
+        }
+
+        // Delete workspace from database
+        if let Err(e) = workspace_dao.delete(workspace_id) {
+            return Some(format!("Failed to delete workspace from database: {}", e));
+        }
+
+        self.refresh_sidebar_data();
+        None
     }
 
     /// Handle the result of the PR preflight check
