@@ -251,11 +251,6 @@ impl App {
             session.model = tab.model;
             session.pr_number = tab.pr_number.map(|n| n as u32);
             session.fork_seed_id = tab.fork_seed_id;
-            // Derive fork_welcome_shown: if restoring a forked session with history,
-            // the welcome message was already shown in the previous session
-            if tab.fork_seed_id.is_some() && tab.agent_session_id.is_some() {
-                session.fork_welcome_shown = true;
-            }
             // Restore agent mode (defaults to Build if not set)
             let parsed_mode = tab
                 .agent_mode
@@ -345,6 +340,12 @@ impl App {
 
             if !tab.queued_messages.is_empty() {
                 session.queued_messages = tab.queued_messages.clone();
+            }
+
+            // Derive fork_welcome_shown: if restoring a forked session that has messages,
+            // the welcome message was already shown in the previous session
+            if session.fork_seed_id.is_some() && !session.chat_view.messages().is_empty() {
+                session.fork_welcome_shown = true;
             }
 
             session.update_status();
@@ -3153,11 +3154,6 @@ impl App {
                     session.agent_mode = saved_mode;
                 }
                 session.fork_seed_id = saved.fork_seed_id;
-                // Derive fork_welcome_shown: if restoring a forked session with history,
-                // the welcome message was already shown in the previous session
-                if saved.fork_seed_id.is_some() && saved.agent_session_id.is_some() {
-                    session.fork_welcome_shown = true;
-                }
 
                 // Restore chat history from agent files
                 if let Some(ref session_id_str) = saved.agent_session_id {
@@ -3222,6 +3218,12 @@ impl App {
 
                 if !saved.queued_messages.is_empty() {
                     session.queued_messages = saved.queued_messages.clone();
+                }
+
+                // Derive fork_welcome_shown: if restoring a forked session that has messages,
+                // the welcome message was already shown in the previous session
+                if session.fork_seed_id.is_some() && !session.chat_view.messages().is_empty() {
+                    session.fork_welcome_shown = true;
                 }
             }
 
@@ -4100,6 +4102,7 @@ impl App {
                             session.raw_events_view.scroll_up(3);
                         }
                     }
+                    self.record_chat_scroll(3);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.chat_view.scroll_up(1);
                     self.record_chat_scroll(1);
@@ -4137,6 +4140,7 @@ impl App {
                             session.raw_events_view.scroll_down(3, list_height);
                         }
                     }
+                    self.record_chat_scroll(3);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.chat_view.scroll_down(1);
                     self.record_chat_scroll(1);
@@ -6353,20 +6357,29 @@ impl App {
         // Note: suppress flags already set on session before add_session, no need to set again
 
         // Use submit_prompt_hidden - don't add 500KB seed to chat transcript
-        let effects = self.submit_prompt_hidden(
+        let effects = match self.submit_prompt_hidden(
             pending.seed_prompt.to_string(),
             vec![],
             vec![],
-        )?;
-        if effects.is_empty() {
-            // Remove the broken tab; the AppEvent handler can still do repo/worktree cleanup
-            self.state.tab_manager.close_tab(new_index);
-            let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
-            self.state.tab_manager.switch_to(fallback);
-            return Err(anyhow!(
-                "Failed to start forked agent: no start-agent effect produced."
-            ));
-        }
+        ) {
+            Ok(effects) if effects.is_empty() => {
+                // Remove the broken tab
+                self.state.tab_manager.close_tab(new_index);
+                let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
+                self.state.tab_manager.switch_to(fallback);
+                return Err(anyhow!(
+                    "Failed to start forked agent: no start-agent effect produced."
+                ));
+            }
+            Ok(effects) => effects,
+            Err(e) => {
+                // Remove the broken tab
+                self.state.tab_manager.close_tab(new_index);
+                let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
+                self.state.tab_manager.switch_to(fallback);
+                return Err(e);
+            }
+        };
 
         self.state.pending_fork_request = None;
 
@@ -6394,13 +6407,39 @@ impl App {
         let repo = match repo_dao.get_by_id(repo_id) {
             Ok(Some(r)) => r,
             Ok(None) => {
-                // Repo not found, just try to delete workspace from DB
+                // Repo not found; try best-effort directory removal then delete from DB
+                if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+                    tracing::warn!(
+                        error = %e,
+                        workspace_id = %workspace_id,
+                        "Best-effort workspace directory removal failed (repo not found)"
+                    );
+                }
                 if let Err(e) = workspace_dao.delete(workspace_id) {
                     return Some(format!("Failed to delete workspace from database: {}", e));
                 }
                 return None;
             }
-            Err(e) => return Some(format!("Failed to load repository: {}", e)),
+            Err(e) => {
+                // Repo load failed; try best-effort directory removal then delete from DB
+                if let Err(fs_err) = std::fs::remove_dir_all(&workspace.path) {
+                    tracing::warn!(
+                        error = %fs_err,
+                        workspace_id = %workspace_id,
+                        "Best-effort workspace directory removal failed (repo load error)"
+                    );
+                }
+                if let Err(db_err) = workspace_dao.delete(workspace_id) {
+                    return Some(format!(
+                        "Failed to load repository: {}; also failed to delete workspace from database: {}",
+                        e, db_err
+                    ));
+                }
+                return Some(format!(
+                    "Failed to load repository: {} (workspace deleted from DB)",
+                    e
+                ));
+            }
         };
 
         // Collect cleanup warnings for resources that may need manual cleanup
@@ -6439,6 +6478,24 @@ impl App {
                     workspace.branch
                 ));
             }
+        } else {
+            // No base_path available; try best-effort directory removal
+            if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+                tracing::warn!(
+                    error = %e,
+                    workspace_id = %workspace_id,
+                    "Best-effort workspace directory removal failed (no base_path)"
+                );
+                cleanup_warnings.push(format!(
+                    "Workspace at {} may need manual removal",
+                    workspace.path.display()
+                ));
+            }
+            // Note: Can't delete branch without base_path
+            cleanup_warnings.push(format!(
+                "Branch '{}' may need manual deletion (no repo base path)",
+                workspace.branch
+            ));
         }
 
         // Delete workspace from database
