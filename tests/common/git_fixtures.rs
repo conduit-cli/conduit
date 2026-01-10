@@ -1,0 +1,321 @@
+//! Git repository test fixtures
+//!
+//! Provides utilities for creating temporary git repositories
+//! in various states for testing git operations.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::TempDir;
+
+/// A temporary git repository for testing
+///
+/// The repository is automatically cleaned up when the `TestRepo`
+/// is dropped. Use the various constructors to create repos in
+/// different initial states.
+///
+/// # Example
+/// ```
+/// let repo = TestRepo::new();
+/// assert!(repo.path.join(".git").exists());
+/// ```
+pub struct TestRepo {
+    /// TempDir handle (keeps directory alive until dropped)
+    _dir: TempDir,
+    /// Path to the repository root
+    pub path: PathBuf,
+}
+
+impl TestRepo {
+    /// Create a new test repository with an initial commit
+    ///
+    /// The repository will have:
+    /// - Git initialized
+    /// - User configured (test@example.com)
+    /// - A README.md file
+    /// - One initial commit
+    pub fn new() -> Self {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+        let path = dir.path().to_path_buf();
+
+        Self::git(&path, &["init"]);
+        Self::git(&path, &["config", "user.email", "test@example.com"]);
+        Self::git(&path, &["config", "user.name", "Test User"]);
+
+        // Create initial commit
+        std::fs::write(path.join("README.md"), "# Test Repository\n").unwrap();
+        Self::git(&path, &["add", "."]);
+        Self::git(&path, &["commit", "-m", "Initial commit"]);
+
+        Self { _dir: dir, path }
+    }
+
+    /// Create a repository with multiple branches
+    ///
+    /// All branches are created pointing at the initial commit.
+    pub fn with_branches(branch_names: &[&str]) -> Self {
+        let repo = Self::new();
+        for branch in branch_names {
+            Self::git(&repo.path, &["branch", branch]);
+        }
+        repo
+    }
+
+    /// Create a repository with uncommitted (untracked) changes
+    pub fn with_uncommitted_changes() -> Self {
+        let repo = Self::new();
+        std::fs::write(repo.path.join("dirty.txt"), "uncommitted content").unwrap();
+        repo
+    }
+
+    /// Create a repository with staged but uncommitted changes
+    pub fn with_staged_changes() -> Self {
+        let repo = Self::new();
+        std::fs::write(repo.path.join("staged.txt"), "staged content").unwrap();
+        Self::git(&repo.path, &["add", "staged.txt"]);
+        repo
+    }
+
+    /// Create a repository with both staged and unstaged changes
+    pub fn with_mixed_changes() -> Self {
+        let repo = Self::new();
+        // Staged change
+        std::fs::write(repo.path.join("staged.txt"), "staged content").unwrap();
+        Self::git(&repo.path, &["add", "staged.txt"]);
+        // Unstaged change
+        std::fs::write(repo.path.join("unstaged.txt"), "unstaged content").unwrap();
+        repo
+    }
+
+    /// Create a repository with a worktree already set up
+    ///
+    /// Creates the main repo and a worktree in a sibling directory.
+    pub fn with_worktree(worktree_name: &str, branch_name: &str) -> (Self, PathBuf) {
+        let repo = Self::new();
+
+        // Create the branch first
+        Self::git(&repo.path, &["branch", branch_name]);
+
+        // Create worktree directory path (sibling to main repo)
+        let worktree_path = repo.path.parent().unwrap().join(worktree_name);
+
+        Self::git(
+            &repo.path,
+            &[
+                "worktree",
+                "add",
+                worktree_path.to_str().unwrap(),
+                branch_name,
+            ],
+        );
+
+        (repo, worktree_path)
+    }
+
+    /// Create a repository with commit history
+    ///
+    /// Creates the specified number of commits after the initial one.
+    pub fn with_history(commit_count: usize) -> Self {
+        let repo = Self::new();
+        for i in 0..commit_count {
+            let filename = format!("file_{}.txt", i);
+            std::fs::write(repo.path.join(&filename), format!("Content {}", i)).unwrap();
+            Self::git(&repo.path, &["add", &filename]);
+            Self::git(&repo.path, &["commit", "-m", &format!("Commit {}", i + 1)]);
+        }
+        repo
+    }
+
+    /// Add a file and commit it
+    pub fn commit_file(&self, filename: &str, content: &str, message: &str) {
+        std::fs::write(self.path.join(filename), content).unwrap();
+        Self::git(&self.path, &["add", filename]);
+        Self::git(&self.path, &["commit", "-m", message]);
+    }
+
+    /// Create a file without staging or committing
+    /// Creates parent directories if they don't exist.
+    pub fn create_file(&self, filename: &str, content: &str) {
+        let file_path = self.path.join(filename);
+        if let Some(parent) = file_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(file_path, content).unwrap();
+    }
+
+    /// Stage a file without committing
+    pub fn stage_file(&self, filename: &str) {
+        Self::git(&self.path, &["add", filename]);
+    }
+
+    /// Checkout a branch
+    pub fn checkout(&self, branch: &str) {
+        Self::git(&self.path, &["checkout", branch]);
+    }
+
+    /// Create and checkout a new branch
+    pub fn checkout_new_branch(&self, branch: &str) {
+        Self::git(&self.path, &["checkout", "-b", branch]);
+    }
+
+    /// Get current branch name
+    pub fn current_branch(&self) -> String {
+        let output = Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&self.path)
+            .output()
+            .expect("Failed to get branch");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Check if the repository has uncommitted changes
+    pub fn is_dirty(&self) -> bool {
+        let output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&self.path)
+            .output()
+            .expect("Failed to get status");
+        !output.stdout.is_empty()
+    }
+
+    /// Get the number of uncommitted changes
+    pub fn uncommitted_count(&self) -> usize {
+        let output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&self.path)
+            .output()
+            .expect("Failed to get status");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.is_empty())
+            .count()
+    }
+
+    /// Get list of all branches
+    pub fn branches(&self) -> Vec<String> {
+        let output = Command::new("git")
+            .args(["branch", "--list", "--format=%(refname:short)"])
+            .current_dir(&self.path)
+            .output()
+            .expect("Failed to list branches");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Get the HEAD commit SHA
+    pub fn head_sha(&self) -> String {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&self.path)
+            .output()
+            .expect("Failed to get HEAD");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Execute a git command in the repository
+    fn git(path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap_or_else(|e| panic!("Git command failed to execute: {}", e));
+
+        if !output.status.success() {
+            panic!(
+                "Git command failed: git {}\nstderr: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    /// Execute a git command and return output (for queries)
+    pub fn git_output(&self, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&self.path)
+            .output()
+            .expect("Git command failed");
+
+        if !output.status.success() {
+            panic!(
+                "Git command failed: git {}\nstderr: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+}
+
+impl Default for TestRepo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_repo_creation() {
+        let repo = TestRepo::new();
+        assert!(repo.path.join(".git").exists());
+        assert!(repo.path.join("README.md").exists());
+    }
+
+    #[test]
+    fn test_repo_with_branches() {
+        let repo = TestRepo::with_branches(&["feature-1", "feature-2"]);
+
+        let branches = repo.branches();
+        assert!(branches.iter().any(|b| b.contains("feature-1")));
+        assert!(branches.iter().any(|b| b.contains("feature-2")));
+    }
+
+    #[test]
+    fn test_repo_with_uncommitted() {
+        let repo = TestRepo::with_uncommitted_changes();
+        assert!(repo.is_dirty());
+        assert_eq!(repo.uncommitted_count(), 1);
+    }
+
+    #[test]
+    fn test_repo_with_staged() {
+        let repo = TestRepo::with_staged_changes();
+        assert!(repo.is_dirty());
+    }
+
+    #[test]
+    fn test_commit_file() {
+        let repo = TestRepo::new();
+        let initial_sha = repo.head_sha();
+
+        repo.commit_file("test.txt", "test content", "Add test file");
+
+        let new_sha = repo.head_sha();
+        assert_ne!(initial_sha, new_sha);
+        assert!(repo.path.join("test.txt").exists());
+    }
+
+    #[test]
+    fn test_checkout_new_branch() {
+        let repo = TestRepo::new();
+        repo.checkout_new_branch("feature/test");
+
+        assert_eq!(repo.current_branch(), "feature/test");
+    }
+
+    #[test]
+    fn test_with_history() {
+        let repo = TestRepo::with_history(3);
+
+        // Should have initial commit + 3 more = 4 total
+        let log_output = repo.git_output(&["log", "--oneline"]);
+        let commit_count = log_output.lines().count();
+        assert_eq!(commit_count, 4);
+    }
+}

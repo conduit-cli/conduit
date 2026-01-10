@@ -7,13 +7,16 @@ pub mod ui;
 pub mod util;
 
 pub use agent::{
-    AgentError, AgentEvent, AgentHandle, AgentRunner, AgentStartConfig, AgentType,
-    ClaudeCodeRunner, CodexCliRunner, ModelInfo, ModelRegistry, SessionId, SessionMetadata,
-    SessionStatus,
+    AgentError, AgentEvent, AgentHandle, AgentMode, AgentRunner, AgentStartConfig, AgentType,
+    ClaudeCodeRunner, CodexCliRunner, MockAgentRunner, MockConfig, MockEventBuilder,
+    MockStartError, ModelInfo, ModelRegistry, SessionId, SessionMetadata, SessionStatus,
 };
 pub use config::Config;
 pub use data::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore};
-pub use git::{WorktreeInfo, WorktreeManager};
+pub use git::{
+    CheckState, CheckStatus, MergeReadiness, MergeableStatus, PrManager, PrPreflightResult,
+    PrState, PrStatus, ReviewDecision, WorktreeInfo, WorktreeManager,
+};
 pub use session::{
     discover_all_sessions, discover_claude_sessions, discover_codex_sessions, ExternalSession,
 };
