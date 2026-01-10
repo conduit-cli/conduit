@@ -2266,10 +2266,12 @@ impl App {
                                         break;
                                     }
                                 }
+                                let _ = event_tx.send(AppEvent::AgentStreamEnded { tab_index });
                             }
                             Err(e) => {
                                 let _ =
                                     event_tx.send(AppEvent::Error(format!("Agent error: {}", e)));
+                                let _ = event_tx.send(AppEvent::AgentStreamEnded { tab_index });
                             }
                         }
                     });
