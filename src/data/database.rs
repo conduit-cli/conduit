@@ -1,6 +1,8 @@
 //! SQLite database management
 
-use rusqlite::{Connection, Result as SqliteResult};
+use rusqlite::{params, Connection, Result as SqliteResult};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -62,7 +64,8 @@ CREATE TABLE IF NOT EXISTS fork_seeds (
     parent_session_id TEXT,
     parent_workspace_id TEXT,
     created_at TEXT NOT NULL,
-    seed_prompt_text TEXT NOT NULL,
+    seed_prompt_hash TEXT NOT NULL,
+    seed_prompt_path TEXT,
     token_estimate INTEGER NOT NULL,
     context_window INTEGER NOT NULL,
     seed_ack_filtered INTEGER NOT NULL DEFAULT 0,
@@ -90,6 +93,12 @@ pub struct Database {
     conn: Arc<Mutex<Connection>>,
     /// Path to the database file
     pub path: PathBuf,
+}
+
+fn hash_seed_prompt(text: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 impl Database {
@@ -238,6 +247,101 @@ impl Database {
 
         if !has_fork_seed_id {
             conn.execute("ALTER TABLE session_tabs ADD COLUMN fork_seed_id TEXT", [])?;
+        }
+
+        // Migration 7: Replace fork_seeds seed_prompt_text with seed_prompt_hash/path
+        let fork_seeds_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fork_seeds'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if fork_seeds_exists {
+            let has_seed_prompt_hash: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('fork_seeds') WHERE name='seed_prompt_hash'",
+                    [],
+                    |row| row.get::<_, i64>(0).map(|c| c > 0),
+                )
+                .unwrap_or(false);
+
+            if !has_seed_prompt_hash {
+                conn.execute_batch(
+                    r#"
+CREATE TABLE IF NOT EXISTS fork_seeds_new (
+    id TEXT PRIMARY KEY,
+    agent_type TEXT NOT NULL,
+    parent_session_id TEXT,
+    parent_workspace_id TEXT,
+    created_at TEXT NOT NULL,
+    seed_prompt_hash TEXT NOT NULL,
+    seed_prompt_path TEXT,
+    token_estimate INTEGER NOT NULL,
+    context_window INTEGER NOT NULL,
+    seed_ack_filtered INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (parent_workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+);
+"#,
+                )?;
+
+                let mut stmt = conn.prepare(
+                    "SELECT id, agent_type, parent_session_id, parent_workspace_id, created_at, seed_prompt_text, token_estimate, context_window, seed_ack_filtered FROM fork_seeds",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                        row.get::<_, i64>(8)?,
+                    ))
+                })?;
+
+                for row in rows {
+                    let (
+                        id,
+                        agent_type,
+                        parent_session_id,
+                        parent_workspace_id,
+                        created_at,
+                        seed_prompt_text,
+                        token_estimate,
+                        context_window,
+                        seed_ack_filtered,
+                    ) = row?;
+
+                    let seed_prompt_hash = hash_seed_prompt(&seed_prompt_text);
+                    conn.execute(
+                        "INSERT INTO fork_seeds_new (id, agent_type, parent_session_id, parent_workspace_id, created_at, seed_prompt_hash, seed_prompt_path, token_estimate, context_window, seed_ack_filtered)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![
+                            id,
+                            agent_type,
+                            parent_session_id,
+                            parent_workspace_id,
+                            created_at,
+                            seed_prompt_hash,
+                            Option::<String>::None,
+                            token_estimate,
+                            context_window,
+                            seed_ack_filtered,
+                        ],
+                    )?;
+                }
+
+                conn.execute("DROP TABLE fork_seeds", [])?;
+                conn.execute("ALTER TABLE fork_seeds_new RENAME TO fork_seeds", [])?;
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_fork_seeds_parent_session ON fork_seeds(parent_session_id)",
+                    [],
+                )?;
+            }
         }
 
         Ok(())

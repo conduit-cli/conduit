@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -898,7 +900,7 @@ impl App {
                 // Save current input to history before clearing (if non-empty)
                 let current_input = session.input_box.input().to_string();
                 if !current_input.trim().is_empty() {
-                    session.input_box.add_to_history(current_input);
+                    session.input_box.add_to_history(&current_input);
                 }
                 session.input_box.clear();
             }
@@ -3376,6 +3378,12 @@ impl App {
         prompt
     }
 
+    fn compute_seed_prompt_hash(seed_prompt: &str) -> String {
+        let mut hasher = DefaultHasher::new();
+        seed_prompt.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
     fn format_fork_message(msg: &ChatMessage) -> String {
         let role = match msg.role {
             MessageRole::User => "user",
@@ -4475,12 +4483,16 @@ impl App {
             && self.state.confirmation_dialog_state.visible
         {
             let context = self.state.confirmation_dialog_state.context.clone();
+            if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
+                self.state.pending_fork_request = None;
+            }
             self.state.confirmation_dialog_state.hide();
             if matches!(
                 context,
                 Some(ConfirmationContext::CreatePullRequest { .. })
                     | Some(ConfirmationContext::OpenExistingPr { .. })
                     | Some(ConfirmationContext::SteerFallback { .. })
+                    | Some(ConfirmationContext::ForkSession { .. })
             ) {
                 self.state.input_mode = InputMode::Normal;
             } else {
@@ -6165,11 +6177,13 @@ impl App {
             }
         };
 
+        let seed_prompt_hash = Self::compute_seed_prompt_hash(&pending.seed_prompt);
         let fork_seed = ForkSeed::new(
             pending.agent_type,
             pending.parent_session_id.clone(),
             Some(pending.parent_workspace_id),
-            pending.seed_prompt.clone(),
+            seed_prompt_hash,
+            None,
             pending.token_estimate,
             pending.context_window,
         );
@@ -6256,6 +6270,11 @@ impl App {
         }
 
         let effects = self.submit_prompt(pending.seed_prompt, vec![], vec![])?;
+        if effects.is_empty() {
+            return Err(anyhow!(
+                "Failed to start forked agent: no start-agent effect produced."
+            ));
+        }
 
         if let Some(active) = self.state.tab_manager.active_session_mut() {
             let display = MessageDisplay::System {

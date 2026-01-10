@@ -14,14 +14,14 @@ Date: 2026-01-10
 - Full transcript injected (no summarization).
 - Forking is blocked while the agent is streaming/processing.
 - Dirty workspace: warn and require confirmation/suggest commit.
-- Keybinding: **Ctrl+Alt+F**.
+- Keybinding: **Alt+Shift+F**.
 
 ## Implementation Steps
 
 ### 1) Action + Keybinding + Command Palette
 - Add `Action::ForkSession` in `src/ui/action.rs`.
 - Add to `show_in_palette()` and `palette_description()`.
-- Add default keybinding `C-M-f` in `src/config/default_keys.rs` (Ctrl+Alt+F).
+- Add default keybinding `M-S-f` in `src/config/default_keys.rs` (Alt+Shift+F).
 
 ### 2) Fork Confirmation Dialog
 - Reuse `ConfirmationDialogState` with a new `ConfirmationContext::ForkSession`.
@@ -35,10 +35,10 @@ Date: 2026-01-10
 ### 3) Fork Metadata Persistence
 - Add `fork_seeds` table with:
   - `id`, `agent_type`, `parent_session_id`, `parent_workspace_id`, `created_at`
-  - `seed_prompt_text`, `token_estimate`, `context_window`
+  - `seed_prompt_hash`, `seed_prompt_path` (optional), `token_estimate`, `context_window`
   - `seed_ack_filtered` (bool)
 - Add `fork_seed_id` to `SessionTab`.
-- Store only minimal fork metadata; **do not** snapshot full chat view.
+- Store only minimal fork metadata; **do not** snapshot or persist the raw transcript/seed prompt in SQLite.
 
 ### 4) Transcript Capture + Seed Prompt Builder
 - Serialize `ChatView.messages()` into a stable transcript format with:

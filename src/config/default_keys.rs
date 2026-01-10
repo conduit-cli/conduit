@@ -29,7 +29,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "C-n", Action::NewProject);
     bind(&mut config.global, "C-p", Action::OpenCommandPalette);
     bind(&mut config.global, "C-M-p", Action::OpenPr); // Ctrl+Alt+P for PR
-    bind(&mut config.global, "C-M-f", Action::ForkSession); // Ctrl+Alt+F for fork
+    bind(&mut config.global, "M-S-f", Action::ForkSession); // Alt+Shift+F for fork
                                                             // Note: Ctrl+C is handled specially in app.rs for double-press detection
     bind(&mut config.global, "C-g", Action::ToggleViewMode);
     bind(&mut config.global, "C-o", Action::ShowModelSelector);
@@ -87,7 +87,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     // Alt+Shift for scrolling (M-S-j = Alt+Shift+J)
     bind(&mut config.global, "M-S-j", Action::ScrollDown(1));
     bind(&mut config.global, "M-S-k", Action::ScrollUp(1));
-    bind(&mut config.global, "M-S-f", Action::ScrollPageDown);
+    bind(&mut config.global, "M-S-d", Action::ScrollPageDown);
     bind(&mut config.global, "M-S-b", Action::ScrollPageUp);
 
     // Copy workspace path to clipboard

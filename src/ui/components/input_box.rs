@@ -126,9 +126,9 @@ impl InputBox {
 
     /// Add text to history without submitting.
     /// Expands pending pastes and removes image placeholders to match submit() behavior.
-    pub fn add_to_history(&mut self, text: String) {
+    pub fn add_to_history(&mut self, text: &str) {
         // Expand any pending large pastes
-        let mut expanded = text;
+        let mut expanded = text.to_string();
         for (placeholder, actual) in &self.pending_pastes {
             if expanded.contains(placeholder) {
                 expanded = expanded.replace(placeholder, actual);
@@ -165,9 +165,7 @@ impl InputBox {
 
         let (image_paths, image_placeholders) = self.take_attached_images(&expanded);
 
-        if !expanded.trim().is_empty() {
-            self.history.push(expanded.clone());
-        }
+        self.add_to_history(&expanded);
 
         InputSubmit {
             text: expanded,

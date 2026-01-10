@@ -48,7 +48,7 @@ conduit debug-keys
 | `Alt+Shift+W` | Close current tab |
 | `Tab` / `Shift+Tab` | Switch to next/previous tab |
 | `Alt+1-9` | Jump to specific tab |
-| `Ctrl+Alt+F` | Fork current session |
+| `Alt+Shift+F`† | Fork current session |
 | `Enter` | Submit prompt |
 | `Shift+Enter` or `Alt+Enter` | Add newline in input |
 | `Ctrl+C` | Interrupt agent |
@@ -61,6 +61,7 @@ conduit debug-keys
 | `?` or `:help` | Show help |
 
 \* **Note on `Ctrl+\`**: Terminal emulators vary in how they report this key combination. Some terminals send it as `Ctrl+4`. Use `conduit debug-keys` to verify how your terminal reports this shortcut. If it doesn't work, you can customize the keybinding in your config.
+† **Note on `Alt+Shift+F`**: Some terminals don't emit distinct Alt+Shift combos. Use `conduit debug-keys` to verify how your terminal reports this shortcut and override the keybinding in your config if needed.
 
 ## Architecture
 

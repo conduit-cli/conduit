@@ -152,14 +152,9 @@ impl WorktreeManager {
 
         // Create a new branch from the base branch in the worktree
         let output = Command::new("git")
-            .args([
-                "worktree",
-                "add",
-                "-b",
-                new_branch,
-                worktree_path.to_str().unwrap(),
-                base_branch,
-            ])
+            .args(["worktree", "add", "-b", new_branch])
+            .arg(&worktree_path)
+            .arg(base_branch)
             .current_dir(repo_path)
             .output()?;
 
@@ -168,12 +163,9 @@ impl WorktreeManager {
             // If branch already exists, try adding worktree directly
             if stderr.contains("already exists") || stderr.contains("already used") {
                 let output = Command::new("git")
-                    .args([
-                        "worktree",
-                        "add",
-                        worktree_path.to_str().unwrap(),
-                        new_branch,
-                    ])
+                    .args(["worktree", "add"])
+                    .arg(&worktree_path)
+                    .arg(new_branch)
                     .current_dir(repo_path)
                     .output()?;
 
