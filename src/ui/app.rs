@@ -664,13 +664,13 @@ impl App {
                                 match mouse.kind {
                                     MouseEventKind::ScrollUp => {
                                         if self.should_route_scroll_to_chat() {
-                                            self.record_chat_scroll(1);
+                                            self.record_scroll(1);
                                         }
                                         pending_scroll_up = pending_scroll_up.saturating_add(1);
                                     }
                                     MouseEventKind::ScrollDown => {
                                         if self.should_route_scroll_to_chat() {
-                                            self.record_chat_scroll(1);
+                                            self.record_scroll(1);
                                         }
                                         pending_scroll_down = pending_scroll_down.saturating_add(1);
                                     }
@@ -1370,7 +1370,7 @@ impl App {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session.chat_view.scroll_up(n as usize);
                     }
-                    self.record_chat_scroll(n as usize);
+                    self.record_scroll(n as usize);
                 }
             }
             Action::ScrollDown(n) => {
@@ -1380,7 +1380,7 @@ impl App {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session.chat_view.scroll_down(n as usize);
                     }
-                    self.record_chat_scroll(n as usize);
+                    self.record_scroll(n as usize);
                 }
             }
             Action::ScrollPageUp => {
@@ -1390,7 +1390,7 @@ impl App {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session.chat_view.scroll_up(10);
                     }
-                    self.record_chat_scroll(10);
+                    self.record_scroll(10);
                 }
             }
             Action::ScrollPageDown => {
@@ -1400,7 +1400,7 @@ impl App {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session.chat_view.scroll_down(10);
                     }
-                    self.record_chat_scroll(10);
+                    self.record_scroll(10);
                 }
             }
             Action::ScrollToTop => {
@@ -3943,7 +3943,7 @@ impl App {
         Ok(())
     }
 
-    fn record_chat_scroll(&mut self, lines: usize) {
+    fn record_scroll(&mut self, lines: usize) {
         if lines > 0 {
             self.state.metrics.record_scroll_event(lines);
         }
@@ -4102,10 +4102,10 @@ impl App {
                             session.raw_events_view.scroll_up(3);
                         }
                     }
-                    self.record_chat_scroll(3);
+                    self.record_scroll(3);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.chat_view.scroll_up(1);
-                    self.record_chat_scroll(1);
+                    self.record_scroll(1);
                 }
                 Ok(Vec::new())
             }
@@ -4140,10 +4140,10 @@ impl App {
                             session.raw_events_view.scroll_down(3, list_height);
                         }
                     }
-                    self.record_chat_scroll(3);
+                    self.record_scroll(3);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.chat_view.scroll_down(1);
-                    self.record_chat_scroll(1);
+                    self.record_scroll(1);
                 }
                 Ok(Vec::new())
             }
@@ -4319,7 +4319,7 @@ impl App {
         }
 
         if scrolled_lines > 0 {
-            self.record_chat_scroll(scrolled_lines);
+            self.record_scroll(scrolled_lines);
         }
 
         handled
@@ -5388,6 +5388,9 @@ impl App {
                     if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                         // Clear PID since process has exited
                         session.agent_pid = None;
+                        // Safety: don't let fork-seed suppression leak into future runs
+                        session.suppress_next_assistant_reply = false;
+                        session.suppress_next_turn_summary = false;
                         if session.is_processing {
                             session.stop_processing();
                             session.chat_view.finalize_streaming();
@@ -6397,6 +6400,9 @@ impl App {
         let workspace_dao = self.workspace_dao.as_ref()?;
         let repo_dao = self.repo_dao.as_ref()?;
 
+        // Safety: only allow deletion of paths under the managed workspaces directory
+        let managed_root = crate::util::workspaces_dir();
+
         // Get workspace and repo info for worktree cleanup
         let workspace = match workspace_dao.get_by_id(workspace_id) {
             Ok(Some(ws)) => ws,
@@ -6404,15 +6410,27 @@ impl App {
             Err(e) => return Some(format!("Failed to load workspace: {}", e)),
         };
 
+        // Check if workspace path is under managed root (security guard)
+        let path_is_managed = workspace.path.starts_with(&managed_root);
+
         let repo = match repo_dao.get_by_id(repo_id) {
             Ok(Some(r)) => r,
             Ok(None) => {
                 // Repo not found; try best-effort directory removal then delete from DB
-                if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+                if path_is_managed {
+                    if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+                        tracing::warn!(
+                            error = %e,
+                            workspace_id = %workspace_id,
+                            "Best-effort workspace directory removal failed (repo not found)"
+                        );
+                    }
+                } else {
                     tracing::warn!(
-                        error = %e,
                         workspace_id = %workspace_id,
-                        "Best-effort workspace directory removal failed (repo not found)"
+                        path = %workspace.path.display(),
+                        managed_root = %managed_root.display(),
+                        "Refusing to remove non-managed workspace path (repo not found)"
                     );
                 }
                 if let Err(e) = workspace_dao.delete(workspace_id) {
@@ -6422,11 +6440,20 @@ impl App {
             }
             Err(e) => {
                 // Repo load failed; try best-effort directory removal then delete from DB
-                if let Err(fs_err) = std::fs::remove_dir_all(&workspace.path) {
+                if path_is_managed {
+                    if let Err(fs_err) = std::fs::remove_dir_all(&workspace.path) {
+                        tracing::warn!(
+                            error = %fs_err,
+                            workspace_id = %workspace_id,
+                            "Best-effort workspace directory removal failed (repo load error)"
+                        );
+                    }
+                } else {
                     tracing::warn!(
-                        error = %fs_err,
                         workspace_id = %workspace_id,
-                        "Best-effort workspace directory removal failed (repo load error)"
+                        path = %workspace.path.display(),
+                        managed_root = %managed_root.display(),
+                        "Refusing to remove non-managed workspace path (repo load error)"
                     );
                 }
                 if let Err(db_err) = workspace_dao.delete(workspace_id) {
@@ -6480,14 +6507,27 @@ impl App {
             }
         } else {
             // No base_path available; try best-effort directory removal
-            if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+            if path_is_managed {
+                if let Err(e) = std::fs::remove_dir_all(&workspace.path) {
+                    tracing::warn!(
+                        error = %e,
+                        workspace_id = %workspace_id,
+                        "Best-effort workspace directory removal failed (no base_path)"
+                    );
+                    cleanup_warnings.push(format!(
+                        "Workspace at {} may need manual removal",
+                        workspace.path.display()
+                    ));
+                }
+            } else {
                 tracing::warn!(
-                    error = %e,
                     workspace_id = %workspace_id,
-                    "Best-effort workspace directory removal failed (no base_path)"
+                    path = %workspace.path.display(),
+                    managed_root = %managed_root.display(),
+                    "Refusing to remove non-managed workspace path (no base_path)"
                 );
                 cleanup_warnings.push(format!(
-                    "Workspace at {} may need manual removal",
+                    "Workspace at {} may need manual removal (outside managed directory)",
                     workspace.path.display()
                 ));
             }
