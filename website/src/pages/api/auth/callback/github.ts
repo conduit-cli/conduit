@@ -4,6 +4,7 @@
  */
 import type { APIRoute } from 'astro'
 import { createClient } from '@supabase/supabase-js'
+import { sendWelcomeEmail } from '../../../../lib/email'
 
 export const GET: APIRoute = async ({ url, cookies, redirect }) => {
   const code = url.searchParams.get('code')
@@ -194,6 +195,16 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
         github_username: githubUsername,
       })
       .eq('id', invite.waitlist_id)
+
+    // Send welcome email with getting started links
+    const userEmail = invite.waitlist?.email
+    if (userEmail) {
+      const emailResult = await sendWelcomeEmail(userEmail, githubUsername)
+      if (!emailResult.success) {
+        console.error('Failed to send welcome email:', emailResult.error)
+        // Don't fail the flow, just log the error
+      }
+    }
 
     // Redirect to success page
     return redirect(`/invite/success?username=${encodeURIComponent(githubUsername)}`)
