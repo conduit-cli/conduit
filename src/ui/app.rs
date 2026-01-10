@@ -1173,9 +1173,7 @@ impl App {
                 }
             }
             Action::ForkSession => {
-                if let Some(effect) = self.initiate_fork_session() {
-                    effects.push(effect);
-                }
+                self.initiate_fork_session();
             }
             Action::InterruptAgent => {
                 self.interrupt_agent();
@@ -3318,6 +3316,24 @@ impl App {
     /// Maximum seed prompt size in bytes (500KB)
     const MAX_SEED_PROMPT_SIZE: usize = 500 * 1024;
 
+    /// Suffix appended when seed prompt is truncated
+    const SEED_TRUNCATED_SUFFIX: &'static str = "\n\n[TRUNCATED: seed prompt exceeded size limit]";
+
+    /// Truncate string to max_bytes at a valid UTF-8 char boundary
+    fn truncate_to_char_boundary(s: &mut String, max_bytes: usize) {
+        if s.len() <= max_bytes {
+            return;
+        }
+        // Find the greatest char boundary <= max_bytes
+        let new_len = s
+            .char_indices()
+            .take_while(|(i, _)| *i <= max_bytes)
+            .map(|(i, _)| i)
+            .last()
+            .unwrap_or(0);
+        s.truncate(new_len);
+    }
+
     /// Build a fork seed prompt from chat history
     fn build_fork_seed_prompt(messages: &[ChatMessage]) -> String {
         let mut prompt = String::new();
@@ -3333,10 +3349,12 @@ impl App {
             }
             prompt.push_str(&Self::format_fork_message(msg));
 
-            // Check if we've exceeded the hard cap
+            // Check if we've exceeded the hard cap (reserve space for suffix)
             if prompt.len() > Self::MAX_SEED_PROMPT_SIZE {
-                prompt.truncate(Self::MAX_SEED_PROMPT_SIZE);
-                prompt.push_str("\n\n[TRUNCATED: seed prompt exceeded size limit]");
+                let max_without_suffix =
+                    Self::MAX_SEED_PROMPT_SIZE.saturating_sub(Self::SEED_TRUNCATED_SUFFIX.len());
+                Self::truncate_to_char_boundary(&mut prompt, max_without_suffix);
+                prompt.push_str(Self::SEED_TRUNCATED_SUFFIX);
                 break;
             }
         }
@@ -5335,8 +5353,9 @@ impl App {
                     session.agent_pid = Some(pid);
                     tracing::debug!("Agent started with PID {} for tab {}", pid, tab_index);
 
-                    // Display fork success message when agent has started successfully
-                    if session.fork_seed_id.is_some() {
+                    // Display fork success message once when agent has started successfully
+                    if session.fork_seed_id.is_some() && !session.fork_welcome_shown {
+                        session.fork_welcome_shown = true;
                         let display = MessageDisplay::System {
                             content:
                                 "Fork created; context injected. Waiting for your next prompt."
@@ -5738,7 +5757,17 @@ impl App {
         image_placeholders: Vec<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let tab_index = self.state.tab_manager.active_index();
-        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders)
+        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, false)
+    }
+
+    fn submit_prompt_hidden(
+        &mut self,
+        prompt: String,
+        images: Vec<PathBuf>,
+        image_placeholders: Vec<String>,
+    ) -> anyhow::Result<Vec<Effect>> {
+        let tab_index = self.state.tab_manager.active_index();
+        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, true)
     }
 
     fn submit_prompt_for_tab(
@@ -5747,6 +5776,7 @@ impl App {
         prompt: String,
         mut images: Vec<PathBuf>,
         image_placeholders: Vec<String>,
+        hidden: bool,
     ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
 
@@ -5797,13 +5827,16 @@ impl App {
         }
 
         // Add user message to chat and start processing (after validation passes)
+        // For hidden prompts (like fork seeds), skip showing in chat and pending_user_message
         if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
-            let display = MessageDisplay::User {
-                content: prompt.clone(),
-            };
-            session.chat_view.push(display.to_chat_message());
-            // Store pending message for persistence (cleared on agent confirmation)
-            session.pending_user_message = Some(prompt.clone());
+            if !hidden {
+                let display = MessageDisplay::User {
+                    content: prompt.clone(),
+                };
+                session.chat_view.push(display.to_chat_message());
+                // Store pending message for persistence (cleared on agent confirmation)
+                session.pending_user_message = Some(prompt.clone());
+            }
             session.start_processing();
         }
         if self.state.tab_manager.active_index() == tab_index {
@@ -6040,12 +6073,14 @@ impl App {
     }
 
     /// Initiate fork session flow - validate and show confirmation dialog
-    fn initiate_fork_session(&mut self) -> Option<Effect> {
-        let session = self.state.tab_manager.active_session()?;
+    fn initiate_fork_session(&mut self) {
+        let Some(session) = self.state.tab_manager.active_session() else {
+            return;
+        };
 
         if session.is_processing {
             self.show_error("Cannot Fork", "Wait for the current response to finish.");
-            return None;
+            return;
         }
 
         let parent_workspace_id = match session.workspace_id {
@@ -6055,26 +6090,26 @@ impl App {
                     "Cannot Fork",
                     "This session is not attached to a workspace.",
                 );
-                return None;
+                return;
             }
         };
 
         if self.fork_seed_dao.is_none() {
             self.show_error("Cannot Fork", "Fork metadata store unavailable.");
-            return None;
+            return;
         }
 
         let workspace_dao = match &self.workspace_dao {
             Some(dao) => dao,
             None => {
                 self.show_error("Cannot Fork", "Workspace database unavailable.");
-                return None;
+                return;
             }
         };
 
         let Ok(Some(workspace)) = workspace_dao.get_by_id(parent_workspace_id) else {
             self.show_error("Cannot Fork", "Workspace not found.");
-            return None;
+            return;
         };
 
         // Get actual current branch for display (may differ from stored workspace.branch)
@@ -6168,8 +6203,6 @@ impl App {
             }),
         );
         self.state.input_mode = InputMode::Confirming;
-
-        None
     }
 
     /// Execute fork session after confirmation
@@ -6286,21 +6319,18 @@ impl App {
         self.state.sidebar_state.hide();
         self.state.input_mode = InputMode::Normal;
 
-        if let Some(active) = self.state.tab_manager.active_session_mut() {
-            active.suppress_next_assistant_reply = true;
-            active.suppress_next_turn_summary = true;
-        }
+        // Note: suppress flags already set on session before add_session, no need to set again
 
-        let effects = self.submit_prompt(pending.seed_prompt.to_string(), vec![], vec![])?;
+        // Use submit_prompt_hidden - don't add 500KB seed to chat transcript
+        let effects = self.submit_prompt_hidden(
+            pending.seed_prompt.to_string(),
+            vec![],
+            vec![],
+        )?;
         if effects.is_empty() {
             return Err(anyhow!(
                 "Failed to start forked agent: no start-agent effect produced."
             ));
-        }
-
-        // Clear pending_user_message so the large seed prompt doesn't get persisted
-        if let Some(active) = self.state.tab_manager.active_session_mut() {
-            active.pending_user_message = None;
         }
 
         self.state.pending_fork_request = None;
@@ -6712,7 +6742,7 @@ impl App {
         }
 
         let (prompt, images, placeholders) = build_queued_submission(&queued, queue_delivery);
-        effects.extend(self.submit_prompt_for_tab(tab_index, prompt, images, placeholders)?);
+        effects.extend(self.submit_prompt_for_tab(tab_index, prompt, images, placeholders, false)?);
 
         Ok(effects)
     }

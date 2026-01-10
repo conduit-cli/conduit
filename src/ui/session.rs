@@ -78,6 +78,8 @@ pub struct AgentSession {
     pub pending_context_warning: Option<ContextWarning>,
     /// Fork seed ID (if this tab was created via fork)
     pub fork_seed_id: Option<Uuid>,
+    /// Whether the fork welcome message has been shown (one-shot)
+    pub fork_welcome_shown: bool,
     /// Suppress the next assistant reply (used for fork seed ack)
     pub suppress_next_assistant_reply: bool,
     /// Suppress the next turn summary (paired with fork seed ack)
@@ -125,6 +127,7 @@ impl AgentSession {
             queue_selection: None,
             capabilities: AgentCapabilities::for_agent(agent_type),
             fork_seed_id: None,
+            fork_welcome_shown: false,
             suppress_next_assistant_reply: false,
             suppress_next_turn_summary: false,
         };

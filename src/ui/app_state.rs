@@ -206,7 +206,7 @@ pub struct AppState {
 }
 
 /// Pending fork request data captured before workspace creation
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PendingForkRequest {
     pub agent_type: AgentType,
     pub agent_mode: AgentMode,
@@ -218,6 +218,23 @@ pub struct PendingForkRequest {
     pub token_estimate: i64,
     pub context_window: i64,
     pub fork_seed_id: Option<Uuid>,
+}
+
+/// Redacted Debug implementation to avoid leaking transcript content to logs
+impl std::fmt::Debug for PendingForkRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingForkRequest")
+            .field("agent_type", &self.agent_type)
+            .field("agent_mode", &self.agent_mode)
+            .field("model", &self.model)
+            .field("parent_session_id", &self.parent_session_id)
+            .field("parent_workspace_id", &self.parent_workspace_id)
+            .field("seed_prompt_len", &self.seed_prompt.len())
+            .field("token_estimate", &self.token_estimate)
+            .field("context_window", &self.context_window)
+            .field("fork_seed_id", &self.fork_seed_id)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
