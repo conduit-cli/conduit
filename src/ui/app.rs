@@ -1857,11 +1857,12 @@ impl App {
                                 }
                                 ConfirmationContext::ForkSession {
                                     parent_workspace_id,
+                                    base_branch,
                                 } => {
                                     self.state.confirmation_dialog_state.hide();
                                     self.state.input_mode = InputMode::Normal;
                                     if let Some(effect) =
-                                        self.execute_fork_session(parent_workspace_id)
+                                        self.execute_fork_session(parent_workspace_id, base_branch)
                                     {
                                         effects.push(effect);
                                     }
@@ -1870,23 +1871,8 @@ impl App {
                             }
                         }
                     }
-                    // Cancel selected - cache context before hide() clears it
-                    let context = self.state.confirmation_dialog_state.context.clone();
-                    if matches!(&context, Some(ConfirmationContext::ForkSession { .. })) {
-                        self.state.pending_fork_request = None;
-                    }
-                    self.state.confirmation_dialog_state.hide();
-                    if matches!(
-                        context,
-                        Some(ConfirmationContext::CreatePullRequest { .. })
-                            | Some(ConfirmationContext::OpenExistingPr { .. })
-                            | Some(ConfirmationContext::SteerFallback { .. })
-                            | Some(ConfirmationContext::ForkSession { .. })
-                    ) {
-                        self.state.input_mode = InputMode::Normal;
-                    } else {
-                        self.state.input_mode = InputMode::SidebarNavigation;
-                    }
+                    // Cancel selected - dismiss the confirmation dialog
+                    self.state.input_mode = self.dismiss_confirmation_dialog();
                 }
                 InputMode::ShowingError => {
                     self.state.error_dialog_state.hide();
@@ -1960,23 +1946,7 @@ impl App {
                     self.state.input_mode = InputMode::Normal;
                 }
                 InputMode::Confirming => {
-                    // Cache context before hide() clears it
-                    let context = self.state.confirmation_dialog_state.context.clone();
-                    if matches!(&context, Some(ConfirmationContext::ForkSession { .. })) {
-                        self.state.pending_fork_request = None;
-                    }
-                    self.state.confirmation_dialog_state.hide();
-                    if matches!(
-                        context,
-                        Some(ConfirmationContext::CreatePullRequest { .. })
-                            | Some(ConfirmationContext::OpenExistingPr { .. })
-                            | Some(ConfirmationContext::SteerFallback { .. })
-                            | Some(ConfirmationContext::ForkSession { .. })
-                    ) {
-                        self.state.input_mode = InputMode::Normal;
-                    } else {
-                        self.state.input_mode = InputMode::SidebarNavigation;
-                    }
+                    self.state.input_mode = self.dismiss_confirmation_dialog();
                 }
                 InputMode::ShowingError => {
                     self.state.error_dialog_state.hide();
@@ -2229,10 +2199,12 @@ impl App {
                             }
                             ConfirmationContext::ForkSession {
                                 parent_workspace_id,
+                                base_branch,
                             } => {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
-                                if let Some(effect) = self.execute_fork_session(parent_workspace_id)
+                                if let Some(effect) =
+                                    self.execute_fork_session(parent_workspace_id, base_branch)
                                 {
                                     effects.push(effect);
                                 }
@@ -2243,20 +2215,7 @@ impl App {
             }
             Action::ConfirmNo => {
                 if self.state.input_mode == InputMode::Confirming {
-                    let context = self.state.confirmation_dialog_state.context.clone();
-                    if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
-                        self.state.pending_fork_request = None;
-                    }
-                    self.state.confirmation_dialog_state.hide();
-                    if matches!(
-                        context,
-                        Some(ConfirmationContext::SteerFallback { .. })
-                            | Some(ConfirmationContext::ForkSession { .. })
-                    ) {
-                        self.state.input_mode = InputMode::Normal;
-                    } else {
-                        self.state.input_mode = InputMode::SidebarNavigation;
-                    }
+                    self.state.input_mode = self.dismiss_confirmation_dialog();
                 }
             }
             Action::ConfirmToggle => {
@@ -2461,6 +2420,7 @@ impl App {
                 }
                 Effect::ForkWorkspace {
                     parent_workspace_id,
+                    base_branch,
                 } => {
                     let repo_dao = self.repo_dao.clone();
                     let workspace_dao = self.workspace_dao.clone();
@@ -2489,17 +2449,8 @@ impl App {
                                 .clone()
                                 .ok_or_else(|| "Repository has no base path".to_string())?;
 
-                            let base_branch = worktree_manager
-                                .get_current_branch(&parent_workspace.path)
-                                .unwrap_or_else(|e| {
-                                    tracing::warn!(
-                                        error = %e,
-                                        workspace_id = %parent_workspace_id,
-                                        path = %parent_workspace.path.display(),
-                                        "Failed to get current branch, falling back to workspace branch"
-                                    );
-                                    parent_workspace.branch.clone()
-                                });
+                            // Use the base_branch that was computed when the dialog was shown
+                            // to ensure consistency between what was displayed and what is used
 
                             let existing_names: Vec<String> = workspace_dao
                                 .get_all_names_by_repository(parent_workspace.repository_id)
@@ -3364,6 +3315,9 @@ impl App {
         ((chars as f64) / 4.0).ceil() as i64
     }
 
+    /// Maximum seed prompt size in bytes (500KB)
+    const MAX_SEED_PROMPT_SIZE: usize = 500 * 1024;
+
     /// Build a fork seed prompt from chat history
     fn build_fork_seed_prompt(messages: &[ChatMessage]) -> String {
         let mut prompt = String::new();
@@ -3378,6 +3332,13 @@ impl App {
                 prompt.push_str("\n\n");
             }
             prompt.push_str(&Self::format_fork_message(msg));
+
+            // Check if we've exceeded the hard cap
+            if prompt.len() > Self::MAX_SEED_PROMPT_SIZE {
+                prompt.truncate(Self::MAX_SEED_PROMPT_SIZE);
+                prompt.push_str("\n\n[TRUNCATED: seed prompt exceeded size limit]");
+                break;
+            }
         }
 
         prompt
@@ -3561,6 +3522,32 @@ impl App {
         } else if self.state.footer_spinner.is_some() {
             // Stop spinner if active tab is not processing and spinner is running
             self.state.stop_footer_spinner();
+        }
+    }
+
+    /// Dismiss the confirmation dialog and clean up fork state if applicable.
+    /// Returns the input mode to transition to.
+    fn dismiss_confirmation_dialog(&mut self) -> InputMode {
+        // Cache context before hide() clears it
+        let ctx = self.state.confirmation_dialog_state.context.clone();
+
+        // Clear pending fork request if dismissing a fork confirmation
+        if matches!(&ctx, Some(ConfirmationContext::ForkSession { .. })) {
+            self.state.pending_fork_request = None;
+        }
+
+        self.state.confirmation_dialog_state.hide();
+
+        // Return appropriate input mode based on context
+        if matches!(
+            ctx,
+            Some(ConfirmationContext::CreatePullRequest { .. })
+                | Some(ConfirmationContext::OpenExistingPr { .. })
+                | Some(ConfirmationContext::ForkSession { .. })
+        ) {
+            InputMode::Normal
+        } else {
+            InputMode::SidebarNavigation
         }
     }
 
@@ -4498,22 +4485,7 @@ impl App {
         if self.state.input_mode == InputMode::Confirming
             && self.state.confirmation_dialog_state.visible
         {
-            let context = self.state.confirmation_dialog_state.context.clone();
-            if matches!(context, Some(ConfirmationContext::ForkSession { .. })) {
-                self.state.pending_fork_request = None;
-            }
-            self.state.confirmation_dialog_state.hide();
-            if matches!(
-                context,
-                Some(ConfirmationContext::CreatePullRequest { .. })
-                    | Some(ConfirmationContext::OpenExistingPr { .. })
-                    | Some(ConfirmationContext::SteerFallback { .. })
-                    | Some(ConfirmationContext::ForkSession { .. })
-            ) {
-                self.state.input_mode = InputMode::Normal;
-            } else {
-                self.state.input_mode = InputMode::SidebarNavigation;
-            }
+            self.state.input_mode = self.dismiss_confirmation_dialog();
             return Ok(effects);
         }
 
@@ -5362,6 +5334,16 @@ impl App {
                 if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                     session.agent_pid = Some(pid);
                     tracing::debug!("Agent started with PID {} for tab {}", pid, tab_index);
+
+                    // Display fork success message when agent has started successfully
+                    if session.fork_seed_id.is_some() {
+                        let display = MessageDisplay::System {
+                            content:
+                                "Fork created; context injected. Waiting for your next prompt."
+                                    .to_string(),
+                        };
+                        session.chat_view.push(display.to_chat_message());
+                    }
                 }
             }
             AppEvent::AgentStreamEnded { tab_index } => {
@@ -6095,6 +6077,12 @@ impl App {
             return None;
         };
 
+        // Get actual current branch for display (may differ from stored workspace.branch)
+        let base_branch = self
+            .worktree_manager
+            .get_current_branch(&workspace.path)
+            .unwrap_or_else(|_| workspace.branch.clone());
+
         let seed_prompt = Self::build_fork_seed_prompt(session.chat_view.messages());
 
         let model_id = session
@@ -6146,7 +6134,7 @@ impl App {
 
         let message = format!(
             "Fork this session into a new workspace based on branch \"{}\".\nSeed size: {} / {} tokens (~{:.0}%).",
-            workspace.branch,
+            base_branch,
             token_estimate,
             context_window,
             usage_pct
@@ -6161,7 +6149,7 @@ impl App {
                 .as_ref()
                 .map(|s| s.as_str().to_string()),
             parent_workspace_id,
-            seed_prompt: Arc::new(seed_prompt),
+            seed_prompt: Arc::from(seed_prompt),
             token_estimate,
             context_window,
             fork_seed_id: None,
@@ -6176,6 +6164,7 @@ impl App {
             "Fork",
             Some(ConfirmationContext::ForkSession {
                 parent_workspace_id,
+                base_branch: base_branch.clone(),
             }),
         );
         self.state.input_mode = InputMode::Confirming;
@@ -6184,7 +6173,11 @@ impl App {
     }
 
     /// Execute fork session after confirmation
-    fn execute_fork_session(&mut self, parent_workspace_id: uuid::Uuid) -> Option<Effect> {
+    fn execute_fork_session(
+        &mut self,
+        parent_workspace_id: uuid::Uuid,
+        base_branch: String,
+    ) -> Option<Effect> {
         let Some(mut pending) = self.state.pending_fork_request.clone() else {
             self.show_error("Fork Failed", "No pending fork request.");
             return None;
@@ -6230,6 +6223,7 @@ impl App {
 
         Some(Effect::ForkWorkspace {
             parent_workspace_id,
+            base_branch,
         })
     }
 
@@ -6297,7 +6291,7 @@ impl App {
             active.suppress_next_turn_summary = true;
         }
 
-        let effects = self.submit_prompt((*pending.seed_prompt).clone(), vec![], vec![])?;
+        let effects = self.submit_prompt(pending.seed_prompt.to_string(), vec![], vec![])?;
         if effects.is_empty() {
             return Err(anyhow!(
                 "Failed to start forked agent: no start-agent effect produced."
@@ -6307,14 +6301,6 @@ impl App {
         // Clear pending_user_message so the large seed prompt doesn't get persisted
         if let Some(active) = self.state.tab_manager.active_session_mut() {
             active.pending_user_message = None;
-        }
-
-        if let Some(active) = self.state.tab_manager.active_session_mut() {
-            let display = MessageDisplay::System {
-                content: "Fork created; context injected. Waiting for your next prompt."
-                    .to_string(),
-            };
-            active.chat_view.push(display.to_chat_message());
         }
 
         self.state.pending_fork_request = None;
@@ -6363,6 +6349,20 @@ impl App {
                     "Failed to remove worktree during fork cleanup"
                 );
                 // Continue to try database cleanup even if worktree removal fails
+            }
+
+            // Also try to delete the branch
+            if let Err(e) = self
+                .worktree_manager
+                .delete_branch(base_path, &workspace.branch)
+            {
+                tracing::warn!(
+                    error = %e,
+                    workspace_id = %workspace_id,
+                    branch = %workspace.branch,
+                    "Failed to delete branch during fork cleanup"
+                );
+                // Continue with database cleanup even if branch deletion fails
             }
         }
 

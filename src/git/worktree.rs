@@ -163,7 +163,8 @@ impl WorktreeManager {
             // Require "branch" context to reduce false positives
             let is_branch_exists = (initial_stderr.contains("branch")
                 && initial_stderr.contains("already exists"))
-                || initial_stderr.contains("already used by worktree");
+                || initial_stderr.contains("already used by worktree")
+                || initial_stderr.contains("already checked out");
 
             if is_branch_exists {
                 tracing::debug!(
@@ -190,6 +191,13 @@ impl WorktreeManager {
                 return Err(WorktreeError::CommandFailed(initial_stderr.to_string()));
             }
         }
+
+        tracing::debug!(
+            path = %worktree_path.display(),
+            branch = %new_branch,
+            base_branch = %base_branch,
+            "Successfully created worktree"
+        );
 
         Ok(worktree_path)
     }

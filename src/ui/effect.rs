@@ -25,6 +25,7 @@ pub enum Effect {
     },
     ForkWorkspace {
         parent_workspace_id: Uuid,
+        base_branch: String,
     },
     ArchiveWorkspace {
         workspace_id: Uuid,

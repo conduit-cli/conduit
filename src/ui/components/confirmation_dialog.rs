@@ -47,7 +47,11 @@ pub enum ConfirmationContext {
     /// Steering fallback confirmation (interrupt current run)
     SteerFallback { message_id: Uuid },
     /// Forking the current session
-    ForkSession { parent_workspace_id: Uuid },
+    ForkSession {
+        parent_workspace_id: Uuid,
+        /// The branch to fork from (computed at dialog show time for consistency)
+        base_branch: String,
+    },
 }
 
 impl ConfirmationType {

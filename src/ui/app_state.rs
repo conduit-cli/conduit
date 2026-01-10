@@ -214,7 +214,7 @@ pub struct PendingForkRequest {
     pub parent_session_id: Option<String>,
     pub parent_workspace_id: Uuid,
     /// Uses Arc to avoid cloning large seed prompts during struct clones
-    pub seed_prompt: Arc<String>,
+    pub seed_prompt: Arc<str>,
     pub token_estimate: i64,
     pub context_window: i64,
     pub fork_seed_id: Option<Uuid>,
