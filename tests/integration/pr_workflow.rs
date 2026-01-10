@@ -150,40 +150,39 @@ fn test_pr_prompt_with_upstream() {
 }
 
 /// Test repo name parsing from various URL formats
+///
+/// Uses the production PrManager::parse_repo_name_from_url to ensure
+/// tests catch regressions in the actual parsing logic.
 #[test]
 fn test_repo_name_parsing() {
     // HTTPS format
-    let name = parse_repo_name("https://github.com/user/awesome-repo.git");
+    let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo.git");
     assert_eq!(name, Some("awesome-repo".to_string()));
 
     // HTTPS without .git
-    let name = parse_repo_name("https://github.com/user/awesome-repo");
+    let name = PrManager::parse_repo_name_from_url("https://github.com/user/awesome-repo");
     assert_eq!(name, Some("awesome-repo".to_string()));
 
     // SSH format
-    let name = parse_repo_name("git@github.com:user/awesome-repo.git");
+    let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo.git");
     assert_eq!(name, Some("awesome-repo".to_string()));
 
     // SSH without .git
-    let name = parse_repo_name("git@github.com:user/awesome-repo");
+    let name = PrManager::parse_repo_name_from_url("git@github.com:user/awesome-repo");
     assert_eq!(name, Some("awesome-repo".to_string()));
-}
 
-// Helper function that mirrors PrManager's internal parsing
-fn parse_repo_name(url: &str) -> Option<String> {
-    let url = url.strip_suffix(".git").unwrap_or(url);
+    // Nested paths (GitLab style)
+    let name = PrManager::parse_repo_name_from_url("https://gitlab.com/org/subgroup/repo.git");
+    assert_eq!(name, Some("repo".to_string()));
 
-    if let Some(path) = url.strip_prefix("https://") {
-        return path.split('/').next_back().map(String::from);
-    }
+    // Fallback behavior: plain strings return the string itself
+    // This handles local directory paths passed as URLs
+    let name = PrManager::parse_repo_name_from_url("my-local-repo");
+    assert_eq!(name, Some("my-local-repo".to_string()));
 
-    if url.starts_with("git@") {
-        if let Some(path) = url.split(':').nth(1) {
-            return path.split('/').next_back().map(String::from);
-        }
-    }
-
-    url.split('/').next_back().map(String::from)
+    // Paths with directories use the last component
+    let name = PrManager::parse_repo_name_from_url("/home/user/projects/my-repo");
+    assert_eq!(name, Some("my-repo".to_string()));
 }
 
 /// Test that preflight works with a feature branch

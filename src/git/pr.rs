@@ -279,7 +279,7 @@ impl PrManager {
 
     /// Parse repository name from git remote URL
     /// Handles HTTPS (github.com/user/repo.git) and SSH (git@github.com:user/repo.git) formats
-    fn parse_repo_name_from_url(url: &str) -> Option<String> {
+    pub fn parse_repo_name_from_url(url: &str) -> Option<String> {
         // Remove .git suffix if present
         let url = url.strip_suffix(".git").unwrap_or(url);
 

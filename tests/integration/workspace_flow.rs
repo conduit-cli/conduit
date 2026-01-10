@@ -205,9 +205,11 @@ fn test_full_workspace_creation_flow() {
         .create(&db_repo)
         .expect("Failed to save repository");
 
-    // 2. Generate unique workspace name
+    // 2. Generate unique workspace name with UUID suffix to avoid parallel test collisions
     let existing = ws_store.get_all_names_by_repository(db_repo.id).unwrap();
-    let workspace_name = generate_workspace_name(&existing);
+    let base_name = generate_workspace_name(&existing);
+    let unique_suffix = Uuid::new_v4().as_simple().to_string();
+    let workspace_name = format!("{}-{}", base_name, &unique_suffix[..8]);
 
     // 3. Generate branch name
     let branch_name = generate_branch_name("testuser", &workspace_name);
@@ -255,14 +257,18 @@ fn test_multiple_workspaces_per_repo() {
     let mut created_names = Vec::new();
     for _ in 0..3 {
         let existing = ws_store.get_all_names_by_repository(db_repo.id).unwrap();
-        let name = generate_workspace_name(&existing);
+        let base_name = generate_workspace_name(&existing);
 
         // Ensure no collision with previously created names
         assert!(
-            !created_names.contains(&name),
+            !created_names.contains(&base_name),
             "Generated name {} collides with existing",
-            name
+            base_name
         );
+
+        // Add UUID suffix to avoid parallel test collisions
+        let unique_suffix = Uuid::new_v4().as_simple().to_string();
+        let name = format!("{}-{}", base_name, &unique_suffix[..8]);
 
         let branch = generate_branch_name("testuser", &name);
         let wt_path = repo.path.parent().unwrap().join(&name);
@@ -273,7 +279,7 @@ fn test_multiple_workspaces_per_repo() {
         let ws = Workspace::new(db_repo.id, &name, &branch, wt_path);
         ws_store.create(&ws).unwrap();
 
-        created_names.push(name);
+        created_names.push(base_name);
     }
 
     // Verify all 3 workspaces exist

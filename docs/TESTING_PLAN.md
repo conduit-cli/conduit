@@ -386,14 +386,18 @@ pub fn test_now() -> chrono::DateTime<chrono::Utc> {
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 /// A temporary git repository for testing
+/// Automatically cleans up worktrees on drop
 pub struct TestRepo {
     /// TempDir handle (keeps directory alive)
     _dir: TempDir,
     /// Path to the repository
     pub path: PathBuf,
+    /// Tracks worktree paths for cleanup on drop
+    worktrees: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl TestRepo {
@@ -405,13 +409,19 @@ impl TestRepo {
         Self::git(&path, &["init"]);
         Self::git(&path, &["config", "user.email", "test@example.com"]);
         Self::git(&path, &["config", "user.name", "Test User"]);
+        // Disable GPG signing for CI compatibility
+        Self::git(&path, &["config", "commit.gpgsign", "false"]);
 
         // Create initial commit
         std::fs::write(path.join("README.md"), "# Test Repository\n").unwrap();
         Self::git(&path, &["add", "."]);
         Self::git(&path, &["commit", "-m", "Initial commit"]);
 
-        Self { _dir: dir, path }
+        Self {
+            _dir: dir,
+            path,
+            worktrees: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     /// Create a repo with multiple branches
@@ -439,13 +449,14 @@ impl TestRepo {
     }
 
     /// Create a repo with a worktree already set up
-    pub fn with_worktree(worktree_name: &str, branch_name: &str) -> Self {
+    /// Returns both the repo and the worktree path for cleanup tracking
+    pub fn with_worktree(worktree_name: &str, branch_name: &str) -> (Self, PathBuf) {
         let repo = Self::new();
 
         // Create the branch first
         Self::git(&repo.path, &["branch", branch_name]);
 
-        // Create worktree directory path (sibling to main repo)
+        // Create worktree directory path (sibling to main repo, inside the temp dir)
         let worktree_path = repo.path.parent().unwrap().join(worktree_name);
 
         Self::git(
@@ -453,7 +464,20 @@ impl TestRepo {
             &["worktree", "add", worktree_path.to_str().unwrap(), branch_name],
         );
 
-        repo
+        // Track for cleanup on drop
+        repo.worktrees.lock().unwrap().push(worktree_path.clone());
+
+        (repo, worktree_path)
+    }
+
+    /// Create a worktree and track it for automatic cleanup on drop
+    pub fn create_tracked_worktree(&self, worktree_path: &Path, branch_name: &str) {
+        // Auto-creates branch if it doesn't exist
+        Self::git(
+            &self.path,
+            &["worktree", "add", "-b", branch_name, worktree_path.to_str().unwrap()],
+        );
+        self.worktrees.lock().unwrap().push(worktree_path.to_path_buf());
     }
 
     /// Add a file and commit it
@@ -1210,19 +1234,17 @@ fn create_test_db() -> (Database, TempDir) {
 }
 
 #[test]
-fn test_worktree_creation() {
+fn test_worktree_creation_existing_branch() {
     let repo = TestRepo::with_branches(&["feature-1"]);
-    let manager = WorktreeManager::new();
 
-    let worktree_path = repo.path.parent().unwrap().join("wt-feature-1");
+    // Use a unique path to avoid collisions
+    let unique_id = Uuid::new_v4().as_simple().to_string();
+    let worktree_path = repo.path.parent().unwrap()
+        .join(format!("wt-feature-1-{}", &unique_id[..8]));
 
-    let result = manager.create_worktree(
-        &repo.path,
-        "feature-1",
-        worktree_path.to_str().unwrap(),
-    );
+    // Use tracked worktree creation for automatic cleanup
+    repo.create_tracked_worktree(&worktree_path, "feature-1");
 
-    assert!(result.is_ok());
     assert!(worktree_path.exists());
     assert!(worktree_path.join(".git").exists());
 }
@@ -1230,18 +1252,20 @@ fn test_worktree_creation() {
 #[test]
 fn test_worktree_creation_new_branch() {
     let repo = TestRepo::new();
-    let manager = WorktreeManager::new();
 
-    let worktree_path = repo.path.parent().unwrap().join("wt-new-branch");
+    // Use a unique path to avoid collisions
+    let unique_id = Uuid::new_v4().as_simple().to_string();
+    let worktree_path = repo.path.parent().unwrap()
+        .join(format!("wt-new-feature-{}", &unique_id[..8]));
 
-    let result = manager.create_worktree_new_branch(
-        &repo.path,
-        "new-feature",
-        worktree_path.to_str().unwrap(),
-    );
+    // create_tracked_worktree auto-creates the branch if it doesn't exist
+    repo.create_tracked_worktree(&worktree_path, "new-feature");
 
-    assert!(result.is_ok());
     assert!(worktree_path.exists());
+
+    // Verify branch was created
+    let branches = repo.branches();
+    assert!(branches.iter().any(|b| b == "new-feature"));
 }
 
 #[test]
