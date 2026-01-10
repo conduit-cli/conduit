@@ -108,6 +108,29 @@ impl InputBox {
         self.clear_selection();
     }
 
+    /// Add text to history without submitting.
+    /// Expands pending pastes and removes image placeholders to match submit() behavior.
+    pub fn add_to_history(&mut self, text: String) {
+        // Expand any pending large pastes
+        let mut expanded = text;
+        for (placeholder, actual) in &self.pending_pastes {
+            if expanded.contains(placeholder) {
+                expanded = expanded.replace(placeholder, actual);
+            }
+        }
+
+        // Remove image placeholders since the images won't be submitted
+        for img in &self.attached_images {
+            expanded = expanded.replace(&img.placeholder, "");
+        }
+
+        // Only add non-whitespace entries (matches submit() behavior)
+        let trimmed = expanded.trim();
+        if !trimmed.is_empty() {
+            self.history.push(trimmed.to_string());
+        }
+    }
+
     /// Submit input and add to history
     pub fn submit(&mut self) -> InputSubmit {
         let input = std::mem::take(&mut self.input);

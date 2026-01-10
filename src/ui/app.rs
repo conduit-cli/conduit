@@ -854,9 +854,14 @@ impl App {
             self.state.should_quit = true;
             effects.push(Effect::SaveSessionState);
         } else {
-            // First press while idle: clear input + show warning
-            tracing::debug!("Ctrl+C: first press while idle, clearing input and showing warning");
+            // First press while idle: save to history + clear input + show warning
+            tracing::debug!("Ctrl+C: first press while idle, saving to history, clearing input and showing warning");
             if let Some(session) = self.state.tab_manager.active_session_mut() {
+                // Save current input to history before clearing (if non-empty)
+                let current_input = session.input_box.input().to_string();
+                if !current_input.trim().is_empty() {
+                    session.input_box.add_to_history(current_input);
+                }
                 session.input_box.clear();
             }
             self.state.footer_message = Some("Press Ctrl+C again to quit".into());
