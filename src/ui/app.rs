@@ -221,6 +221,23 @@ impl App {
 
         // Restore each tab
         for tab in saved_tabs {
+            let required_tool = match tab.agent_type {
+                AgentType::Claude => crate::util::Tool::Claude,
+                AgentType::Codex => crate::util::Tool::Codex,
+            };
+            if !self.tools.is_available(required_tool) {
+                self.state.close_overlays();
+                self.state.missing_tool_dialog_state.show_with_context(
+                    required_tool,
+                    format!(
+                        "{} is required to restore this session.",
+                        required_tool.display_name()
+                    ),
+                );
+                self.state.input_mode = InputMode::MissingTool;
+                continue;
+            }
+
             let mut session = AgentSession::new(tab.agent_type);
             session.workspace_id = tab.workspace_id;
             session.model = tab.model;
@@ -316,23 +333,6 @@ impl App {
 
             // Register workspace with git tracker if available
             let track_info = session.workspace_id.zip(session.working_dir.clone());
-
-            let required_tool = match session.agent_type {
-                AgentType::Claude => crate::util::Tool::Claude,
-                AgentType::Codex => crate::util::Tool::Codex,
-            };
-            if !self.tools.is_available(required_tool) {
-                self.state.close_overlays();
-                self.state.missing_tool_dialog_state.show_with_context(
-                    required_tool,
-                    format!(
-                        "{} is required to restore this session.",
-                        required_tool.display_name()
-                    ),
-                );
-                self.state.input_mode = InputMode::MissingTool;
-                continue;
-            }
 
             self.state.tab_manager.add_session(session);
 
@@ -2888,6 +2888,7 @@ impl App {
         // Update last accessed
         let _ = workspace_dao.update_last_accessed(workspace_id);
 
+        let has_saved_session = saved_tab.is_some();
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
@@ -2918,10 +2919,17 @@ impl App {
             self.state.close_overlays();
             self.state.missing_tool_dialog_state.show_with_context(
                 required_tool,
-                format!(
-                    "{} is required to open this workspace's saved session.",
-                    required_tool.display_name()
-                ),
+                if has_saved_session {
+                    format!(
+                        "{} is required to open this workspace's saved session.",
+                        required_tool.display_name()
+                    )
+                } else {
+                    format!(
+                        "{} is required to open this workspace.",
+                        required_tool.display_name()
+                    )
+                },
             );
             self.state.input_mode = InputMode::MissingTool;
             if close_sidebar {
