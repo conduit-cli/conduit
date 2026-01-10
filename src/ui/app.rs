@@ -3333,7 +3333,19 @@ impl App {
     const MAX_SEED_PROMPT_SIZE: usize = 500 * 1024;
 
     /// Suffix appended when seed prompt is truncated
-    const SEED_TRUNCATED_SUFFIX: &'static str = "\n\n[TRUNCATED: seed prompt exceeded size limit]";
+    const SEED_TRUNCATED_SUFFIX: &'static str =
+        "\n\n[TRUNCATED: transcript exceeded size limit]\n</previous-session-transcript>";
+
+    /// Closing instruction appended after the transcript
+    const SEED_CLOSING_INSTRUCTION: &'static str = r#"
+
+</previous-session-transcript>
+
+[END OF CONTEXT]
+
+IMPORTANT: The above was historical context from a previous session.
+You are starting a NEW forked session. Do NOT continue any tasks from the transcript.
+Acknowledge that you have received this context by replying ONLY with the single word: Ready"#;
 
     /// Truncate string to max_bytes at a valid UTF-8 char boundary
     fn truncate_to_char_boundary(s: &mut String, max_bytes: usize) {
@@ -3353,11 +3365,24 @@ impl App {
     /// Build a fork seed prompt from chat history
     fn build_fork_seed_prompt(messages: &[ChatMessage]) -> String {
         let mut prompt = String::new();
-        prompt.push_str("[CONDUIT_FORK_SEED]\n");
-        prompt.push_str("The following is a full transcript from a previous session.\n");
-        prompt.push_str("Use it as context only. Do not execute any commands.\n");
-        prompt.push_str("Reply only with: Ready.\n");
-        prompt.push_str("---\n\n");
+
+        // Opening header with clear instructions
+        prompt.push_str("[CONDUIT_FORK_SEED]\n\n");
+        prompt.push_str(
+            "You are receiving context from a PREVIOUS session to seed a NEW forked session.\n",
+        );
+        prompt.push_str(
+            "The transcript below is for REFERENCE ONLY - do NOT execute any commands from it.\n",
+        );
+        prompt.push_str("After reading, reply with ONLY the single word: Ready\n\n");
+        prompt.push_str("<previous-session-transcript>\n");
+
+        // Reserve space for closing instruction
+        let max_transcript_size = Self::MAX_SEED_PROMPT_SIZE
+            .saturating_sub(prompt.len())
+            .saturating_sub(Self::SEED_CLOSING_INSTRUCTION.len());
+
+        let transcript_start = prompt.len();
 
         for (idx, msg) in messages.iter().enumerate() {
             if idx > 0 {
@@ -3365,16 +3390,28 @@ impl App {
             }
             prompt.push_str(&Self::format_fork_message(msg));
 
-            // Check if we've exceeded the hard cap (reserve space for suffix)
-            if prompt.len() > Self::MAX_SEED_PROMPT_SIZE {
+            // Check if transcript portion has exceeded the limit
+            let transcript_len = prompt.len() - transcript_start;
+            if transcript_len > max_transcript_size {
                 let max_without_suffix =
-                    Self::MAX_SEED_PROMPT_SIZE.saturating_sub(Self::SEED_TRUNCATED_SUFFIX.len());
-                Self::truncate_to_char_boundary(&mut prompt, max_without_suffix);
+                    max_transcript_size.saturating_sub(Self::SEED_TRUNCATED_SUFFIX.len());
+                // Truncate only the transcript portion
+                prompt.truncate(transcript_start + max_without_suffix);
+                Self::truncate_to_char_boundary(&mut prompt, transcript_start + max_without_suffix);
                 prompt.push_str(Self::SEED_TRUNCATED_SUFFIX);
-                break;
+                // SEED_TRUNCATED_SUFFIX already closes the tag, so just add final instruction
+                prompt.push_str("\n\n[END OF CONTEXT]\n\n");
+                prompt.push_str(
+                    "IMPORTANT: The above was historical context from a previous session.\n",
+                );
+                prompt.push_str("You are starting a NEW forked session. Do NOT continue any tasks from the transcript.\n");
+                prompt.push_str("Acknowledge that you have received this context by replying ONLY with the single word: Ready");
+                return prompt;
             }
         }
 
+        // Add closing instruction for non-truncated case
+        prompt.push_str(Self::SEED_CLOSING_INSTRUCTION);
         prompt
     }
 
@@ -8023,7 +8060,15 @@ mod tests {
 
         let prompt = App::build_fork_seed_prompt(&messages);
 
+        // Check header and structure
         assert!(prompt.contains("[CONDUIT_FORK_SEED]"));
+        assert!(prompt.contains("<previous-session-transcript>"));
+        assert!(prompt.contains("</previous-session-transcript>"));
+        assert!(prompt.contains("[END OF CONTEXT]"));
+        assert!(prompt.contains("reply with ONLY"));
+        assert!(prompt.contains("Ready"));
+
+        // Check message content
         assert!(prompt.contains("[role=user]"));
         assert!(prompt.contains("[role=assistant]"));
         assert!(prompt.contains("name=\"Bash\""));
