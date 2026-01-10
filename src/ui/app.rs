@@ -7551,6 +7551,7 @@ struct SessionStateSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::components::ChatMessage;
 
     /// Helper to check if a colon keypress should trigger command mode.
     /// This mirrors the logic in handle_key_event (lines 572-601).
