@@ -67,7 +67,7 @@ pub use scrollbar::{render_minimal_scrollbar, scrollbar_offset_from_point, Scrol
 pub use searchable_list::SearchableListState;
 pub use session_header::SessionHeader;
 pub use session_import_picker::{AgentFilter, SessionImportPicker, SessionImportPickerState};
-pub use sidebar::{Sidebar, SidebarState};
+pub use sidebar::{Sidebar, SidebarState, SIDEBAR_HEADER_ROWS};
 pub use spinner::Spinner;
 pub use status_bar::StatusBar;
 pub use tab_bar::TabBar;

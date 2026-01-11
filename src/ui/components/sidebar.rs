@@ -7,6 +7,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget},
 };
 
+/// Number of rows from sidebar top to tree content.
+/// This accounts for: title area (3 rows) + separator (1 row) = 4 rows.
+/// Used for hit-testing (mouse hover, clicks) to map coordinates to tree items.
+pub const SIDEBAR_HEADER_ROWS: u16 = 4;
+
 use crate::ui::components::{
     accent_primary, border_default, ensure_contrast_fg, selected_bg, selected_bg_dim, sidebar_bg,
     text_muted, text_primary,

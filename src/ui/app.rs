@@ -46,7 +46,7 @@ use crate::ui::components::{
     ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
     MessageRole, MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
     RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
-    SidebarData, TabBar, ThemePicker,
+    SidebarData, TabBar, ThemePicker, SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -4261,8 +4261,8 @@ Acknowledge that you have received this context by replying ONLY with the single
             MouseEventKind::Moved => {
                 // Update hover state for sidebar workspace name expansion
                 if let Some(sidebar_area) = self.state.sidebar_area {
-                    // Tree view starts after title (3 rows) + separator (1 row) = 4 rows
-                    let tree_start_y = sidebar_area.y + 4;
+                    // Tree view starts after header (uses centralized constant for consistency)
+                    let tree_start_y = sidebar_area.y + SIDEBAR_HEADER_ROWS;
                     // Sidebar has no borders - tree renders directly in content area
                     let inner_x = sidebar_area.x;
                     let inner_width = sidebar_area.width as usize;
@@ -5988,11 +5988,14 @@ Acknowledge that you have received this context by replying ONLY with the single
                 return Ok(effects);
             };
 
-            // If we already have a session id (live or restored), this is not a "new session"
-            // for auto-title purposes. Using this instead of turn_count because restored sessions
-            // have turn_count == 0 but loaded history.
-            let had_existing_session_id =
-                session.agent_session_id.is_some() || session.resume_session_id.is_some();
+            // "New session" for auto-title purposes == no visible user message has ever been shown.
+            // This intentionally ignores hidden prompts (e.g., fork seeds), which don't push a
+            // chat user message and shouldn't suppress auto-title on the first real user message.
+            let has_visible_user_message = session
+                .chat_view
+                .messages()
+                .iter()
+                .any(|m| m.role == MessageRole::User);
 
             let agent_type = session.agent_type;
             let agent_mode = session.agent_mode;
@@ -6015,7 +6018,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 model,
                 session_id_to_use,
                 working_dir,
-                !had_existing_session_id,
+                !has_visible_user_message,
             )
         };
 
@@ -8340,10 +8343,46 @@ async fn generate_title_and_branch_impl(
     };
 
     Ok(TitleGeneratedResult {
-        title: metadata.title,
+        title: sanitize_title(&metadata.title),
         new_branch,
         workspace_id,
     })
+}
+
+/// Sanitize a generated title: trim whitespace, remove control characters and newlines,
+/// enforce max length, and provide fallback for empty titles.
+fn sanitize_title(title: &str) -> String {
+    const MAX_TITLE_LENGTH: usize = 200;
+    const FALLBACK_TITLE: &str = "Untitled task";
+
+    // Collapse all whitespace (including newlines) to single spaces and trim
+    let sanitized: String = title
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Enforce max length
+    let truncated = if sanitized.chars().count() > MAX_TITLE_LENGTH {
+        sanitized.chars().take(MAX_TITLE_LENGTH).collect()
+    } else {
+        sanitized
+    };
+
+    // Fallback for empty titles
+    if truncated.is_empty() {
+        FALLBACK_TITLE.to_string()
+    } else {
+        truncated
+    }
 }
 
 #[cfg(test)]

@@ -13,8 +13,22 @@ use crate::git::GitDiffStats;
 
 use super::{accent_error, accent_success, pr_open_bg, selected_bg, text_muted};
 
-/// Enable mock PR display for layout testing
+/// Enable mock PR display for layout testing.
+/// WARNING: This is for local development only - set to `true` to test layout
+/// with fake PR/git data, but must remain `false` in committed code.
 const MOCK_SIDEBAR_PR_DISPLAY: bool = false;
+
+// Layout constants for tree view rendering
+// Note: DEPTH_0 constant defined for documentation completeness but not currently used
+#[allow(dead_code)]
+/// Indent width for depth-0 nodes (repositories): " " = 1 space
+const DEPTH_0_INDENT_WIDTH: usize = 1;
+/// Indent width for depth-1 nodes (workspaces, actions): "  " = 2 spaces
+const DEPTH_1_INDENT_WIDTH: usize = 2;
+/// Width of expand marker space ("▶ ", "▼ ", or "  "): 2 chars
+const EXPAND_MARKER_WIDTH: usize = 2;
+/// Total indent width for workspace name line (depth-1 indent + expand marker space)
+const WORKSPACE_NAME_LINE_INDENT: usize = DEPTH_1_INDENT_WIDTH + EXPAND_MARKER_WIDTH;
 
 /// Display mode for git status in the sidebar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -464,18 +478,17 @@ impl StatefulWidget for TreeView<'_> {
             if is_two_line_workspace {
                 let name_y = y + 1;
                 if name_y < inner.y + inner.height {
-                    // Indent for second line: align under the branch name
-                    let name_indent = format!("{}  ", indent);
-                    let indent_width = name_indent.chars().count();
-
                     // Build right-side content: git stats + PR badge
                     let right_spans = build_right_side_spans(node);
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
 
-                    // Calculate available space for workspace name
+                    // Calculate available space for workspace name using shared helper
                     let total_width = inner.width as usize;
-                    let available_for_name =
-                        total_width.saturating_sub(indent_width + right_width + 1); // +1 for gap
+                    let (available_for_name, _, _) = calculate_workspace_name_bounds(
+                        total_width,
+                        right_width,
+                        node.label.chars().count(),
+                    );
 
                     // Check if name needs truncation
                     let name_is_truncated = node.label.chars().count() > available_for_name;
@@ -501,8 +514,10 @@ impl StatefulWidget for TreeView<'_> {
                     };
 
                     // Left side: indent + workspace name
+                    // Use constant for indent width (matches WORKSPACE_NAME_LINE_INDENT)
+                    let name_indent = " ".repeat(WORKSPACE_NAME_LINE_INDENT);
                     let left_spans = vec![
-                        Span::raw(name_indent.clone()),
+                        Span::raw(name_indent),
                         Span::styled(name_display.clone(), self.suffix_style),
                     ];
                     let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
@@ -800,27 +815,17 @@ impl SidebarData {
                 // First row is branch line, second row is name line
                 let name_line_row = current_row + 1;
                 if visual_row == name_line_row {
-                    // Calculate where the name text starts and ends
-                    // Layout: "    " (indent) + name_display
-                    let indent_width = 4; // "  " (depth-1 indent) + "  " (expand marker space)
-
-                    // Calculate available space for name (same logic as render)
+                    // Calculate name bounds using shared helper (same logic as render)
                     let right_spans = build_right_side_spans(node);
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-                    let available_for_name =
-                        inner_width.saturating_sub(indent_width + right_width + 1);
-
-                    // Calculate actual displayed name width
-                    let name_width = if node.label.chars().count() > available_for_name {
-                        available_for_name // truncated name fills available space
-                    } else {
-                        node.label.chars().count()
-                    };
-
-                    // Check if x is within the name text area
-                    let name_start = indent_width;
+                    let (_, name_start, name_width) = calculate_workspace_name_bounds(
+                        inner_width,
+                        right_width,
+                        node.label.chars().count(),
+                    );
                     let name_end = name_start + name_width;
 
+                    // Check if x is within the name text area
                     if x_in_tree >= name_start && x_in_tree < name_end {
                         return Some(node.id);
                     }
@@ -897,6 +902,22 @@ fn truncate_branch_name(branch: &str, max_width: usize) -> String {
     // No slash or very limited space - just truncate with ellipsis
     let truncated: String = branch.chars().take(max_width.saturating_sub(1)).collect();
     format!("{}…", truncated)
+}
+
+/// Calculate the available width for a workspace name and its displayed bounds.
+/// Returns (available_for_name, name_start, name_width) where:
+/// - available_for_name: max chars that can fit before right-side content
+/// - name_start: x position where name text begins
+/// - name_width: actual displayed width of name (may be truncated)
+fn calculate_workspace_name_bounds(
+    inner_width: usize,
+    right_side_width: usize,
+    name_char_count: usize,
+) -> (usize, usize, usize) {
+    let available_for_name =
+        inner_width.saturating_sub(WORKSPACE_NAME_LINE_INDENT + right_side_width + 1); // +1 for gap
+    let name_width = name_char_count.min(available_for_name);
+    (available_for_name, WORKSPACE_NAME_LINE_INDENT, name_width)
 }
 
 /// Build the right-side spans for a workspace line (git stats + PR badge)
@@ -1063,12 +1084,15 @@ mod tests {
         let ws_id = ws_node.id;
 
         // Calculate expected name bounds (same logic as workspace_at_name_line)
-        let indent_width = 4;
+        // Calculate expected bounds using the shared helper
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
-        let name_width = ws_node.label.chars().count().min(available_for_name);
-        let name_end = indent_width + name_width;
+        let (_, name_start, name_width) = calculate_workspace_name_bounds(
+            inner_width,
+            right_width,
+            ws_node.label.chars().count(),
+        );
+        let name_end = name_start + name_width;
 
         // Find the name line row (should be row 4 based on layout)
         // Row 0: blank, Row 1: repo, Row 2: action, Row 3: branch, Row 4: name
@@ -1090,14 +1114,21 @@ mod tests {
 
         // In name area - should match
         assert_eq!(
-            sidebar.workspace_at_name_line(name_line_row, 4, scroll_offset, inner_width),
+            sidebar.workspace_at_name_line(name_line_row, name_start, scroll_offset, inner_width),
             Some(ws_id),
-            "x=4 (at name start) should match"
+            "x={} (at name start) should match",
+            name_start
         );
         assert_eq!(
-            sidebar.workspace_at_name_line(name_line_row, 5, scroll_offset, inner_width),
+            sidebar.workspace_at_name_line(
+                name_line_row,
+                name_start + 1,
+                scroll_offset,
+                inner_width
+            ),
             Some(ws_id),
-            "x=5 (in name) should match"
+            "x={} (in name) should match",
+            name_start + 1
         );
 
         // Past name area - should not match
@@ -1130,20 +1161,18 @@ mod tests {
             ws_node.label.chars().count()
         );
 
-        // Calculate expected bounds (same logic as workspace_at_name_line)
-        let indent_width = 4;
+        // Calculate expected bounds using the shared helper
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
-        let name_width = if ws_node.label.chars().count() > available_for_name {
-            available_for_name
-        } else {
-            ws_node.label.chars().count()
-        };
+        let (available_for_name, name_start, name_width) = calculate_workspace_name_bounds(
+            inner_width,
+            right_width,
+            ws_node.label.chars().count(),
+        );
 
         println!(
-            "inner_width={}, indent_width={}, right_width={}",
-            inner_width, indent_width, right_width
+            "inner_width={}, name_start={}, right_width={}",
+            inner_width, name_start, right_width
         );
         println!(
             "available_for_name={}, name_width={}",
@@ -1151,19 +1180,31 @@ mod tests {
         );
         println!(
             "Expected name bounds: [{}, {})",
-            indent_width,
-            indent_width + name_width
+            name_start,
+            name_start + name_width
         );
 
-        // x=4 should be at start of name
+        // x at name_start should be at start of name
         let result_at_start =
-            sidebar.workspace_at_name_line(name_line_row, 4, scroll_offset, inner_width);
-        assert!(result_at_start.is_some(), "x=4 should be at name start");
+            sidebar.workspace_at_name_line(name_line_row, name_start, scroll_offset, inner_width);
+        assert!(
+            result_at_start.is_some(),
+            "x={} should be at name start",
+            name_start
+        );
 
-        // x just before indent should fail
-        let result_before =
-            sidebar.workspace_at_name_line(name_line_row, 3, scroll_offset, inner_width);
-        assert!(result_before.is_none(), "x=3 should be in indent, not name");
+        // x just before name_start should fail
+        let result_before = sidebar.workspace_at_name_line(
+            name_line_row,
+            name_start.saturating_sub(1),
+            scroll_offset,
+            inner_width,
+        );
+        assert!(
+            result_before.is_none(),
+            "x={} should be in indent, not name",
+            name_start.saturating_sub(1)
+        );
     }
 
     #[test]
@@ -1181,21 +1222,19 @@ mod tests {
             .find(|n| n.node_type == NodeType::Workspace)
             .unwrap();
 
-        // Calculate expected bounds
-        let indent_width = 4;
+        // Calculate expected bounds using the shared helper
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
-        let name_width = if ws_node.label.chars().count() > available_for_name {
-            available_for_name
-        } else {
-            ws_node.label.chars().count()
-        };
+        let (available_for_name, name_start, name_width) = calculate_workspace_name_bounds(
+            inner_width,
+            right_width,
+            ws_node.label.chars().count(),
+        );
 
         println!("\n=== WIDER SIDEBAR TEST (40 chars) ===");
         println!(
-            "inner_width={}, indent_width={}, right_width={}",
-            inner_width, indent_width, right_width
+            "inner_width={}, name_start={}, right_width={}",
+            inner_width, name_start, right_width
         );
         println!(
             "available_for_name={}, name_width={}",
@@ -1203,18 +1242,18 @@ mod tests {
         );
         println!(
             "Expected name bounds: [{}, {})",
-            indent_width,
-            indent_width + name_width
+            name_start,
+            name_start + name_width
         );
 
         // With wider sidebar, we should have more hover area
-        let name_end = indent_width + name_width;
+        let name_end = name_start + name_width;
 
         // Test all positions
         for x in 0..inner_width {
             let result =
                 sidebar.workspace_at_name_line(name_line_row, x, scroll_offset, inner_width);
-            let expected = x >= indent_width && x < name_end;
+            let expected = x >= name_start && x < name_end;
             if result.is_some() != expected {
                 println!(
                     "MISMATCH at x={}: got {:?}, expected {}",
@@ -1228,10 +1267,10 @@ mod tests {
         // Verify specific positions
         assert!(
             sidebar
-                .workspace_at_name_line(name_line_row, indent_width, scroll_offset, inner_width)
+                .workspace_at_name_line(name_line_row, name_start, scroll_offset, inner_width)
                 .is_some(),
             "x={} should be in name area",
-            indent_width
+            name_start
         );
         assert!(
             sidebar
