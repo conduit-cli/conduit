@@ -5946,10 +5946,23 @@ Acknowledge that you have received this context by replying ONLY with the single
         let mut effects = Vec::new();
 
         // Extract session info in a limited borrow scope
-        let (agent_type, agent_mode, model, session_id_to_use, working_dir) = {
+        let (
+            agent_type,
+            agent_mode,
+            model,
+            session_id_to_use,
+            working_dir,
+            is_new_session_for_title,
+        ) = {
             let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
                 return Ok(effects);
             };
+
+            // If we already have a session id (live or restored), this is not a "new session"
+            // for auto-title purposes. Using this instead of turn_count because restored sessions
+            // have turn_count == 0 but loaded history.
+            let had_existing_session_id =
+                session.agent_session_id.is_some() || session.resume_session_id.is_some();
 
             let agent_type = session.agent_type;
             let agent_mode = session.agent_mode;
@@ -5972,6 +5985,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 model,
                 session_id_to_use,
                 working_dir,
+                !had_existing_session_id,
             )
         };
 
@@ -6083,13 +6097,17 @@ Acknowledge that you have received this context by replying ONLY with the single
             config,
         });
 
-        // Generate title on first user message (turn_count == 0, no title yet, not already pending)
+        // Generate title on first user message of a NEW session (no title yet, not already pending)
         // Skip for hidden prompts (e.g., fork seeds) - those are not "first user messages"
-        // Use the specific tab_index, not active_session, to handle non-active tab submissions
+        // Use is_new_session_for_title (based on session ID presence) instead of turn_count
+        // because restored sessions have turn_count == 0 but loaded history
         let should_generate_title = !hidden
-            && self.state.tab_manager.session(tab_index).is_some_and(|s| {
-                s.turn_count == 0 && s.title.is_none() && !s.title_generation_pending
-            });
+            && is_new_session_for_title
+            && self
+                .state
+                .tab_manager
+                .session(tab_index)
+                .is_some_and(|s| s.title.is_none() && !s.title_generation_pending);
 
         if should_generate_title {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
