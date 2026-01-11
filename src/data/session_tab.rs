@@ -144,32 +144,32 @@ impl SessionTabStore {
     }
 
     /// Convert a database row to a SessionTab
-    /// Row order: id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id, title
+    /// Uses named column access for resilience to SELECT reordering
     fn row_to_session_tab(row: &rusqlite::Row) -> SqliteResult<SessionTab> {
-        let id_str: String = row.get(0)?;
-        let workspace_id_str: Option<String> = row.get(2)?;
-        let agent_type_str: String = row.get(3)?;
-        let created_at_str: String = row.get(8)?;
-        let queued_messages_json: Option<String> = row.get(10)?;
+        let id_str: String = row.get("id")?;
+        let workspace_id_str: Option<String> = row.get("workspace_id")?;
+        let agent_type_str: String = row.get("agent_type")?;
+        let created_at_str: String = row.get("created_at")?;
+        let queued_messages_json: Option<String> = row.get("queued_messages")?;
         let queued_messages = deserialize_queued_messages(queued_messages_json.as_deref());
-        let fork_seed_id_str: Option<String> = row.get(11)?;
+        let fork_seed_id_str: Option<String> = row.get("fork_seed_id")?;
 
         Ok(SessionTab {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
-            tab_index: row.get(1)?,
+            tab_index: row.get("tab_index")?,
             workspace_id: workspace_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
             agent_type: AgentType::parse(&agent_type_str),
-            agent_mode: row.get(4)?,
-            agent_session_id: row.get(5)?,
-            model: row.get(6)?,
-            pr_number: row.get(7)?,
+            agent_mode: row.get("agent_mode")?,
+            agent_session_id: row.get("agent_session_id")?,
+            model: row.get("model")?,
+            pr_number: row.get("pr_number")?,
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
-            pending_user_message: row.get(9)?,
+            pending_user_message: row.get("pending_user_message")?,
             queued_messages,
             fork_seed_id: fork_seed_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
-            title: row.get(12)?,
+            title: row.get("title")?,
         })
     }
 }

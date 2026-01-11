@@ -110,7 +110,8 @@ pub enum AppEvent {
 
     /// Title/branch generation completed
     TitleGenerated {
-        tab_index: usize,
+        /// Stable session ID for correlation (avoids stale tab_index after close/reorder)
+        session_id: Uuid,
         result: Result<TitleGeneratedResult, String>,
     },
 }

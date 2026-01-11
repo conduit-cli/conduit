@@ -145,28 +145,56 @@ fn parse_json_response(response: &str) -> Result<GeneratedMetadata, TitleGenerat
         .map_err(|e| TitleGeneratorError::ParseError(format!("Failed to parse JSON: {}", e)))
 }
 
-fn truncate_message(msg: &str, max_len: usize) -> String {
-    if msg.len() <= max_len {
+/// UTF-8 safe message truncation that respects character boundaries
+fn truncate_message(msg: &str, max_chars: usize) -> String {
+    let char_count = msg.chars().count();
+    if char_count <= max_chars {
         msg.to_string()
     } else {
-        format!("{}...", &msg[..max_len])
+        let truncated: String = msg.chars().take(max_chars).collect();
+        format!("{}...", truncated)
     }
 }
 
 /// Sanitize a branch suffix for use in git branch names
+///
+/// - Converts to lowercase
+/// - Keeps only ASCII alphanumeric characters (non-ASCII removed, not replaced)
+/// - Replaces non-alphanumeric with hyphens
+/// - Collapses consecutive hyphens
+/// - Removes leading/trailing hyphens
+/// - Limits to 30 characters
+/// - Returns "task" as fallback if result is empty
 pub fn sanitize_branch_suffix(input: &str) -> String {
-    input
+    let sanitized: String = input
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        // Only keep ASCII characters, replace non-alphanumeric with hyphen
+        .filter_map(|c| {
+            if c.is_ascii_alphanumeric() {
+                Some(c)
+            } else if c.is_ascii() {
+                Some('-') // Non-alphanumeric ASCII becomes hyphen
+            } else {
+                None // Non-ASCII dropped entirely
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join("-")
-        .chars()
-        .take(30)
-        .collect()
+        .join("-");
+
+    // Take up to 30 chars, ensuring we don't cut mid-word if possible
+    let result: String = sanitized.chars().take(30).collect();
+    let result = result.trim_end_matches('-').to_string();
+
+    // Fallback if empty
+    if result.is_empty() {
+        "task".to_string()
+    } else {
+        result
+    }
 }
 
 #[cfg(test)]
@@ -192,9 +220,42 @@ mod tests {
     }
 
     #[test]
+    fn test_sanitize_branch_suffix_non_ascii() {
+        // Non-ASCII characters should be dropped, not converted to hyphens
+        assert_eq!(sanitize_branch_suffix("héllo wörld"), "hllo-wrld");
+        assert_eq!(sanitize_branch_suffix("日本語テスト"), "task"); // All non-ASCII -> empty -> fallback
+        assert_eq!(sanitize_branch_suffix("café-fix"), "caf-fix");
+    }
+
+    #[test]
+    fn test_sanitize_branch_suffix_empty_fallback() {
+        assert_eq!(sanitize_branch_suffix(""), "task");
+        assert_eq!(sanitize_branch_suffix("   "), "task");
+        assert_eq!(sanitize_branch_suffix("---"), "task");
+    }
+
+    #[test]
+    fn test_sanitize_branch_suffix_length_limit() {
+        let long_input = "this-is-a-very-long-branch-name-that-exceeds-limit";
+        let result = sanitize_branch_suffix(long_input);
+        assert!(result.len() <= 30);
+        assert!(!result.ends_with('-'));
+    }
+
+    #[test]
     fn test_truncate_message() {
         assert_eq!(truncate_message("hello", 10), "hello");
         assert_eq!(truncate_message("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_message_utf8() {
+        // UTF-8 safe: should count chars, not bytes
+        assert_eq!(truncate_message("héllo", 10), "héllo");
+        assert_eq!(truncate_message("héllo wörld", 5), "héllo...");
+        // Japanese text - should truncate by character count
+        let japanese = "日本語テスト";
+        assert_eq!(truncate_message(japanese, 3), "日本語...");
     }
 
     #[test]

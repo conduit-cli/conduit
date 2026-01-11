@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::agent::AgentType;
 use crate::ui::session::AgentSession;
+use uuid::Uuid;
 
 /// Manages multiple agent sessions as tabs
 pub struct TabManager {
@@ -174,5 +175,10 @@ impl TabManager {
         self.sessions.push(session);
         let new_index = self.sessions.len() - 1;
         Some(new_index)
+    }
+
+    /// Find a session by its UUID and return a mutable reference
+    pub fn session_by_id_mut(&mut self, id: Uuid) -> Option<&mut AgentSession> {
+        self.sessions.iter_mut().find(|s| s.id == id)
     }
 }

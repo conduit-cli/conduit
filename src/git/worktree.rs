@@ -387,8 +387,12 @@ impl WorktreeManager {
     ///
     /// # Arguments
     /// * `worktree_path` - Path to the worktree (used for git commands)
-    /// * `old_name` - Current branch name
+    /// * `old_name` - Current branch name (must match actual current branch)
     /// * `new_name` - New branch name
+    ///
+    /// # Errors
+    /// Returns an error if the current branch doesn't match `old_name` to prevent
+    /// accidental renames when the branch has already been renamed.
     pub fn rename_branch(
         &self,
         worktree_path: &Path,
@@ -397,6 +401,15 @@ impl WorktreeManager {
     ) -> Result<(), WorktreeError> {
         if !worktree_path.exists() {
             return Err(WorktreeError::NotFound(worktree_path.to_path_buf()));
+        }
+
+        // Validate that we're on the expected branch before renaming
+        let actual_branch = self.get_current_branch(worktree_path)?;
+        if actual_branch != old_name {
+            return Err(WorktreeError::CommandFailed(format!(
+                "Branch mismatch: expected '{}' but currently on '{}'. Branch may have already been renamed.",
+                old_name, actual_branch
+            )));
         }
 
         let output = Command::new("git")

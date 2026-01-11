@@ -40,7 +40,8 @@ pub enum Effect {
     ImportSession(ExternalSession),
     /// Generate session title and branch name from first message
     GenerateTitleAndBranch {
-        tab_index: usize,
+        /// Stable session ID for correlation (avoids stale tab_index after close/reorder)
+        session_id: Uuid,
         user_message: String,
         working_dir: PathBuf,
         workspace_id: Option<Uuid>,

@@ -86,6 +86,8 @@ pub struct AgentSession {
     pub suppress_next_turn_summary: bool,
     /// AI-generated session title/description (set after first message)
     pub title: Option<String>,
+    /// Whether title generation is currently in flight (prevents duplicate calls)
+    pub title_generation_pending: bool,
 }
 
 /// Context warning notification
@@ -133,6 +135,7 @@ impl AgentSession {
             suppress_next_assistant_reply: false,
             suppress_next_turn_summary: false,
             title: None,
+            title_generation_pending: false,
         };
         session.update_status();
         session

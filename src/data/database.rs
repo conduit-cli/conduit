@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     pending_user_message TEXT,
     queued_messages TEXT NOT NULL DEFAULT '[]',
     fork_seed_id TEXT,
+    title TEXT,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 );
 

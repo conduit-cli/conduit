@@ -2753,7 +2753,7 @@ impl App {
                     .await?;
                 }
                 Effect::GenerateTitleAndBranch {
-                    tab_index,
+                    session_id,
                     user_message,
                     working_dir,
                     workspace_id,
@@ -2765,8 +2765,12 @@ impl App {
                     let workspace_dao = self.workspace_dao.clone();
 
                     tokio::spawn(async move {
+                        // Note: timeout only wraps the entire impl to avoid partial completions
+                        // (e.g., AI call succeeds but timeout fires during branch rename).
+                        // The impl internally handles errors gracefully and always reports
+                        // a usable result even if branch rename fails.
                         let result = tokio::time::timeout(
-                            std::time::Duration::from_secs(10),
+                            std::time::Duration::from_secs(30), // Increased to allow AI + git ops
                             generate_title_and_branch_impl(
                                 tools,
                                 user_message,
@@ -2780,7 +2784,7 @@ impl App {
                         .await
                         .unwrap_or_else(|_| Err("Timeout generating title".into()));
 
-                        let _ = event_tx.send(AppEvent::TitleGenerated { tab_index, result });
+                        let _ = event_tx.send(AppEvent::TitleGenerated { session_id, result });
                     });
                 }
             }
@@ -5519,31 +5523,43 @@ Acknowledge that you have received this context by replying ONLY with the single
             AppEvent::GitTracker(update) => {
                 self.handle_git_tracker_update(update);
             }
-            AppEvent::TitleGenerated { tab_index, result } => {
+            AppEvent::TitleGenerated { session_id, result } => {
+                // Clear pending flag regardless of result
+                if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) {
+                    session.title_generation_pending = false;
+                }
+
                 match result {
                     Ok(generated) => {
                         tracing::info!(
-                            tab_index,
+                            %session_id,
                             title = %generated.title,
                             new_branch = ?generated.new_branch,
                             "Session title generated"
                         );
 
-                        // Update session title
-                        if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                        // Update session title and branch display
+                        // (find again since we need fresh mutable borrow)
+                        if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id)
+                        {
                             session.title = Some(generated.title.clone());
 
-                            // Update workspace_name if branch was renamed
+                            // Update status bar branch display (not workspace_name which is a label)
                             if let Some(new_branch) = &generated.new_branch {
-                                session.workspace_name = Some(new_branch.clone());
+                                session.status_bar.set_branch_name(Some(new_branch.clone()));
                             }
+                        }
+
+                        // Refresh sidebar to show updated branch name
+                        if generated.new_branch.is_some() {
+                            self.refresh_sidebar_data();
                         }
 
                         // Save session state to persist the title
                         effects.push(Effect::SaveSessionState);
                     }
                     Err(e) => {
-                        tracing::warn!(tab_index, error = %e, "Failed to generate session title");
+                        tracing::warn!(%session_id, error = %e, "Failed to generate session title");
                         // Non-fatal - continue without title
                     }
                 }
@@ -6055,22 +6071,30 @@ Acknowledge that you have received this context by replying ONLY with the single
             config,
         });
 
-        // Generate title on first message (turn_count == 0 and no title yet)
-        let should_generate_title = {
-            if let Some(session) = self.state.tab_manager.active_session() {
-                session.turn_count == 0 && session.title.is_none()
-            } else {
-                false
-            }
-        };
+        // Generate title on first message (turn_count == 0, no title yet, not already pending)
+        // Use the specific tab_index, not active_session, to handle non-active tab submissions
+        let should_generate_title =
+            self.state.tab_manager.session(tab_index).is_some_and(|s| {
+                s.turn_count == 0 && s.title.is_none() && !s.title_generation_pending
+            });
 
         if should_generate_title {
-            if let Some(session) = self.state.tab_manager.active_session() {
-                let current_branch = session.workspace_name.clone().unwrap_or_default();
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                let session_id = session.id;
                 let workspace_id = session.workspace_id;
 
+                // Get current branch from status_bar (most accurate source from git tracker)
+                let current_branch = session
+                    .status_bar
+                    .branch_name()
+                    .unwrap_or_default()
+                    .to_string();
+
+                // Mark as pending to prevent duplicate calls
+                session.title_generation_pending = true;
+
                 effects.push(Effect::GenerateTitleAndBranch {
-                    tab_index,
+                    session_id,
                     user_message: prompt_for_title.clone(),
                     working_dir: working_dir_for_title.clone(),
                     workspace_id,
@@ -8086,46 +8110,64 @@ async fn generate_title_and_branch_impl(
     let new_branch = if workspace_id.is_some() && !current_branch.is_empty() {
         let username = get_git_username();
         let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
-        let new_branch_name = format!("{}/{}", username, suffix);
 
-        // Only rename if the new name differs from current
-        if new_branch_name != current_branch {
-            let wd = working_dir.clone();
-            let old = current_branch.clone();
-            let new_name = new_branch_name.clone();
-            let wm = worktree_manager.clone();
+        // Skip branch rename if suffix is empty or just the fallback "task"
+        // (this can happen with non-ASCII only input or empty AI response)
+        if suffix.is_empty() || suffix == "task" {
+            tracing::debug!(
+                suffix = %suffix,
+                "Skipping branch rename: sanitized suffix is empty or generic fallback"
+            );
+            None
+        } else {
+            let new_branch_name = format!("{}/{}", username, suffix);
 
-            let rename_ok =
-                tokio::task::spawn_blocking(move || wm.rename_branch(&wd, &old, &new_name).is_ok())
-                    .await
-                    .unwrap_or(false);
+            // Only rename if the new name differs from current
+            if new_branch_name != current_branch {
+                let wd = working_dir.clone();
+                let old = current_branch.clone();
+                let new_name = new_branch_name.clone();
+                let wm = worktree_manager.clone();
 
-            if rename_ok {
-                // Update database if rename succeeded
-                if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
-                    let _ = tokio::task::spawn_blocking({
-                        let dao = dao.clone();
-                        let new_branch = new_branch_name.clone();
-                        move || {
-                            if let Ok(Some(mut ws)) = dao.get_by_id(ws_id) {
-                                ws.branch = new_branch;
-                                let _ = dao.update(&ws);
-                            }
+                // Capture full error result instead of just is_ok()
+                let rename_result: Result<(), String> = tokio::task::spawn_blocking(move || {
+                    wm.rename_branch(&wd, &old, &new_name)
+                        .map_err(|e| e.to_string())
+                })
+                .await
+                .map_err(|e| format!("spawn_blocking failed: {}", e))?;
+
+                match rename_result {
+                    Ok(()) => {
+                        // Update database if rename succeeded
+                        if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
+                            let _ = tokio::task::spawn_blocking({
+                                let dao = dao.clone();
+                                let new_branch = new_branch_name.clone();
+                                move || {
+                                    if let Ok(Some(mut ws)) = dao.get_by_id(ws_id) {
+                                        ws.branch = new_branch;
+                                        let _ = dao.update(&ws);
+                                    }
+                                }
+                            })
+                            .await;
                         }
-                    })
-                    .await;
+                        Some(new_branch_name)
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            old_branch = %current_branch,
+                            new_branch = %new_branch_name,
+                            "Failed to rename git branch"
+                        );
+                        None
+                    }
                 }
-                Some(new_branch_name)
             } else {
-                tracing::warn!(
-                    "Failed to rename branch from {} to {}",
-                    current_branch,
-                    new_branch_name
-                );
                 None
             }
-        } else {
-            None
         }
     } else {
         None
