@@ -440,7 +440,7 @@ mod tests {
     /// Test that the full auth failure sequence parses correctly
     #[test]
     fn test_parse_auth_failure_full_sequence() {
-        let lines = vec![
+        let lines = [
             r#"{"type":"system","subtype":"init","cwd":"/home/fcoury/.conduit/workspaces/conduit/old-fox","session_id":"50884eed-28b7-431e-9ad8-78b326696ae7","tools":["Task"],"mcp_servers":[],"model":"claude-sonnet-4-5-20250929","permissionMode":"default","slash_commands":[],"apiKeySource":"none","claude_code_version":"2.1.2","output_style":"default","agents":[],"skills":[],"plugins":[],"uuid":"db0dbd6c-b06a-4009-8d9d-412a46693eed"}"#,
             r#"{"type":"assistant","message":{"id":"029c1c0f-6927-4a48-aae1-21a3e895456f","container":null,"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","stop_sequence":"","type":"message","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"Invalid API key · Please run /login"}],"context_management":null},"parent_tool_use_id":null,"session_id":"50884eed-28b7-431e-9ad8-78b326696ae7","uuid":"088cb8d8-a2b6-4633-860d-d2bb5562bfe2","error":"authentication_failed"}"#,
             r#"{"type":"result","subtype":"success","is_error":true,"duration_ms":262,"duration_api_ms":0,"num_turns":1,"result":"Invalid API key · Please run /login","session_id":"50884eed-28b7-431e-9ad8-78b326696ae7","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0},"modelUsage":{},"permission_denials":[],"uuid":"88523c63-2f50-4d6c-ba86-fb32c6745527"}"#,

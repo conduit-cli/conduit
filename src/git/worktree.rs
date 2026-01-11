@@ -129,6 +129,15 @@ impl WorktreeManager {
     }
 
     /// Create a new worktree from a base branch into a new branch
+    ///
+    /// # Arguments
+    /// * `repo_path` - Path to the git repository
+    /// * `base_branch` - Branch to use as the starting point
+    /// * `new_branch` - Name for the new branch to create
+    /// * `name` - Name for the worktree directory
+    ///
+    /// # Returns
+    /// Path to the created worktree
     pub fn create_worktree_from_branch(
         &self,
         repo_path: &Path,
@@ -159,12 +168,19 @@ impl WorktreeManager {
 
         if !output.status.success() {
             let initial_stderr = String::from_utf8_lossy(&output.stderr);
-            // If branch already exists, try adding worktree directly
-            // Require "branch" context to reduce false positives
-            let is_branch_exists = (initial_stderr.contains("branch")
-                && initial_stderr.contains("already exists"))
-                || initial_stderr.contains("already used by worktree")
+
+            // Check if branch is locked to another worktree - retry won't help in this case
+            let is_branch_locked = initial_stderr.contains("already used by worktree")
                 || initial_stderr.contains("already checked out");
+
+            if is_branch_locked {
+                return Err(WorktreeError::CommandFailed(initial_stderr.to_string()));
+            }
+
+            // If branch already exists (but not locked), try adding worktree directly
+            // Require "branch" context to reduce false positives
+            let is_branch_exists =
+                initial_stderr.contains("branch") && initial_stderr.contains("already exists");
 
             if is_branch_exists {
                 tracing::debug!(
@@ -237,6 +253,34 @@ impl WorktreeManager {
                 ));
             }
         }
+
+        Ok(())
+    }
+
+    /// Prune stale worktree metadata
+    ///
+    /// Removes worktree entries for paths that no longer exist on disk.
+    /// Useful when the worktree directory was deleted externally or can't be canonicalized.
+    ///
+    /// # Arguments
+    /// * `repo_path` - Path to the git repository
+    pub fn prune_worktrees(&self, repo_path: &Path) -> Result<(), WorktreeError> {
+        self.validate_git_repo(repo_path)?;
+
+        let output = Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(WorktreeError::CommandFailed(stderr.to_string()));
+        }
+
+        tracing::debug!(
+            repo_path = %repo_path.display(),
+            "Successfully pruned stale worktrees"
+        );
 
         Ok(())
     }

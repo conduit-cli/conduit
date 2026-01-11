@@ -969,7 +969,7 @@ mod tests {
         assert!(
             matches!(event1, Some(AgentEvent::ToolStarted(_))),
             "item.started should produce ToolStarted, got {:?}",
-            event1.as_ref().map(|e| std::mem::discriminant(e))
+            event1.as_ref().map(std::mem::discriminant)
         );
 
         // Second event: item.completed should create CommandOutput
@@ -977,7 +977,7 @@ mod tests {
         assert!(
             matches!(event2, Some(AgentEvent::CommandOutput(_))),
             "item.completed should produce CommandOutput, got {:?}",
-            event2.as_ref().map(|e| std::mem::discriminant(e))
+            event2.as_ref().map(std::mem::discriminant)
         );
 
         // Verify the ToolStarted has correct tool info

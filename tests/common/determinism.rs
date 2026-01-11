@@ -47,7 +47,7 @@ impl DeterministicUuidGenerator {
         let n = self.counter.fetch_add(1, Ordering::SeqCst);
         // Create a deterministic UUID from the counter
         // Uses a fixed namespace to ensure reproducibility
-        Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0000 | n as u128)
+        Uuid::from_u128(n as u128)
     }
 
     /// Reset the generator to its initial state

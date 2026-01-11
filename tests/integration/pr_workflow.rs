@@ -2,10 +2,7 @@
 //!
 //! Tests the PR preflight checks and workflow using temporary git repositories.
 
-#[path = "../common/mod.rs"]
-mod common;
-
-use common::git_fixtures::TestRepo;
+use super::common::git_fixtures::TestRepo;
 use conduit::{PrManager, PrPreflightResult};
 
 /// Test that preflight detects a clean repository

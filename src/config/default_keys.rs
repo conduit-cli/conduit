@@ -30,7 +30,8 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "C-p", Action::OpenCommandPalette);
     bind(&mut config.global, "C-M-p", Action::OpenPr); // Ctrl+Alt+P for PR
     bind(&mut config.global, "M-S-f", Action::ForkSession); // Alt+Shift+F for fork
-                                                            // Note: Ctrl+C is handled specially in app.rs for double-press detection
+
+    // Note: Ctrl+C is handled specially in app.rs for double-press detection
     bind(&mut config.global, "C-g", Action::ToggleViewMode);
     bind(&mut config.global, "C-o", Action::ShowModelSelector);
     bind(&mut config.global, "M-i", Action::OpenSessionImport);

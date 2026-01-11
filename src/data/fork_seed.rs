@@ -82,7 +82,18 @@ impl ForkSeedStore {
             }),
             agent_type: AgentType::parse(&agent_type_str),
             parent_session_id: row.get(2)?,
-            parent_workspace_id: parent_workspace_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            parent_workspace_id: parent_workspace_id_str.and_then(|s| {
+                Uuid::parse_str(&s)
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "Invalid parent_workspace_id UUID in fork_seeds: {}, error: {}",
+                            s,
+                            e
+                        );
+                        e
+                    })
+                    .ok()
+            }),
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|e| {

@@ -1580,7 +1580,7 @@ mod tests {
             messages[1]
                 .tool_args
                 .as_ref()
-                .map_or(false, |args| args.contains("ls")),
+                .is_some_and(|args| args.contains("ls")),
             "Tool args should contain the command from function_call lookup"
         );
 
@@ -1653,11 +1653,9 @@ mod tests {
         );
 
         // The tool message should show the ls command (looked up from function_calls)
-        let has_ls_tool = tool_messages.iter().any(|m| {
-            m.tool_args
-                .as_ref()
-                .map_or(false, |args| args.contains("ls"))
-        });
+        let has_ls_tool = tool_messages
+            .iter()
+            .any(|m| m.tool_args.as_ref().is_some_and(|args| args.contains("ls")));
         assert!(
             has_ls_tool,
             "Tool message should have 'ls' command from function_call lookup"

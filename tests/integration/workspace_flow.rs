@@ -3,10 +3,7 @@
 //! Tests the full workflow of creating workspaces with git worktrees
 //! and persisting them to the database.
 
-#[path = "../common/mod.rs"]
-mod common;
-
-use common::git_fixtures::TestRepo;
+use super::common::git_fixtures::TestRepo;
 use conduit::{generate_branch_name, generate_workspace_name};
 use conduit::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore, WorktreeManager};
 use std::path::PathBuf;

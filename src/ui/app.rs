@@ -6377,6 +6377,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         let prev_index = self.state.tab_manager.active_index();
         let prev_sidebar_visible = self.state.sidebar_state.visible;
         let prev_input_mode = self.state.input_mode;
+        let prev_tree_selected = self.state.sidebar_state.tree_state.selected;
 
         let mut session =
             AgentSession::with_working_dir(pending.agent_type, workspace.path.clone());
@@ -6427,6 +6428,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.sidebar_state.show();
                 }
                 self.state.input_mode = prev_input_mode;
+                self.state.sidebar_state.tree_state.selected = prev_tree_selected;
                 return Err(anyhow!(
                     "Failed to start forked agent: no start-agent effect produced."
                 ));
@@ -6445,6 +6447,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.sidebar_state.show();
                 }
                 self.state.input_mode = prev_input_mode;
+                self.state.sidebar_state.tree_state.selected = prev_tree_selected;
                 return Err(e);
             }
         };
@@ -6503,6 +6506,17 @@ Acknowledge that you have received this context by replying ONLY with the single
                     path = %workspace.path.display(),
                     "Cannot canonicalize workspace path; may already be deleted"
                 );
+                // Try to prune stale worktree metadata since the path may have been deleted
+                if let Ok(Some(repo)) = repo_dao.get_by_id(workspace.repository_id) {
+                    if let Some(base_path) = &repo.base_path {
+                        if let Err(prune_err) = self.worktree_manager.prune_worktrees(base_path) {
+                            tracing::debug!(
+                                error = %prune_err,
+                                "Failed to prune stale worktrees"
+                            );
+                        }
+                    }
+                }
                 false
             }
         };
