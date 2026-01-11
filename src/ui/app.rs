@@ -3611,10 +3611,11 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Return appropriate input mode based on context
         match ctx {
-            // PR/Fork dialogs originated from chat view, return to Normal
+            // PR/Fork/Steer dialogs originated from chat view, return to Normal
             Some(ConfirmationContext::CreatePullRequest { .. })
             | Some(ConfirmationContext::OpenExistingPr { .. })
-            | Some(ConfirmationContext::ForkSession { .. }) => InputMode::Normal,
+            | Some(ConfirmationContext::ForkSession { .. })
+            | Some(ConfirmationContext::SteerFallback { .. }) => InputMode::Normal,
             // Sidebar operations return to sidebar navigation
             Some(ConfirmationContext::ArchiveWorkspace(_))
             | Some(ConfirmationContext::RemoveProject(_)) => InputMode::SidebarNavigation,
@@ -6410,47 +6411,44 @@ Acknowledge that you have received this context by replying ONLY with the single
         // Note: suppress flags already set on session before add_session, no need to set again
 
         // Use submit_prompt_hidden - don't add 500KB seed to chat transcript
-        let effects = match self.submit_prompt_hidden(
-            pending.seed_prompt.to_string(),
-            vec![],
-            vec![],
-        ) {
-            Ok(effects) if effects.is_empty() => {
-                // Remove the broken tab and untrack workspace
-                if let Some(ref tracker) = self.git_tracker {
-                    tracker.untrack_workspace(workspace_id);
+        let effects =
+            match self.submit_prompt_hidden(pending.seed_prompt.to_string(), vec![], vec![]) {
+                Ok(effects) if effects.is_empty() => {
+                    // Remove the broken tab and untrack workspace
+                    if let Some(ref tracker) = self.git_tracker {
+                        tracker.untrack_workspace(workspace_id);
+                    }
+                    self.state.tab_manager.close_tab(new_index);
+                    let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
+                    self.state.tab_manager.switch_to(fallback);
+                    // Restore pre-fork UI state
+                    if prev_sidebar_visible {
+                        self.state.sidebar_state.show();
+                    }
+                    self.state.input_mode = prev_input_mode;
+                    self.state.sidebar_state.tree_state.selected = prev_tree_selected;
+                    return Err(anyhow!(
+                        "Failed to start forked agent: no start-agent effect produced."
+                    ));
                 }
-                self.state.tab_manager.close_tab(new_index);
-                let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
-                self.state.tab_manager.switch_to(fallback);
-                // Restore pre-fork UI state
-                if prev_sidebar_visible {
-                    self.state.sidebar_state.show();
+                Ok(effects) => effects,
+                Err(e) => {
+                    // Remove the broken tab and untrack workspace
+                    if let Some(ref tracker) = self.git_tracker {
+                        tracker.untrack_workspace(workspace_id);
+                    }
+                    self.state.tab_manager.close_tab(new_index);
+                    let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
+                    self.state.tab_manager.switch_to(fallback);
+                    // Restore pre-fork UI state
+                    if prev_sidebar_visible {
+                        self.state.sidebar_state.show();
+                    }
+                    self.state.input_mode = prev_input_mode;
+                    self.state.sidebar_state.tree_state.selected = prev_tree_selected;
+                    return Err(e);
                 }
-                self.state.input_mode = prev_input_mode;
-                self.state.sidebar_state.tree_state.selected = prev_tree_selected;
-                return Err(anyhow!(
-                    "Failed to start forked agent: no start-agent effect produced."
-                ));
-            }
-            Ok(effects) => effects,
-            Err(e) => {
-                // Remove the broken tab and untrack workspace
-                if let Some(ref tracker) = self.git_tracker {
-                    tracker.untrack_workspace(workspace_id);
-                }
-                self.state.tab_manager.close_tab(new_index);
-                let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
-                self.state.tab_manager.switch_to(fallback);
-                // Restore pre-fork UI state
-                if prev_sidebar_visible {
-                    self.state.sidebar_state.show();
-                }
-                self.state.input_mode = prev_input_mode;
-                self.state.sidebar_state.tree_state.selected = prev_tree_selected;
-                return Err(e);
-            }
-        };
+            };
 
         self.state.pending_fork_request = None;
 
@@ -7018,7 +7016,13 @@ Acknowledge that you have received this context by replying ONLY with the single
         }
 
         let (prompt, images, placeholders) = build_queued_submission(&queued, queue_delivery);
-        effects.extend(self.submit_prompt_for_tab(tab_index, prompt, images, placeholders, false)?);
+        effects.extend(self.submit_prompt_for_tab(
+            tab_index,
+            prompt,
+            images,
+            placeholders,
+            false,
+        )?);
 
         Ok(effects)
     }
