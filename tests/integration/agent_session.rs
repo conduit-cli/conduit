@@ -142,7 +142,7 @@ async fn test_mock_captures_start_config() {
         "Edit".to_string(),
     ]);
 
-    let _ = runner.start(config).await.unwrap();
+    runner.start(config).await.unwrap();
 
     let captured = runner.captured_configs();
     assert_eq!(captured.len(), 1);

@@ -50,8 +50,15 @@ impl TerminalGuard {
         if self.keyboard_enhancement_enabled {
             // Pop keyboard enhancement flags and flush immediately to ensure
             // the terminal receives this before we change terminal modes
-            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-            let _ = stdout.flush();
+            if let Err(e) = execute!(stdout, PopKeyboardEnhancementFlags) {
+                tracing::debug!(
+                    error = %e,
+                    "Failed to pop keyboard enhancement flags during cleanup"
+                );
+            }
+            if let Err(e) = stdout.flush() {
+                tracing::debug!(error = %e, "Failed to flush stdout during cleanup");
+            }
         }
         disable_raw_mode()?;
         execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
@@ -64,7 +71,9 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         if self.active {
             // Best effort cleanup - ignore errors since we can't propagate them from Drop
-            let _ = self.do_cleanup();
+            if let Err(e) = self.do_cleanup() {
+                tracing::debug!(error = %e, "Terminal cleanup failed in Drop");
+            }
         }
     }
 }
@@ -80,11 +89,21 @@ pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |panic_info| {
         // Best-effort terminal restoration before panic message is printed
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
-        let _ = stdout.flush();
-        let _ = disable_raw_mode();
-        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
-        let _ = stdout.flush();
+        if let Err(e) = execute!(stdout, PopKeyboardEnhancementFlags) {
+            tracing::debug!(error = %e, "Failed to pop keyboard enhancement flags in panic hook");
+        }
+        if let Err(e) = stdout.flush() {
+            tracing::debug!(error = %e, "Failed to flush stdout in panic hook");
+        }
+        if let Err(e) = disable_raw_mode() {
+            tracing::debug!(error = %e, "Failed to disable raw mode in panic hook");
+        }
+        if let Err(e) = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture) {
+            tracing::debug!(error = %e, "Failed to restore terminal screen in panic hook");
+        }
+        if let Err(e) = stdout.flush() {
+            tracing::debug!(error = %e, "Failed to flush stdout after panic cleanup");
+        }
 
         // Now call the original hook to print the panic
         original_hook(panic_info);

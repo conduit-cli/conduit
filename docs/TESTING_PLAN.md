@@ -286,7 +286,7 @@ mod tests {
         let runner = MockAgentRunner::new(AgentType::Claude);
 
         let config = AgentStartConfig::new("hello world", PathBuf::from("/test"));
-        let _ = runner.start(config).await.unwrap();
+        runner.start(config).await.unwrap();
 
         let captured = runner.captured_configs();
         assert_eq!(captured.len(), 1);
@@ -794,7 +794,7 @@ async fn test_mock_agent_captures_config() {
         .with_model("opus")
         .with_tools(vec!["Bash".into(), "Read".into()]);
 
-    let _ = runner.start(config).await.unwrap();
+    runner.start(config).await.unwrap();
 
     let captured = runner.captured_configs();
     assert_eq!(captured.len(), 1);
@@ -840,8 +840,8 @@ async fn test_mock_agent_with_delay() {
 
     let start = std::time::Instant::now();
 
-    let _ = handle.events.recv().await;
-    let _ = handle.events.recv().await;
+    handle.events.recv().await;
+    handle.events.recv().await;
 
     let elapsed = start.elapsed();
 
@@ -1253,7 +1253,13 @@ fn test_worktree_manager_existing_branch() {
     assert!(worktree_path.join(".git").exists(), "Worktree should have .git");
 
     // Clean up
-    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+    if let Err(e) = manager.remove_worktree(&repo.path, &worktree_path) {
+        eprintln!(
+            "Warning: failed to remove worktree {}: {}",
+            worktree_path.display(),
+            e
+        );
+    }
 }
 
 /// Test WorktreeManager::create_worktree with new branch (auto-creates)
@@ -1278,7 +1284,13 @@ fn test_worktree_manager_new_branch() {
     assert!(branches.iter().any(|b| b == &branch_name), "New branch should exist");
 
     // Clean up
-    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+    if let Err(e) = manager.remove_worktree(&repo.path, &worktree_path) {
+        eprintln!(
+            "Warning: failed to remove worktree {}: {}",
+            worktree_path.display(),
+            e
+        );
+    }
 }
 
 #[test]

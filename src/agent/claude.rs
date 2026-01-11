@@ -254,12 +254,18 @@ impl AgentRunner for ClaudeCodeRunner {
             // Parse raw events
             let parse_handle = tokio::spawn(async move {
                 if let Err(e) = JsonlStreamParser::parse_stream(stdout, raw_tx).await {
-                    let _ = tx_for_parser
+                    if let Err(send_err) = tx_for_parser
                         .send(AgentEvent::Error(ErrorEvent {
                             message: format!("Stream parsing error: {}", e),
                             is_fatal: true,
                         }))
-                        .await;
+                        .await
+                    {
+                        tracing::debug!(
+                            error = ?send_err,
+                            "Failed to send Claude stream parsing error"
+                        );
+                    }
                 }
             });
 
@@ -272,7 +278,9 @@ impl AgentRunner for ClaudeCodeRunner {
                 }
             }
 
-            let _ = parse_handle.await;
+            if let Err(join_err) = parse_handle.await {
+                tracing::warn!(error = ?join_err, "Claude parser task failed to join");
+            }
         });
 
         // Monitor process exit and capture stderr
@@ -284,7 +292,9 @@ impl AgentRunner for ClaudeCodeRunner {
             // Read stderr if available
             let stderr_content = if let Some(mut stderr) = stderr {
                 let mut buf = String::new();
-                let _ = stderr.read_to_string(&mut buf).await;
+                if let Err(e) = stderr.read_to_string(&mut buf).await {
+                    tracing::debug!(error = %e, "Failed to read Claude stderr");
+                }
                 buf
             } else {
                 String::new()
@@ -302,20 +312,32 @@ impl AgentRunner for ClaudeCodeRunner {
                             stderr_content.trim()
                         )
                     };
-                    let _ = tx_for_monitor
+                    if let Err(send_err) = tx_for_monitor
                         .send(AgentEvent::Error(ErrorEvent {
                             message: error_msg,
                             is_fatal: true,
                         }))
-                        .await;
+                        .await
+                    {
+                        tracing::debug!(
+                            error = ?send_err,
+                            "Failed to send Claude process failure"
+                        );
+                    }
                 }
                 Err(e) => {
-                    let _ = tx_for_monitor
+                    if let Err(send_err) = tx_for_monitor
                         .send(AgentEvent::Error(ErrorEvent {
                             message: format!("Failed to wait for Claude process: {}", e),
                             is_fatal: true,
                         }))
-                        .await;
+                        .await
+                    {
+                        tracing::debug!(
+                            error = ?send_err,
+                            "Failed to send Claude wait error"
+                        );
+                    }
                 }
                 Ok(_) => {}
             }
@@ -340,7 +362,7 @@ impl AgentRunner for ClaudeCodeRunner {
         }
         #[cfg(not(unix))]
         {
-            let _ = handle;
+            drop(handle);
             return Err(AgentError::NotSupported(
                 "Stop not implemented on this platform".into(),
             ));
@@ -357,7 +379,7 @@ impl AgentRunner for ClaudeCodeRunner {
         }
         #[cfg(not(unix))]
         {
-            let _ = handle;
+            drop(handle);
             return Err(AgentError::NotSupported(
                 "Kill not implemented on this platform".into(),
             ));

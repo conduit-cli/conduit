@@ -10,3 +10,7 @@ Project-specific instructions for agents working in this repo.
 
 - Based on complexity and affected surface, decide whether to follow the TDD red-green approach or not.
 - Always run `cargo check --all` after making changes and before the last test cycle.
+
+## Error handling
+
+- Do not swallow errors. Avoid `let _ =` or `_ =` to discard `Result` values; handle them explicitly or log the failure with context.

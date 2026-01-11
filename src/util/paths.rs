@@ -12,7 +12,12 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 pub fn init_data_dir(custom_path: Option<PathBuf>) {
     let path = custom_path.unwrap_or_else(default_data_dir);
     // Ignore error if already set (shouldn't happen in normal usage)
-    let _ = DATA_DIR.set(path);
+    if DATA_DIR.set(path.clone()).is_err() {
+        tracing::debug!(
+            path = %path.display(),
+            "Data directory already initialized"
+        );
+    }
 }
 
 /// Get the default data directory path (~/.conduit)

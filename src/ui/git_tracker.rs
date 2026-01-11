@@ -89,30 +89,56 @@ pub struct GitTrackerHandle {
 impl GitTrackerHandle {
     /// Track a workspace for git/PR status updates
     pub fn track_workspace(&self, workspace_id: Uuid, working_dir: PathBuf) {
-        let _ = self.cmd_tx.send(GitTrackerCommand::TrackWorkspace {
-            workspace_id,
-            working_dir,
-        });
+        if self
+            .cmd_tx
+            .send(GitTrackerCommand::TrackWorkspace {
+                workspace_id,
+                working_dir,
+            })
+            .is_err()
+        {
+            tracing::debug!("Failed to send git tracker TrackWorkspace command");
+        }
     }
 
     /// Stop tracking a workspace
     pub fn untrack_workspace(&self, workspace_id: Uuid) {
-        let _ = self
+        if self
             .cmd_tx
-            .send(GitTrackerCommand::UntrackWorkspace { workspace_id });
+            .send(GitTrackerCommand::UntrackWorkspace { workspace_id })
+            .is_err()
+        {
+            tracing::debug!("Failed to send git tracker UntrackWorkspace command");
+        }
     }
 
     /// Force an immediate refresh for a workspace
     #[allow(dead_code)]
     pub fn refresh_now(&self, workspace_id: Uuid) {
-        let _ = self
+        if self
             .cmd_tx
-            .send(GitTrackerCommand::RefreshNow { workspace_id });
+            .send(GitTrackerCommand::RefreshNow { workspace_id })
+            .is_err()
+        {
+            tracing::debug!("Failed to send git tracker RefreshNow command");
+        }
     }
 
     /// Shutdown the tracker
     pub fn shutdown(&self) {
-        let _ = self.cmd_tx.send(GitTrackerCommand::Shutdown);
+        if self.cmd_tx.send(GitTrackerCommand::Shutdown).is_err() {
+            tracing::debug!("Failed to send git tracker Shutdown command");
+        }
+    }
+}
+
+fn send_update(
+    update_tx: &mpsc::UnboundedSender<GitTrackerUpdate>,
+    update: GitTrackerUpdate,
+    context: &'static str,
+) {
+    if update_tx.send(update).is_err() {
+        tracing::debug!(context, "Failed to send git tracker update");
     }
 }
 
@@ -194,6 +220,7 @@ impl GitTracker {
     /// TODO: Consider parallel polling with join_all for many workspaces
     async fn poll_git_status(&mut self) {
         let workspace_ids: Vec<_> = self.workspaces.keys().copied().collect();
+        let update_tx = self.update_tx.clone();
 
         for workspace_id in workspace_ids {
             if let Some((working_dir, state)) = self.workspaces.get_mut(&workspace_id) {
@@ -209,10 +236,14 @@ impl GitTracker {
                 if new_stats != state.diff_stats {
                     state.diff_stats = new_stats.clone();
                     state.last_git_check = Some(Instant::now());
-                    let _ = self.update_tx.send(GitTrackerUpdate::GitStatsChanged {
-                        workspace_id,
-                        stats: new_stats,
-                    });
+                    send_update(
+                        &update_tx,
+                        GitTrackerUpdate::GitStatsChanged {
+                            workspace_id,
+                            stats: new_stats,
+                        },
+                        "git_stats_changed",
+                    );
                 }
 
                 // Also check branch name
@@ -226,10 +257,14 @@ impl GitTracker {
                 if new_branch != state.branch_name {
                     state.branch_name = new_branch.clone();
                     // Always send update (including None for detached HEAD)
-                    let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
-                        workspace_id,
-                        branch: new_branch,
-                    });
+                    send_update(
+                        &update_tx,
+                        GitTrackerUpdate::BranchChanged {
+                            workspace_id,
+                            branch: new_branch,
+                        },
+                        "branch_changed",
+                    );
                 }
             }
         }
@@ -238,6 +273,7 @@ impl GitTracker {
     /// Check PR status for all tracked workspaces
     async fn poll_pr_status(&mut self) {
         let workspace_ids: Vec<_> = self.workspaces.keys().copied().collect();
+        let update_tx = self.update_tx.clone();
 
         for workspace_id in workspace_ids {
             if let Some((working_dir, state)) = self.workspaces.get_mut(&workspace_id) {
@@ -270,10 +306,14 @@ impl GitTracker {
                     state.last_pr_check = Some(Instant::now());
                     // Send update: None means status unavailable (gh failed),
                     // Some with exists=false means no PR, Some with exists=true means PR exists
-                    let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
-                        workspace_id,
-                        status: new_pr_status,
-                    });
+                    send_update(
+                        &update_tx,
+                        GitTrackerUpdate::PrStatusChanged {
+                            workspace_id,
+                            status: new_pr_status,
+                        },
+                        "pr_status_changed",
+                    );
                 }
             }
         }
@@ -282,6 +322,7 @@ impl GitTracker {
     /// Check a single workspace immediately (both git and PR)
     async fn check_workspace(&mut self, workspace_id: Uuid, working_dir: &Path) {
         let dir = working_dir.to_path_buf();
+        let update_tx = self.update_tx.clone();
 
         // Get git diff stats
         let new_stats = tokio::task::spawn_blocking({
@@ -316,16 +357,24 @@ impl GitTracker {
         }
 
         // Send all updates
-        let _ = self.update_tx.send(GitTrackerUpdate::GitStatsChanged {
-            workspace_id,
-            stats: new_stats,
-        });
+        send_update(
+            &update_tx,
+            GitTrackerUpdate::GitStatsChanged {
+                workspace_id,
+                stats: new_stats,
+            },
+            "git_stats_changed",
+        );
 
         // Always send branch update (including None for detached HEAD)
-        let _ = self.update_tx.send(GitTrackerUpdate::BranchChanged {
-            workspace_id,
-            branch: new_branch,
-        });
+        send_update(
+            &update_tx,
+            GitTrackerUpdate::BranchChanged {
+                workspace_id,
+                branch: new_branch,
+            },
+            "branch_changed",
+        );
 
         // Send PR update: None means status unavailable (gh failed),
         // Some with exists=false means no PR, Some with exists=true means PR exists
@@ -335,10 +384,14 @@ impl GitTracker {
             pr_number = new_pr_status.as_ref().and_then(|s| s.number),
             "Sending PR status update from check_workspace"
         );
-        let _ = self.update_tx.send(GitTrackerUpdate::PrStatusChanged {
-            workspace_id,
-            status: new_pr_status,
-        });
+        send_update(
+            &update_tx,
+            GitTrackerUpdate::PrStatusChanged {
+                workspace_id,
+                status: new_pr_status,
+            },
+            "pr_status_changed",
+        );
     }
 }
 

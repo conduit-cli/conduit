@@ -147,7 +147,7 @@ impl TurnSummary {
         }
 
         // Respect max_width by truncating if needed
-        let _ = max_width; // TODO: implement truncation if needed
+        let _max_width = max_width; // TODO: implement truncation if needed
 
         Line::from(spans)
     }

@@ -307,7 +307,13 @@ fn test_worktree_manager_existing_branch() {
     );
 
     // Clean up (WorktreeManager doesn't auto-cleanup like TestRepo)
-    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+    if let Err(e) = manager.remove_worktree(&repo.path, &worktree_path) {
+        eprintln!(
+            "Warning: failed to remove worktree {}: {}",
+            worktree_path.display(),
+            e
+        );
+    }
 }
 
 /// Test WorktreeManager::create_worktree with new branch
@@ -343,7 +349,13 @@ fn test_worktree_manager_new_branch() {
     );
 
     // Clean up
-    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+    if let Err(e) = manager.remove_worktree(&repo.path, &worktree_path) {
+        eprintln!(
+            "Warning: failed to remove worktree {}: {}",
+            worktree_path.display(),
+            e
+        );
+    }
 }
 
 /// Test WorktreeManager error handling for already-existing worktree
@@ -365,5 +377,11 @@ fn test_worktree_manager_already_exists_error() {
     assert!(result2.is_err(), "Should fail when worktree already exists");
 
     // Clean up
-    let _ = manager.remove_worktree(&repo.path, &worktree_path);
+    if let Err(e) = manager.remove_worktree(&repo.path, &worktree_path) {
+        eprintln!(
+            "Warning: failed to remove worktree {}: {}",
+            worktree_path.display(),
+            e
+        );
+    }
 }

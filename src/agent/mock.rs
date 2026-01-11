@@ -420,7 +420,7 @@ mod tests {
             .with_model("opus")
             .with_tools(vec!["Bash".to_string(), "Read".to_string()]);
 
-        let _ = runner.start(config).await.unwrap();
+        runner.start(config).await.unwrap();
 
         let captured = runner.captured_configs();
         assert_eq!(captured.len(), 1);

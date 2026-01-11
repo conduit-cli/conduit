@@ -90,6 +90,16 @@ pub struct App {
     git_tracker: Option<crate::ui::git_tracker::GitTrackerHandle>,
 }
 
+fn send_app_event(
+    event_tx: &mpsc::UnboundedSender<AppEvent>,
+    event: AppEvent,
+    context: &'static str,
+) {
+    if event_tx.send(event).is_err() {
+        tracing::debug!(context, "Failed to send AppEvent");
+    }
+}
+
 impl App {
     const AUTO_COPY_SELECTION: bool = false;
     // When true, selection drag auto-scrolls as soon as the cursor hits the first/last row.
@@ -587,7 +597,7 @@ impl App {
         let tx = self.event_tx.clone();
         tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
-                let _ = tx.send(AppEvent::Quit);
+                send_app_event(&tx, AppEvent::Quit, "shutdown:ctrl_c");
             }
         });
 
@@ -599,7 +609,7 @@ impl App {
                     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
                 {
                     sigterm.recv().await;
-                    let _ = tx.send(AppEvent::Quit);
+                    send_app_event(&tx, AppEvent::Quit, "shutdown:sigterm");
                 }
             });
 
@@ -609,7 +619,7 @@ impl App {
                     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
                 {
                     sighup.recv().await;
-                    let _ = tx.send(AppEvent::Quit);
+                    send_app_event(&tx, AppEvent::Quit, "shutdown:sighup");
                 }
             });
         }
@@ -2312,20 +2322,36 @@ impl App {
                             Ok(mut handle) => {
                                 // Send PID to main app for interrupt support
                                 let pid = handle.pid;
-                                let _ = event_tx.send(AppEvent::AgentStarted { tab_index, pid });
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::AgentStarted { tab_index, pid },
+                                    "agent_started",
+                                );
 
                                 while let Some(event) = handle.events.recv().await {
                                     if event_tx.send(AppEvent::Agent { tab_index, event }).is_err()
                                     {
+                                        tracing::debug!("Failed to send AppEvent for agent stream");
                                         break;
                                     }
                                 }
-                                let _ = event_tx.send(AppEvent::AgentStreamEnded { tab_index });
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::AgentStreamEnded { tab_index },
+                                    "agent_stream_ended",
+                                );
                             }
                             Err(e) => {
-                                let _ =
-                                    event_tx.send(AppEvent::Error(format!("Agent error: {}", e)));
-                                let _ = event_tx.send(AppEvent::AgentStreamEnded { tab_index });
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::Error(format!("Agent error: {}", e)),
+                                    "agent_start_error",
+                                );
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::AgentStreamEnded { tab_index },
+                                    "agent_stream_ended",
+                                );
                             }
                         }
                     });
@@ -2337,11 +2363,15 @@ impl App {
                     let event_tx = self.event_tx.clone();
                     tokio::task::spawn_blocking(move || {
                         let result = PrManager::preflight_check(&working_dir);
-                        let _ = event_tx.send(AppEvent::PrPreflightCompleted {
-                            tab_index,
-                            working_dir,
-                            result,
-                        });
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::PrPreflightCompleted {
+                                tab_index,
+                                working_dir,
+                                result,
+                            },
+                            "pr_preflight_completed",
+                        );
                     });
                 }
                 Effect::OpenPrInBrowser { working_dir } => {
@@ -2349,12 +2379,20 @@ impl App {
                     tokio::task::spawn_blocking(move || {
                         let result =
                             PrManager::open_pr_in_browser(&working_dir).map_err(|e| e.to_string());
-                        let _ = event_tx.send(AppEvent::OpenPrCompleted { result });
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::OpenPrCompleted { result },
+                            "open_pr_completed",
+                        );
                     });
                 }
                 Effect::DumpDebugState => {
                     let result = self.dump_debug_state();
-                    let _ = self.event_tx.send(AppEvent::DebugDumped { result });
+                    send_app_event(
+                        &self.event_tx,
+                        AppEvent::DebugDumped { result },
+                        "debug_dumped",
+                    );
                 }
                 Effect::CreateWorkspace { repo_id } => {
                     let repo_dao = self.repo_dao.clone();
@@ -2404,14 +2442,14 @@ impl App {
                             let workspace_id = workspace.id;
 
                             if let Err(e) = workspace_dao.create(&workspace) {
-                                let _ = worktree_manager
-                                    .remove_worktree(&base_path, &workspace.path)
-                                    .map_err(|cleanup_err| {
-                                        tracing::error!(
-                                            error = %cleanup_err,
-                                            "Failed to clean up worktree after DB error"
-                                        );
-                                    });
+                                if let Err(cleanup_err) =
+                                    worktree_manager.remove_worktree(&base_path, &workspace.path)
+                                {
+                                    tracing::error!(
+                                        error = %cleanup_err,
+                                        "Failed to clean up worktree after DB error"
+                                    );
+                                }
                                 return Err(format!("Failed to save workspace to database: {}", e));
                             }
 
@@ -2421,7 +2459,11 @@ impl App {
                             })
                         })();
 
-                        let _ = event_tx.send(AppEvent::WorkspaceCreated { result });
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::WorkspaceCreated { result },
+                            "workspace_created",
+                        );
                     });
                 }
                 Effect::ForkWorkspace {
@@ -2488,14 +2530,14 @@ impl App {
                             let workspace_id = workspace.id;
 
                             if let Err(e) = workspace_dao.create(&workspace) {
-                                let _ = worktree_manager
-                                    .remove_worktree(&base_path, &workspace.path)
-                                    .map_err(|cleanup_err| {
-                                        tracing::error!(
-                                            error = %cleanup_err,
-                                            "Failed to clean up worktree after DB error"
-                                        );
-                                    });
+                                if let Err(cleanup_err) =
+                                    worktree_manager.remove_worktree(&base_path, &workspace.path)
+                                {
+                                    tracing::error!(
+                                        error = %cleanup_err,
+                                        "Failed to clean up worktree after DB error"
+                                    );
+                                }
                                 return Err(format!("Failed to save workspace to database: {}", e));
                             }
 
@@ -2506,7 +2548,11 @@ impl App {
                         })(
                         );
 
-                        let _ = event_tx.send(AppEvent::ForkWorkspaceCreated { result });
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::ForkWorkspaceCreated { result },
+                            "fork_workspace_created",
+                        );
                     });
                 }
                 Effect::ArchiveWorkspace { workspace_id } => {
@@ -2573,7 +2619,11 @@ impl App {
                         })(
                         );
 
-                        let _ = event_tx.send(AppEvent::WorkspaceArchived { result });
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::WorkspaceArchived { result },
+                            "workspace_archived",
+                        );
                     });
                 }
                 Effect::RemoveProject { repo_id } => {
@@ -2588,24 +2638,32 @@ impl App {
 
                         let Some(repo_dao) = repo_dao else {
                             errors.push("No repository DAO available".to_string());
-                            let _ = event_tx.send(AppEvent::ProjectRemoved {
-                                result: RemoveProjectResult {
-                                    repo_id,
-                                    workspace_ids,
-                                    errors,
+                            send_app_event(
+                                &event_tx,
+                                AppEvent::ProjectRemoved {
+                                    result: RemoveProjectResult {
+                                        repo_id,
+                                        workspace_ids,
+                                        errors,
+                                    },
                                 },
-                            });
+                                "project_removed",
+                            );
                             return;
                         };
                         let Some(workspace_dao) = workspace_dao else {
                             errors.push("No workspace DAO available".to_string());
-                            let _ = event_tx.send(AppEvent::ProjectRemoved {
-                                result: RemoveProjectResult {
-                                    repo_id,
-                                    workspace_ids,
-                                    errors,
+                            send_app_event(
+                                &event_tx,
+                                AppEvent::ProjectRemoved {
+                                    result: RemoveProjectResult {
+                                        repo_id,
+                                        workspace_ids,
+                                        errors,
+                                    },
                                 },
-                            });
+                                "project_removed",
+                            );
                             return;
                         };
 
@@ -2613,24 +2671,32 @@ impl App {
                             Ok(Some(repo)) => (repo.base_path, repo.name),
                             Ok(None) => {
                                 errors.push("Repository not found".to_string());
-                                let _ = event_tx.send(AppEvent::ProjectRemoved {
-                                    result: RemoveProjectResult {
-                                        repo_id,
-                                        workspace_ids,
-                                        errors,
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::ProjectRemoved {
+                                        result: RemoveProjectResult {
+                                            repo_id,
+                                            workspace_ids,
+                                            errors,
+                                        },
                                     },
-                                });
+                                    "project_removed",
+                                );
                                 return;
                             }
                             Err(e) => {
                                 errors.push(format!("Failed to load repository: {}", e));
-                                let _ = event_tx.send(AppEvent::ProjectRemoved {
-                                    result: RemoveProjectResult {
-                                        repo_id,
-                                        workspace_ids,
-                                        errors,
+                                send_app_event(
+                                    &event_tx,
+                                    AppEvent::ProjectRemoved {
+                                        result: RemoveProjectResult {
+                                            repo_id,
+                                            workspace_ids,
+                                            errors,
+                                        },
                                     },
-                                });
+                                    "project_removed",
+                                );
                                 return;
                             }
                         };
@@ -2692,19 +2758,25 @@ impl App {
                                 .push(format!("Failed to delete repository from database: {}", e));
                         }
 
-                        let _ = event_tx.send(AppEvent::ProjectRemoved {
-                            result: RemoveProjectResult {
-                                repo_id,
-                                workspace_ids,
-                                errors,
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::ProjectRemoved {
+                                result: RemoveProjectResult {
+                                    repo_id,
+                                    workspace_ids,
+                                    errors,
+                                },
                             },
-                        });
+                            "project_removed",
+                        );
                     });
                 }
                 Effect::CopyToClipboard(text) => {
                     use arboard::Clipboard;
                     if let Ok(mut clipboard) = Clipboard::new() {
-                        let _ = clipboard.set_text(text);
+                        if let Err(e) = clipboard.set_text(text) {
+                            tracing::debug!(error = %e, "Failed to copy text to clipboard");
+                        }
                     }
                 }
                 Effect::DiscoverSessions => {
@@ -2726,7 +2798,7 @@ impl App {
                                     AppEvent::SessionDiscoveryComplete
                                 }
                             };
-                            let _ = event_tx.send(event);
+                            send_app_event(&event_tx, event, "session_discovery_update");
                         });
                     });
                 }
@@ -2928,7 +3000,7 @@ impl App {
                 self.config.theme_name = previous_theme_name;
                 self.config.theme_path = previous_theme_path;
                 self.state.theme_picker_state.hide(true); // Restore original theme
-                let _ = self.state.theme_picker_state.take_error();
+                self.state.theme_picker_state.take_error();
                 self.state.input_mode = InputMode::Normal;
                 self.state.set_timed_footer_message(
                     format!("Failed to save theme: {err}"),
@@ -3085,7 +3157,13 @@ impl App {
             .and_then(|dao| dao.get_by_workspace_id(workspace_id).ok().flatten());
 
         // Update last accessed
-        let _ = workspace_dao.update_last_accessed(workspace_id);
+        if let Err(e) = workspace_dao.update_last_accessed(workspace_id) {
+            tracing::debug!(
+                error = %e,
+                workspace_id = %workspace_id,
+                "Failed to update workspace last accessed time"
+            );
+        }
 
         let has_saved_session = saved_tab.is_some();
         let no_agents_available = !self.tools.is_available(crate::util::Tool::Claude)
@@ -5317,7 +5395,13 @@ Acknowledge that you have received this context by replying ONLY with the single
                             if let Some(pending) = self.state.pending_fork_request.take() {
                                 if let Some(seed_id) = pending.fork_seed_id {
                                     if let Some(dao) = &self.fork_seed_dao {
-                                        let _ = dao.delete(seed_id);
+                                        if let Err(e) = dao.delete(seed_id) {
+                                            tracing::debug!(
+                                                error = %e,
+                                                seed_id = %seed_id,
+                                                "Failed to delete fork seed after fork error"
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -5340,7 +5424,13 @@ Acknowledge that you have received this context by replying ONLY with the single
                     if let Some(pending) = self.state.pending_fork_request.take() {
                         if let Some(seed_id) = pending.fork_seed_id {
                             if let Some(dao) = &self.fork_seed_dao {
-                                let _ = dao.delete(seed_id);
+                                if let Err(e) = dao.delete(seed_id) {
+                                    tracing::debug!(
+                                        error = %e,
+                                        seed_id = %seed_id,
+                                        "Failed to delete fork seed after fork error"
+                                    );
+                                }
                             }
                         }
                     }

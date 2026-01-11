@@ -323,7 +323,7 @@ impl Drop for TestRepo {
         let worktrees = self.worktrees.lock().unwrap();
         for worktree_path in worktrees.iter() {
             // First, remove the worktree from git's tracking
-            let _ = Command::new("git")
+            match Command::new("git")
                 .args([
                     "worktree",
                     "remove",
@@ -331,11 +331,35 @@ impl Drop for TestRepo {
                     worktree_path.to_str().unwrap_or(""),
                 ])
                 .current_dir(&self.path)
-                .output();
+                .output()
+            {
+                Ok(output) => {
+                    if !output.status.success() {
+                        eprintln!(
+                            "Warning: git worktree remove failed for {}: {}",
+                            worktree_path.display(),
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: failed to run git worktree remove for {}: {}",
+                        worktree_path.display(),
+                        e
+                    );
+                }
+            }
 
             // Then remove the directory if it still exists
             if worktree_path.exists() {
-                let _ = std::fs::remove_dir_all(worktree_path);
+                if let Err(e) = std::fs::remove_dir_all(worktree_path) {
+                    eprintln!(
+                        "Warning: failed to remove worktree directory {}: {}",
+                        worktree_path.display(),
+                        e
+                    );
+                }
             }
         }
     }

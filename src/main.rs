@@ -479,7 +479,12 @@ fn run_debug_keys() -> Result<()> {
 
     // Restore terminal
     if keyboard_enhancement_enabled {
-        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        if let Err(e) = execute!(stdout, PopKeyboardEnhancementFlags) {
+            eprintln!(
+                "Warning: Failed to restore keyboard enhancement flags: {}",
+                e
+            );
+        }
     }
     disable_raw_mode()?;
     execute!(stdout, LeaveAlternateScreen)?;
