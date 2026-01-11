@@ -4772,8 +4772,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
     /// Handle click in sidebar area
     fn handle_sidebar_click(&mut self, x: u16, y: u16, sidebar_area: Rect) -> Option<Effect> {
-        // Account for title area (3 rows) + separator (1 row) = 4 rows
-        let tree_start_y = sidebar_area.y + 4;
+        // Use centralized constant for header height (same as hover hit-testing)
+        let tree_start_y = sidebar_area.y + SIDEBAR_HEADER_ROWS;
         if y < tree_start_y {
             return None; // Clicked on title or separator
         }

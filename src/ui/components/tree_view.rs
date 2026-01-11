@@ -1287,4 +1287,65 @@ mod tests {
             name_end
         );
     }
+
+    /// Ensure MOCK_SIDEBAR_PR_DISPLAY is false in committed code.
+    /// This test will fail CI if someone accidentally commits with the flag enabled.
+    #[test]
+    fn test_mock_sidebar_pr_display_is_disabled() {
+        assert!(
+            !MOCK_SIDEBAR_PR_DISPLAY,
+            "MOCK_SIDEBAR_PR_DISPLAY must be false in committed code"
+        );
+    }
+
+    #[test]
+    fn test_truncate_branch_name_fits() {
+        // Branch fits - no truncation
+        assert_eq!(truncate_branch_name("main", 10), "main");
+        assert_eq!(truncate_branch_name("feature/test", 20), "feature/test");
+    }
+
+    #[test]
+    fn test_truncate_branch_name_with_slash() {
+        // Branch with slash - preserve suffix after slash
+        // max_width 20, "…/" takes 2 chars, leaving 18 for suffix
+        // but we need 1 char for trailing "…", so 17 chars from suffix
+        assert_eq!(
+            truncate_branch_name("fcoury/very-long-branch-name", 20),
+            "…/very-long-branch-…" // 20 chars total: 1 + 1 + 17 + 1
+        );
+        // Suffix fits with ellipsis prefix (input exceeds max)
+        assert_eq!(
+            truncate_branch_name("username/short", 10), // 14 chars, needs truncation
+            "…/short"                                   // 7 chars (fits because suffix is short)
+        );
+        // Exact fit - no truncation needed
+        assert_eq!(
+            truncate_branch_name("user/short", 10), // 10 chars = max_width, no truncation
+            "user/short"
+        );
+    }
+
+    #[test]
+    fn test_truncate_branch_name_no_slash() {
+        // No slash - simple truncation with ellipsis
+        assert_eq!(
+            truncate_branch_name("very-long-branch-name-without-slash", 15),
+            "very-long-bran…"
+        );
+    }
+
+    #[test]
+    fn test_truncate_branch_name_edge_cases() {
+        // Empty string
+        assert_eq!(truncate_branch_name("", 10), "");
+        // Single character
+        assert_eq!(truncate_branch_name("a", 10), "a");
+        // Exact fit
+        assert_eq!(truncate_branch_name("exact", 5), "exact");
+        // One over
+        assert_eq!(truncate_branch_name("exactx", 5), "exac…");
+        // Very small max_width
+        assert_eq!(truncate_branch_name("test/branch", 3), "te…");
+    }
 }
