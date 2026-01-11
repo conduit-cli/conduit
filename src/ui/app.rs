@@ -6083,10 +6083,11 @@ Acknowledge that you have received this context by replying ONLY with the single
             config,
         });
 
-        // Generate title on first message (turn_count == 0, no title yet, not already pending)
+        // Generate title on first user message (turn_count == 0, no title yet, not already pending)
+        // Skip for hidden prompts (e.g., fork seeds) - those are not "first user messages"
         // Use the specific tab_index, not active_session, to handle non-active tab submissions
-        let should_generate_title =
-            self.state.tab_manager.session(tab_index).is_some_and(|s| {
+        let should_generate_title = !hidden
+            && self.state.tab_manager.session(tab_index).is_some_and(|s| {
                 s.turn_count == 0 && s.title.is_none() && !s.title_generation_pending
             });
 
@@ -8128,79 +8129,128 @@ async fn generate_title_and_branch_impl(
         .map_err(|e| e.to_string())?;
 
     // Try to rename branch if workspace exists
-    let new_branch = if workspace_id.is_some() && !current_branch.is_empty() {
-        let raw_username = get_git_username();
-        // Sanitize username to ensure valid git ref (spaces, special chars become hyphens)
-        let username = sanitize_branch_suffix(&raw_username);
-        let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
+    let new_branch = if workspace_id.is_some() {
+        // Resolve current branch: use provided value or fetch from git if empty/stale
+        let resolved_branch = if current_branch.is_empty() {
+            let wd = working_dir.clone();
+            let wm = worktree_manager.clone();
+            tokio::task::spawn_blocking(move || wm.get_current_branch(&wd).ok())
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        } else {
+            current_branch.clone()
+        };
 
-        // Skip branch rename if suffix is empty or just the fallback "task"
-        // (this can happen with non-ASCII only input or empty AI response)
-        if suffix.is_empty() || suffix == "task" {
-            tracing::debug!(
-                suffix = %suffix,
-                "Skipping branch rename: sanitized suffix is empty or generic fallback"
-            );
+        if resolved_branch.is_empty() {
+            tracing::debug!("Skipping branch rename: could not determine current branch");
             None
         } else {
-            // If username sanitizes to empty/fallback, drop the prefix and use the suffix alone.
-            // (Suffix is already sanitized to ASCII kebab-case with no slashes.)
-            let new_branch_name = if username.is_empty() || username == "task" {
+            let raw_username = get_git_username();
+            // Sanitize username to ensure valid git ref (spaces, special chars become hyphens)
+            // Note: sanitize_branch_suffix returns "task" for empty input, so we only check for "task"
+            let username = sanitize_branch_suffix(&raw_username);
+            let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
+
+            // Skip branch rename if suffix is just the fallback "task"
+            // (this can happen with non-ASCII only input or empty AI response)
+            if suffix == "task" {
                 tracing::debug!(
-                    raw_username = %raw_username,
-                    sanitized = %username,
-                    "Username unusable; generating branch without username prefix"
+                    suffix = %suffix,
+                    "Skipping branch rename: sanitized suffix is generic fallback"
                 );
-                suffix.clone()
+                None
             } else {
-                format!("{}/{}", username, suffix)
-            };
+                // If username sanitizes to fallback, drop the prefix and use the suffix alone.
+                // (Suffix is already sanitized to ASCII kebab-case with no slashes.)
+                let new_branch_name = if username == "task" {
+                    tracing::debug!(
+                        raw_username = %raw_username,
+                        sanitized = %username,
+                        "Username unusable; generating branch without username prefix"
+                    );
+                    suffix.clone()
+                } else {
+                    format!("{}/{}", username, suffix)
+                };
 
-            // Only rename if the new name differs from current
-            if new_branch_name != current_branch {
-                let wd = working_dir.clone();
-                let old = current_branch.clone();
-                let new_name = new_branch_name.clone();
-                let wm = worktree_manager.clone();
+                // Only rename if the new name differs from current
+                if new_branch_name != resolved_branch {
+                    let wd = working_dir.clone();
+                    let old = resolved_branch.clone();
+                    let new_name = new_branch_name.clone();
+                    let wm = worktree_manager.clone();
 
-                // Capture full error result instead of just is_ok()
-                let rename_result: Result<(), String> = tokio::task::spawn_blocking(move || {
-                    wm.rename_branch(&wd, &old, &new_name)
-                        .map_err(|e| e.to_string())
-                })
-                .await
-                .map_err(|e| format!("spawn_blocking failed: {}", e))?;
+                    // Capture full error result instead of just is_ok()
+                    let rename_result: Result<(), String> =
+                        tokio::task::spawn_blocking(move || {
+                            wm.rename_branch(&wd, &old, &new_name)
+                                .map_err(|e| e.to_string())
+                        })
+                        .await
+                        .map_err(|e| format!("spawn_blocking failed: {}", e))?;
 
-                match rename_result {
-                    Ok(()) => {
-                        // Update database if rename succeeded
-                        if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
-                            let _ = tokio::task::spawn_blocking({
-                                let dao = dao.clone();
-                                let new_branch = new_branch_name.clone();
-                                move || {
-                                    if let Ok(Some(mut ws)) = dao.get_by_id(ws_id) {
-                                        ws.branch = new_branch;
-                                        let _ = dao.update(&ws);
+                    match rename_result {
+                        Ok(()) => {
+                            // Update database if rename succeeded
+                            if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
+                                let db_update_result = tokio::task::spawn_blocking({
+                                    let dao = dao.clone();
+                                    let new_branch = new_branch_name.clone();
+                                    move || {
+                                        if let Ok(Some(mut ws)) = dao.get_by_id(ws_id) {
+                                            ws.branch = new_branch.clone();
+                                            dao.update(&ws).map_err(|e| {
+                                                format!(
+                                                    "Failed to update workspace branch to {}: {}",
+                                                    new_branch, e
+                                                )
+                                            })
+                                        } else {
+                                            Err(format!(
+                                                "Workspace {} not found for branch update",
+                                                ws_id
+                                            ))
+                                        }
+                                    }
+                                })
+                                .await;
+
+                                // Log any errors from the DB update (don't fail the whole operation)
+                                match db_update_result {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(e)) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            workspace_id = %ws_id,
+                                            "Failed to persist branch rename to database"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            workspace_id = %ws_id,
+                                            "spawn_blocking failed for database update"
+                                        );
                                     }
                                 }
-                            })
-                            .await;
+                            }
+                            Some(new_branch_name)
                         }
-                        Some(new_branch_name)
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                old_branch = %resolved_branch,
+                                new_branch = %new_branch_name,
+                                "Failed to rename git branch"
+                            );
+                            None
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            old_branch = %current_branch,
-                            new_branch = %new_branch_name,
-                            "Failed to rename git branch"
-                        );
-                        None
-                    }
+                } else {
+                    None
                 }
-            } else {
-                None
             }
         }
     } else {
