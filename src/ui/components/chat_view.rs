@@ -1737,8 +1737,12 @@ fn wrap_spans_with_joiners(
 
         if line_width + ch_width > max_width && !current.is_empty() {
             if let Some((break_idx, break_width)) = last_break {
-                // Word-boundary wrap: keep trailing whitespace as a joiner for copy reconstruction.
-                let joiner = trailing_whitespace(&current);
+                // Word-boundary wrap: keep whitespace at the break as a joiner for copy reconstruction.
+                let joiner = if break_idx == 0 {
+                    String::new()
+                } else {
+                    trailing_whitespace(&current[..break_idx.min(current.len())])
+                };
                 let next_line = current.split_off(break_idx);
                 lines.push(current);
                 joiners.push(pending_joiner.take());
@@ -2397,6 +2401,16 @@ mod tests {
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
         assert_eq!(out, "helloworld");
+    }
+
+    #[test]
+    fn test_wrap_spans_joiner_uses_break_whitespace() {
+        let spans = vec![Span::raw("ab cd ef".to_string())];
+        let (_lines, joiners) = wrap_spans_with_joiners(spans, 5);
+
+        assert!(joiners.len() > 1);
+        assert_eq!(joiners[0], None);
+        assert_eq!(joiners[1], Some(" ".to_string()));
     }
 
     #[test]
