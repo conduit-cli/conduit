@@ -1,5 +1,7 @@
 # Pending
 
+- [ ] Sweep the code for "\_ = " error swallowing instances, add it to AGENTS.md and CLAUDE.md
+
 - [ ] BUG: don't allow the user to send messages while streaming
 
 - [ ] Handle claude ExitPlanMode and AskQuestion tools properly

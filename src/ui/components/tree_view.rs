@@ -878,6 +878,9 @@ impl SidebarData {
 /// Truncate a branch name to fit available width, using "…/suffix" format
 /// E.g., "fcoury/very-long-branch-name" → "…/very-long-branch-name" → "…/very-long-bra…"
 fn truncate_branch_name(branch: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
     if branch.chars().count() <= max_width {
         return branch.to_string();
     }
@@ -1347,5 +1350,7 @@ mod tests {
         assert_eq!(truncate_branch_name("exactx", 5), "exac…");
         // Very small max_width
         assert_eq!(truncate_branch_name("test/branch", 3), "te…");
+        // Zero max_width returns empty string
+        assert_eq!(truncate_branch_name("any/branch", 0), "");
     }
 }

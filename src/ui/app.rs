@@ -4262,7 +4262,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Update hover state for sidebar workspace name expansion
                 if let Some(sidebar_area) = self.state.sidebar_area {
                     // Tree view starts after header (uses centralized constant for consistency)
-                    let tree_start_y = sidebar_area.y + SIDEBAR_HEADER_ROWS;
+                    let tree_start_y = sidebar_area.y.saturating_add(SIDEBAR_HEADER_ROWS);
                     // Sidebar has no borders - tree renders directly in content area
                     let inner_x = sidebar_area.x;
                     let inner_width = sidebar_area.width as usize;
@@ -4773,7 +4773,7 @@ Acknowledge that you have received this context by replying ONLY with the single
     /// Handle click in sidebar area
     fn handle_sidebar_click(&mut self, x: u16, y: u16, sidebar_area: Rect) -> Option<Effect> {
         // Use centralized constant for header height (same as hover hit-testing)
-        let tree_start_y = sidebar_area.y + SIDEBAR_HEADER_ROWS;
+        let tree_start_y = sidebar_area.y.saturating_add(SIDEBAR_HEADER_ROWS);
         if y < tree_start_y {
             return None; // Clicked on title or separator
         }
