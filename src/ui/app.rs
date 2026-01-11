@@ -5564,14 +5564,16 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                     Err(e) => {
                         tracing::warn!(%session_id, error = %e, "Failed to generate session title");
-                        // Display warning in the conversation
+                        // Clear pending flag so user can retry
                         if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id)
                         {
-                            let display = MessageDisplay::System {
-                                content: format!("⚠️ Failed to generate session title: {}", e),
-                            };
-                            session.chat_view.push(display.to_chat_message());
+                            session.title_generation_pending = false;
                         }
+                        // Show transient footer message (less noisy than chat message)
+                        self.state.set_timed_footer_message(
+                            format!("Title generation failed: {}", e),
+                            Duration::from_secs(5),
+                        );
                     }
                 }
             }
@@ -7437,24 +7439,32 @@ Acknowledge that you have received this context by replying ONLY with the single
                     ])
                     .split(content_area);
 
+                // Extract named areas to avoid brittle numeric indices
+                let tab_bar_chunk = chunks[0];
+                let header_chunk = chunks[1];
+                let chat_chunk = chunks[2];
+                let input_chunk = chunks[3];
+                let status_bar_chunk = chunks[4];
+                let gap_chunk = chunks[5];
+
                 // Create margin-adjusted areas for input, status bar, and gap rows
                 let input_area_inner = Rect {
-                    x: chunks[3].x + INPUT_MARGIN_LEFT,
-                    y: chunks[3].y,
-                    width: chunks[3].width.saturating_sub(input_total_margin),
-                    height: chunks[3].height,
+                    x: input_chunk.x + INPUT_MARGIN_LEFT,
+                    y: input_chunk.y,
+                    width: input_chunk.width.saturating_sub(input_total_margin),
+                    height: input_chunk.height,
                 };
                 let status_bar_area_inner = Rect {
-                    x: chunks[4].x + INPUT_MARGIN_LEFT,
-                    y: chunks[4].y,
-                    width: chunks[4].width.saturating_sub(input_total_margin),
-                    height: chunks[4].height,
+                    x: status_bar_chunk.x + INPUT_MARGIN_LEFT,
+                    y: status_bar_chunk.y,
+                    width: status_bar_chunk.width.saturating_sub(input_total_margin),
+                    height: status_bar_chunk.height,
                 };
                 let gap_area_inner = Rect {
-                    x: chunks[5].x + INPUT_MARGIN_LEFT,
-                    y: chunks[5].y,
-                    width: chunks[5].width.saturating_sub(input_total_margin),
-                    height: chunks[5].height,
+                    x: gap_chunk.x + INPUT_MARGIN_LEFT,
+                    y: gap_chunk.y,
+                    width: gap_chunk.width.saturating_sub(input_total_margin),
+                    height: gap_chunk.height,
                 };
 
                 // Fill margin areas so they match the app background.
@@ -7491,9 +7501,9 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 use crate::ui::components::bg_base;
                 let margin_bg = bg_base();
-                fill_margins(buf, chunks[3], margin_bg);
-                fill_margins(buf, chunks[4], margin_bg);
-                fill_margins(buf, chunks[5], margin_bg);
+                fill_margins(buf, input_chunk, margin_bg);
+                fill_margins(buf, status_bar_chunk, margin_bg);
+                fill_margins(buf, gap_chunk, margin_bg);
 
                 // Draw separator line in the gap row (▀ characters)
                 // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
@@ -7505,8 +7515,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                 }
 
                 // Store layout areas for mouse hit-testing
-                self.state.tab_bar_area = Some(chunks[0]);
-                self.state.chat_area = Some(chunks[2]); // Chat view is now chunks[2]
+                self.state.tab_bar_area = Some(tab_bar_chunk);
+                self.state.chat_area = Some(chat_chunk);
                 self.state.raw_events_area = None;
                 self.state.input_area = Some(input_area_inner);
                 self.state.status_bar_area = Some(status_bar_area_inner);
@@ -7546,7 +7556,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 .focused(tabs_focused)
                 .with_tab_states(pr_numbers, processing_flags, attention_flags)
                 .with_spinner_frame(self.state.spinner_frame);
-                tab_bar.render(chunks[0], f.buffer_mut());
+                tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
                 // Draw session header (below tab bar)
                 let session_title = self
@@ -7554,7 +7564,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     .tab_manager
                     .active_session()
                     .and_then(|s| s.title.as_deref());
-                SessionHeader::new(session_title).render(chunks[1], f.buffer_mut());
+                SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
 
                 // Draw active session components
                 let is_command_mode = self.state.input_mode == InputMode::Command;
@@ -7566,9 +7576,10 @@ Acknowledge that you have received this context by replying ONLY with the single
                         None
                     };
                     let input_mode = self.state.input_mode;
-                    let queue_lines = Self::build_queue_lines(session, chunks[2].width, input_mode);
+                    let queue_lines =
+                        Self::build_queue_lines(session, chat_chunk.width, input_mode);
                     session.chat_view.render_with_indicator(
-                        chunks[2],
+                        chat_chunk,
                         f.buffer_mut(),
                         thinking_line,
                         queue_lines,
@@ -7637,10 +7648,15 @@ Acknowledge that you have received this context by replying ONLY with the single
                     ])
                     .split(content_area);
 
+                // Extract named areas to avoid brittle numeric indices
+                let tab_bar_chunk = chunks[0];
+                let header_chunk = chunks[1];
+                let raw_events_chunk = chunks[2];
+
                 // Store layout areas for mouse hit-testing (no input/status in this mode)
-                self.state.tab_bar_area = Some(chunks[0]);
+                self.state.tab_bar_area = Some(tab_bar_chunk);
                 self.state.chat_area = None;
-                self.state.raw_events_area = Some(chunks[2]);
+                self.state.raw_events_area = Some(raw_events_chunk);
                 self.state.input_area = None;
                 self.state.status_bar_area = None;
                 self.state.footer_area = Some(footer_area);
@@ -7677,7 +7693,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 .focused(tabs_focused)
                 .with_tab_states(pr_numbers, processing_flags, attention_flags)
                 .with_spinner_frame(self.state.spinner_frame);
-                tab_bar.render(chunks[0], f.buffer_mut());
+                tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
                 // Draw session header (below tab bar) - consistent with Chat view
                 let session_title = self
@@ -7685,11 +7701,13 @@ Acknowledge that you have received this context by replying ONLY with the single
                     .tab_manager
                     .active_session()
                     .and_then(|s| s.title.as_deref());
-                SessionHeader::new(session_title).render(chunks[1], f.buffer_mut());
+                SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
 
                 // Draw raw events view
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.render(chunks[2], f.buffer_mut());
+                    session
+                        .raw_events_view
+                        .render(raw_events_chunk, f.buffer_mut());
                 }
 
                 // Draw footer (full width) - context-aware based on input mode
