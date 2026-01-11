@@ -11,7 +11,7 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// If custom_path is None, uses the default ~/.conduit location.
 pub fn init_data_dir(custom_path: Option<PathBuf>) {
     let path = custom_path.unwrap_or_else(default_data_dir);
-    // Ignore error if already set (shouldn't happen in normal usage)
+    // Log a debug message if already set (shouldn't happen in normal usage)
     if DATA_DIR.set(path.clone()).is_err() {
         let existing = DATA_DIR
             .get()
