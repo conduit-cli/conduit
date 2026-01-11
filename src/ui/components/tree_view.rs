@@ -825,6 +825,37 @@ impl SidebarData {
                 }
             }
         }
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            "Workspace not found in sidebar - PR status update failed"
+        );
+    }
+
+    /// Clear PR status for a workspace by its ID.
+    pub fn clear_workspace_pr_status(&mut self, workspace_id: Uuid) {
+        tracing::debug!(
+            workspace_id = %workspace_id,
+            "Attempting to clear workspace PR status"
+        );
+
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository {
+                for child in &mut node.children {
+                    if child.id == workspace_id && child.node_type == NodeType::Workspace {
+                        child.pr_status = None;
+                        tracing::info!(
+                            workspace_id = %workspace_id,
+                            "Cleared workspace PR status in sidebar"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+        tracing::warn!(
+            workspace_id = %workspace_id,
+            "Workspace not found in sidebar - PR status clear failed"
+        );
     }
 
     /// Find the workspace ID if the given position is hovering over the workspace name text.

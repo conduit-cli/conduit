@@ -426,6 +426,9 @@ impl App {
             // Register workspace with git tracker if available
             let track_info = session.workspace_id.zip(session.working_dir.clone());
             let sidebar_pr_status = session.pr_number.map(Self::synthesize_pr_status);
+            if let Some(ref status) = sidebar_pr_status {
+                session.status_bar.set_pr_status(Some(status.clone()));
+            }
             let sidebar_workspace_id = session.workspace_id;
 
             self.state.tab_manager.add_session(session);
@@ -7615,6 +7618,7 @@ Acknowledge that you have received this context by replying ONLY with the single
     ) -> Vec<Effect> {
         let effects = Vec::new();
         let mut sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
+        let mut sidebar_pr_clear: Option<Uuid> = None;
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
@@ -7648,6 +7652,17 @@ Acknowledge that you have received this context by replying ONLY with the single
                 ),
             );
             return effects;
+        }
+
+        // If no PR exists (or PR lookup failed), clear any stale PR UI state.
+        if !preflight.existing_pr.as_ref().is_some_and(|pr| pr.exists) {
+            if let Some(session) = self.state.tab_manager.active_session_mut() {
+                session.pr_number = None;
+                session.status_bar.set_pr_status(None);
+                if let Some(workspace_id) = session.workspace_id {
+                    sidebar_pr_clear = Some(workspace_id);
+                }
+            }
         }
 
         // If PR exists, show confirmation dialog to open in browser
@@ -7687,6 +7702,12 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Already in Confirming mode
                 return effects;
             }
+        }
+
+        if let Some(workspace_id) = sidebar_pr_clear {
+            self.state
+                .sidebar_data
+                .clear_workspace_pr_status(workspace_id);
         }
 
         // Build warnings for confirmation dialog
