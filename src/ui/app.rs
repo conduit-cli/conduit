@@ -36,7 +36,7 @@ use crate::data::{
     AppStateStore, Database, ForkSeed, ForkSeedStore, QueuedImageAttachment, QueuedMessage,
     QueuedMessageMode, Repository, RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
 };
-use crate::git::{PrManager, WorktreeManager};
+use crate::git::{PrManager, PrStatus, WorktreeManager};
 use crate::ui::action::Action;
 use crate::ui::app_state::{AppState, PendingForkRequest, ScrollDragTarget, SelectionDragTarget};
 use crate::ui::clipboard_paste::paste_image_to_temp_png;
@@ -425,8 +425,16 @@ impl App {
 
             // Register workspace with git tracker if available
             let track_info = session.workspace_id.zip(session.working_dir.clone());
+            let sidebar_pr_status = session.pr_number.map(Self::synthesize_pr_status);
+            let sidebar_workspace_id = session.workspace_id;
 
             self.state.tab_manager.add_session(session);
+
+            if let (Some(workspace_id), Some(status)) = (sidebar_workspace_id, sidebar_pr_status) {
+                self.state
+                    .sidebar_data
+                    .update_workspace_pr_status(workspace_id, Some(status));
+            }
 
             // Track workspace after session is added
             if let Some((workspace_id, working_dir)) = track_info {
@@ -3925,6 +3933,14 @@ impl App {
         None
     }
 
+    /// Build a minimal PR status from a known PR number (used when full status is unavailable).
+    fn synthesize_pr_status(number: u32) -> PrStatus {
+        let mut status = PrStatus::default();
+        status.exists = true;
+        status.number = Some(number);
+        status
+    }
+
     /// Estimate token usage for a prompt (rough heuristic)
     fn estimate_tokens(text: &str) -> i64 {
         let chars = text.chars().count().max(1);
@@ -6303,6 +6319,10 @@ Acknowledge that you have received this context by replying ONLY with the single
                         session.status_bar.set_pr_status(status.clone());
                     }
                 }
+                // Update sidebar data as well
+                self.state
+                    .sidebar_data
+                    .update_workspace_pr_status(workspace_id, status);
             }
             GitTrackerUpdate::GitStatsChanged {
                 workspace_id,
@@ -6379,6 +6399,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Track whether we need to stop footer spinner (done after session borrow ends)
         let mut should_stop_footer_spinner = false;
+        let mut pending_sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
 
         {
             let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
@@ -6466,6 +6487,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                     if session.pr_number.is_none() {
                         if let Some(pr_num) = Self::extract_pr_number_from_text(&msg.text) {
                             session.pr_number = Some(pr_num);
+                            let status = Self::synthesize_pr_status(pr_num);
+                            session.status_bar.set_pr_status(Some(status.clone()));
+                            if let Some(workspace_id) = session.workspace_id {
+                                pending_sidebar_pr_update = Some((workspace_id, Some(status)));
+                            }
                         }
                     }
 
@@ -6547,6 +6573,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                     if session.pr_number.is_none() {
                         if let Some(pr_num) = Self::extract_pr_number_from_text(&cmd.output) {
                             session.pr_number = Some(pr_num);
+                            let status = Self::synthesize_pr_status(pr_num);
+                            session.status_bar.set_pr_status(Some(status.clone()));
+                            if let Some(workspace_id) = session.workspace_id {
+                                pending_sidebar_pr_update = Some((workspace_id, Some(status)));
+                            }
                         }
                     }
 
@@ -6628,6 +6659,12 @@ Acknowledge that you have received this context by replying ONLY with the single
                 _ => {}
             }
         } // End session borrow scope
+
+        if let Some((workspace_id, status)) = pending_sidebar_pr_update {
+            self.state
+                .sidebar_data
+                .update_workspace_pr_status(workspace_id, status);
+        }
 
         // Stop footer spinner after session borrow is released
         if should_stop_footer_spinner {
@@ -7576,6 +7613,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         preflight: crate::git::PrPreflightResult,
     ) -> Vec<Effect> {
         let effects = Vec::new();
+        let mut sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
@@ -7617,6 +7655,10 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Update session's pr_number
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.pr_number = pr.number;
+                    session.status_bar.set_pr_status(Some(pr.clone()));
+                    if let Some(workspace_id) = session.workspace_id {
+                        sidebar_pr_update = Some((workspace_id, Some(pr.clone())));
+                    }
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
@@ -7636,6 +7678,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                         pr_url,
                     }),
                 );
+                if let Some((workspace_id, status)) = sidebar_pr_update {
+                    self.state
+                        .sidebar_data
+                        .update_workspace_pr_status(workspace_id, status);
+                }
                 // Already in Confirming mode
                 return effects;
             }

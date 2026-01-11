@@ -10,9 +10,12 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
-use crate::git::GitDiffStats;
+use crate::git::{CheckState, GitDiffStats, MergeReadiness, PrState, PrStatus};
 
-use super::{accent_error, accent_success, pr_open_bg, selected_bg, text_muted};
+use super::{
+    accent_error, accent_success, pr_closed_bg, pr_draft_bg, pr_merged_bg, pr_open_bg,
+    pr_unknown_bg, selected_bg, text_muted,
+};
 
 /// Enable mock PR display for layout testing.
 /// WARNING: This is for local development only - set to `true` to test layout
@@ -86,6 +89,8 @@ pub struct TreeNode {
     pub node_type: NodeType,
     /// Git diff stats for workspaces (updated by background tracker)
     pub git_stats: Option<GitDiffStats>,
+    /// PR status for workspaces (updated by background tracker or session updates)
+    pub pr_status: Option<PrStatus>,
 }
 
 impl TreeNode {
@@ -102,6 +107,7 @@ impl TreeNode {
             depth: 0,
             node_type: NodeType::Repository,
             git_stats: None,
+            pr_status: None,
         }
     }
 
@@ -117,6 +123,7 @@ impl TreeNode {
             depth: 1,
             node_type: NodeType::Workspace,
             git_stats: None,
+            pr_status: None,
         }
     }
 
@@ -135,6 +142,7 @@ impl TreeNode {
             depth: 1, // Will be set when added as child
             node_type: NodeType::Action(action_type),
             git_stats: None,
+            pr_status: None,
         }
     }
 
@@ -786,6 +794,39 @@ impl SidebarData {
         );
     }
 
+    /// Update PR status for a workspace by its ID
+    pub fn update_workspace_pr_status(&mut self, workspace_id: Uuid, status: Option<PrStatus>) {
+        tracing::debug!(
+            workspace_id = %workspace_id,
+            pr_number = status.as_ref().and_then(|s| s.number),
+            pr_exists = status.as_ref().map(|s| s.exists),
+            "Attempting to update workspace PR status"
+        );
+
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository {
+                for child in &mut node.children {
+                    if child.id == workspace_id && child.node_type == NodeType::Workspace {
+                        if status.is_none() {
+                            tracing::debug!(
+                                workspace_id = %workspace_id,
+                                "PR status unavailable; preserving existing sidebar status"
+                            );
+                            return;
+                        }
+
+                        child.pr_status = status;
+                        tracing::info!(
+                            workspace_id = %workspace_id,
+                            "Updated workspace PR status in sidebar"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// Find the workspace ID if the given position is hovering over the workspace name text.
     /// Only triggers if hovering over the visible name portion (not git stats or PR badge).
     ///
@@ -967,20 +1008,28 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     // Use mock data if enabled, otherwise use real data
-    let (additions, deletions, pr_number, pr_passing) = if MOCK_SIDEBAR_PR_DISPLAY {
+    let (additions, deletions, pr_status) = if MOCK_SIDEBAR_PR_DISPLAY {
         // Mock: small realistic values
-        (1, 1, Some(42u32), true)
+        let mut status = PrStatus::default();
+        status.exists = true;
+        status.number = Some(42);
+        status.state = PrState::Open;
+        status.checks.total = 1;
+        status.checks.passed = 1;
+        status.merge_readiness = MergeReadiness::Ready;
+        (1, 1, Some(status))
     } else {
         // Real data from node
         let stats = node.git_stats.as_ref();
         let additions = stats.map(|s| s.additions).unwrap_or(0);
         let deletions = stats.map(|s| s.deletions).unwrap_or(0);
-        // TODO: Add real PR data to TreeNode when wired up
-        (additions, deletions, None, false)
+        (additions, deletions, node.pr_status.clone())
     };
 
     let has_git_changes = additions > 0 || deletions > 0;
-    let has_pr = pr_number.is_some();
+    let has_pr = pr_status
+        .as_ref()
+        .is_some_and(|status| status.exists && status.number.is_some());
 
     // Git stats: +N -N
     if has_git_changes {
@@ -1006,18 +1055,52 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
         spans.push(Span::styled(" ", Style::default()));
     }
 
-    // PR badge: #123✓ with colored background
-    if let Some(pr_num) = pr_number {
-        let check_icon = if pr_passing { "✓" } else { "✗" };
-        let bg_color = if pr_passing {
-            pr_open_bg() // Green-ish for passing
-        } else {
-            accent_error() // Red for failing
-        };
-        spans.push(Span::styled(
-            format!(" #{}{} ", pr_num, check_icon),
-            Style::default().bg(bg_color).fg(Color::White),
-        ));
+    // PR badge: #123 with colored background + optional check indicator
+    if let Some(pr) = pr_status.as_ref() {
+        if pr.exists {
+            if let Some(pr_num) = pr.number {
+                // For merged/closed PRs, use state-based coloring
+                // For open PRs, use merge readiness-based coloring
+                let (bg_color, fg_color) = match pr.state {
+                    PrState::Merged => (pr_merged_bg(), Color::White),
+                    PrState::Closed => (pr_closed_bg(), Color::White),
+                    PrState::Unknown => (pr_unknown_bg(), Color::White),
+                    _ => match pr.merge_readiness {
+                        MergeReadiness::Ready => (pr_open_bg(), Color::White),
+                        MergeReadiness::HasConflicts => (pr_closed_bg(), Color::White),
+                        MergeReadiness::Blocked => (pr_draft_bg(), Color::White),
+                        MergeReadiness::Unknown => match pr.state {
+                            PrState::Open => (pr_open_bg(), Color::White),
+                            PrState::Draft => (pr_draft_bg(), Color::White),
+                            _ => (pr_unknown_bg(), Color::White),
+                        },
+                    },
+                };
+
+                // Build badge text with optional check indicator inside
+                let check_indicator = if matches!(pr.state, PrState::Open | PrState::Draft) {
+                    match pr.checks.state() {
+                        CheckState::Passing => Some("✓"),
+                        CheckState::Pending => Some("⋯"),
+                        CheckState::Failing => Some("✗"),
+                        CheckState::None => None,
+                    }
+                } else {
+                    None
+                };
+
+                let badge = if let Some(indicator) = check_indicator {
+                    format!(" #{} {} ", pr_num, indicator)
+                } else {
+                    format!(" #{} ", pr_num)
+                };
+
+                spans.push(Span::styled(
+                    badge,
+                    Style::default().bg(bg_color).fg(fg_color),
+                ));
+            }
+        }
     }
 
     // Trailing space for padding
