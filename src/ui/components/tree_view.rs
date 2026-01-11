@@ -485,15 +485,17 @@ impl StatefulWidget for TreeView<'_> {
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
 
                     // Calculate available space for workspace name using shared helper
+                    // Use display width for proper Unicode handling (wide chars take 2 columns)
                     let total_width = inner.width as usize;
+                    let name_display_width = node.label.width();
                     let (available_for_name, _, _) = calculate_workspace_name_bounds(
                         total_width,
                         right_width,
-                        node.label.chars().count(),
+                        name_display_width,
                     );
 
-                    // Check if name needs truncation
-                    let name_is_truncated = node.label.chars().count() > available_for_name;
+                    // Check if name needs truncation (compare display widths)
+                    let name_is_truncated = name_display_width > available_for_name;
 
                     // Check if this workspace is being hovered AND name is truncated
                     let is_hovered = state.hovered_workspace_id == Some(node.id);
@@ -505,12 +507,8 @@ impl StatefulWidget for TreeView<'_> {
                         // Show full name when hovered and truncated
                         node.label.clone()
                     } else if name_is_truncated {
-                        let truncated: String = node
-                            .label
-                            .chars()
-                            .take(available_for_name.saturating_sub(1))
-                            .collect();
-                        format!("{}…", truncated)
+                        // Use width-aware truncation for proper Unicode handling
+                        truncate_to_width(&node.label, available_for_name)
                     } else {
                         node.label.clone()
                     };
@@ -818,12 +816,13 @@ impl SidebarData {
                 let name_line_row = current_row + 1;
                 if visual_row == name_line_row {
                     // Calculate name bounds using shared helper (same logic as render)
+                    // Use display width for proper Unicode handling
                     let right_spans = build_right_side_spans(node);
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
                     let (_, name_start, name_width) = calculate_workspace_name_bounds(
                         inner_width,
                         right_width,
-                        node.label.chars().count(),
+                        node.label.width(),
                     );
                     let name_end = name_start + name_width;
 
@@ -946,17 +945,20 @@ fn truncate_branch_name(branch: &str, max_width: usize) -> String {
 
 /// Calculate the available width for a workspace name and its displayed bounds.
 /// Returns (available_for_name, name_start, name_width) where:
-/// - available_for_name: max chars that can fit before right-side content
+/// - available_for_name: max display columns that can fit before right-side content
 /// - name_start: x position where name text begins
-/// - name_width: actual displayed width of name (may be truncated)
+/// - name_width: actual displayed width of name in columns (may be truncated)
+///
+/// Note: `name_display_width` should be the unicode display width of the name
+/// (via `UnicodeWidthStr::width()`), not the character count.
 fn calculate_workspace_name_bounds(
     inner_width: usize,
     right_side_width: usize,
-    name_char_count: usize,
+    name_display_width: usize,
 ) -> (usize, usize, usize) {
     let available_for_name =
         inner_width.saturating_sub(WORKSPACE_NAME_LINE_INDENT + right_side_width + 1); // +1 for gap
-    let name_width = name_char_count.min(available_for_name);
+    let name_width = name_display_width.min(available_for_name);
     (available_for_name, WORKSPACE_NAME_LINE_INDENT, name_width)
 }
 
@@ -1125,13 +1127,11 @@ mod tests {
 
         // Calculate expected name bounds (same logic as workspace_at_name_line)
         // Calculate expected bounds using the shared helper
+        // Use display width for proper Unicode handling
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let (_, name_start, name_width) = calculate_workspace_name_bounds(
-            inner_width,
-            right_width,
-            ws_node.label.chars().count(),
-        );
+        let (_, name_start, name_width) =
+            calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());
         let name_end = name_start + name_width;
 
         // Find the name line row (should be row 4 based on layout)
@@ -1196,19 +1196,17 @@ mod tests {
             .unwrap();
 
         println!(
-            "Workspace label: '{}' (len={})",
+            "Workspace label: '{}' (width={})",
             ws_node.label,
-            ws_node.label.chars().count()
+            ws_node.label.width()
         );
 
         // Calculate expected bounds using the shared helper
+        // Use display width for proper Unicode handling
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let (available_for_name, name_start, name_width) = calculate_workspace_name_bounds(
-            inner_width,
-            right_width,
-            ws_node.label.chars().count(),
-        );
+        let (available_for_name, name_start, name_width) =
+            calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());
 
         println!(
             "inner_width={}, name_start={}, right_width={}",
@@ -1263,13 +1261,11 @@ mod tests {
             .unwrap();
 
         // Calculate expected bounds using the shared helper
+        // Use display width for proper Unicode handling
         let right_spans = build_right_side_spans(ws_node);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
-        let (available_for_name, name_start, name_width) = calculate_workspace_name_bounds(
-            inner_width,
-            right_width,
-            ws_node.label.chars().count(),
-        );
+        let (available_for_name, name_start, name_width) =
+            calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());
 
         println!("\n=== WIDER SIDEBAR TEST (40 chars) ===");
         println!(
