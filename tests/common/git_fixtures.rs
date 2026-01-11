@@ -320,16 +320,21 @@ impl Default for TestRepo {
 impl Drop for TestRepo {
     fn drop(&mut self) {
         // Clean up worktrees before the temp dir is removed
-        let worktrees = self.worktrees.lock().unwrap();
-        for worktree_path in worktrees.iter() {
+        let worktree_paths = {
+            let worktrees = self.worktrees.lock().unwrap();
+            worktrees.clone()
+        };
+        for worktree_path in worktree_paths.iter() {
             // First, remove the worktree from git's tracking
+            let Some(worktree_str) = worktree_path.to_str() else {
+                eprintln!(
+                    "Warning: skipping git worktree remove for non-UTF8 path: {}",
+                    worktree_path.display()
+                );
+                continue;
+            };
             match Command::new("git")
-                .args([
-                    "worktree",
-                    "remove",
-                    "--force",
-                    worktree_path.to_str().unwrap_or(""),
-                ])
+                .args(["worktree", "remove", "--force", worktree_str])
                 .current_dir(&self.path)
                 .output()
             {

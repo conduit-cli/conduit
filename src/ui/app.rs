@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -95,8 +95,12 @@ fn send_app_event(
     event: AppEvent,
     context: &'static str,
 ) {
-    if event_tx.send(event).is_err() {
-        tracing::debug!(context, "Failed to send AppEvent");
+    match event_tx.send(event) {
+        Ok(()) => {}
+        Err(err) => {
+            let event_kind = std::mem::discriminant(&err.0);
+            tracing::debug!(context, event_kind = ?event_kind, "Failed to send AppEvent");
+        }
     }
 }
 
@@ -2331,7 +2335,10 @@ impl App {
                                 while let Some(event) = handle.events.recv().await {
                                     if event_tx.send(AppEvent::Agent { tab_index, event }).is_err()
                                     {
-                                        tracing::debug!("Failed to send AppEvent for agent stream");
+                                        tracing::debug!(
+                                            tab_index,
+                                            "Failed to send AppEvent for agent stream"
+                                        );
                                         break;
                                     }
                                 }
@@ -2450,6 +2457,15 @@ impl App {
                                         "Failed to clean up worktree after DB error"
                                     );
                                 }
+                                if let Err(branch_err) =
+                                    worktree_manager.delete_branch(&base_path, &branch_name)
+                                {
+                                    tracing::error!(
+                                        error = %branch_err,
+                                        branch = %branch_name,
+                                        "Failed to delete branch after DB error"
+                                    );
+                                }
                                 return Err(format!("Failed to save workspace to database: {}", e));
                             }
 
@@ -2536,6 +2552,15 @@ impl App {
                                     tracing::error!(
                                         error = %cleanup_err,
                                         "Failed to clean up worktree after DB error"
+                                    );
+                                }
+                                if let Err(branch_err) =
+                                    worktree_manager.delete_branch(&base_path, &branch_name)
+                                {
+                                    tracing::error!(
+                                        error = %branch_err,
+                                        branch = %branch_name,
+                                        "Failed to delete branch after DB error"
                                     );
                                 }
                                 return Err(format!("Failed to save workspace to database: {}", e));
@@ -2746,10 +2771,22 @@ impl App {
                         }
 
                         let workspaces_dir = crate::util::workspaces_dir();
-                        let project_workspaces_path = workspaces_dir.join(&repo_name);
-                        if project_workspaces_path.exists() {
-                            if let Err(e) = std::fs::remove_dir_all(&project_workspaces_path) {
-                                errors.push(format!("Failed to remove project folder: {}", e));
+                        let repo_name_path = std::path::Path::new(&repo_name);
+                        let mut components = repo_name_path.components();
+                        let is_safe_repo_name =
+                            matches!(components.next(), Some(Component::Normal(_)))
+                                && components.next().is_none();
+                        if !is_safe_repo_name {
+                            errors.push(format!(
+                                "Skipping project folder removal due to unsafe repo name: {}",
+                                repo_name
+                            ));
+                        } else {
+                            let project_workspaces_path = workspaces_dir.join(&repo_name);
+                            if project_workspaces_path.exists() {
+                                if let Err(e) = std::fs::remove_dir_all(&project_workspaces_path) {
+                                    errors.push(format!("Failed to remove project folder: {}", e));
+                                }
                             }
                         }
 
@@ -3000,6 +3037,7 @@ impl App {
                 self.config.theme_name = previous_theme_name;
                 self.config.theme_path = previous_theme_path;
                 self.state.theme_picker_state.hide(true); // Restore original theme
+                                                          // Clear any pending theme picker error state.
                 self.state.theme_picker_state.take_error();
                 self.state.input_mode = InputMode::Normal;
                 self.state.set_timed_footer_message(

@@ -13,8 +13,13 @@ pub fn init_data_dir(custom_path: Option<PathBuf>) {
     let path = custom_path.unwrap_or_else(default_data_dir);
     // Ignore error if already set (shouldn't happen in normal usage)
     if DATA_DIR.set(path.clone()).is_err() {
+        let existing = DATA_DIR
+            .get()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<unknown>".to_string());
         tracing::debug!(
             path = %path.display(),
+            existing = %existing,
             "Data directory already initialized"
         );
     }
