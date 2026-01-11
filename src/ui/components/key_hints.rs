@@ -151,8 +151,8 @@ pub fn render_key_hints_responsive(
     let mut total_width: usize = hint_widths.iter().sum::<usize>() + overhead;
 
     while total_width > available_width && start_index < hints.len() {
-        // Remove leftmost hint
-        total_width -= hint_widths[start_index];
+        // Remove leftmost hint (use saturating_sub to prevent overflow)
+        total_width = total_width.saturating_sub(hint_widths[start_index]);
         // If this wasn't the first hint, we also need to remove separator/gap from next hint
         if start_index + 1 < hints.len() {
             let gap_width = if style.separator.is_some() {
@@ -160,7 +160,7 @@ pub fn render_key_hints_responsive(
             } else {
                 style.item_gap.len()
             };
-            total_width -= gap_width;
+            total_width = total_width.saturating_sub(gap_width);
         }
         start_index += 1;
     }
