@@ -99,7 +99,12 @@ fn send_app_event(
         Ok(()) => true,
         Err(err) => {
             let event_kind = std::mem::discriminant(&err.0);
-            tracing::debug!(context, event_kind = ?event_kind, "Failed to send AppEvent");
+            tracing::debug!(
+                context,
+                event_kind = ?event_kind,
+                receiver_dropped = true,
+                "Failed to send AppEvent"
+            );
             false
         }
     }
@@ -2339,6 +2344,24 @@ impl App {
                                         AppEvent::Agent { tab_index, event },
                                         "agent_stream",
                                     ) {
+                                        tracing::debug!(
+                                            tab_index,
+                                            "Failed to send AppEvent for agent stream"
+                                        );
+                                        if let Err(stop_err) = runner.stop(&handle).await {
+                                            tracing::debug!(
+                                                tab_index,
+                                                error = %stop_err,
+                                                "Failed to stop agent after event channel closed"
+                                            );
+                                            if let Err(kill_err) = runner.kill(&handle).await {
+                                                tracing::debug!(
+                                                    tab_index,
+                                                    error = %kill_err,
+                                                    "Failed to kill agent after event channel closed"
+                                                );
+                                            }
+                                        }
                                         break;
                                     }
                                 }
@@ -2791,35 +2814,34 @@ impl App {
                             ));
                         } else {
                             let project_workspaces_path = workspaces_dir.join(&repo_name);
-                            if project_workspaces_path.exists() {
-                                match (
-                                    std::fs::canonicalize(&workspaces_dir),
-                                    std::fs::canonicalize(&project_workspaces_path),
-                                ) {
-                                    (Ok(canonical_root), Ok(canonical_project)) => {
-                                        if canonical_project.starts_with(&canonical_root) {
-                                            if let Err(e) =
-                                                std::fs::remove_dir_all(&project_workspaces_path)
-                                            {
-                                                errors.push(format!(
-                                                    "Failed to remove project folder: {}",
-                                                    e
-                                                ));
-                                            }
-                                        } else {
+                            match (
+                                std::fs::canonicalize(&workspaces_dir),
+                                std::fs::canonicalize(&project_workspaces_path),
+                            ) {
+                                (Ok(canonical_root), Ok(canonical_project)) => {
+                                    if canonical_project.starts_with(&canonical_root) {
+                                        if let Err(e) = std::fs::remove_dir_all(&canonical_project)
+                                        {
                                             errors.push(format!(
-                                                "Skipping project folder removal outside managed root: {}",
-                                                project_workspaces_path.display()
+                                                "Failed to remove project folder: {}",
+                                                e
                                             ));
                                         }
-                                    }
-                                    (Err(e), _) => {
+                                    } else {
                                         errors.push(format!(
-                                            "Failed to canonicalize workspaces dir: {}",
-                                            e
+                                            "Skipping project folder removal outside managed root: {}",
+                                            canonical_project.display()
                                         ));
                                     }
-                                    (_, Err(e)) => {
+                                }
+                                (Err(e), _) => {
+                                    errors.push(format!(
+                                        "Failed to canonicalize workspaces dir: {}",
+                                        e
+                                    ));
+                                }
+                                (_, Err(e)) => {
+                                    if e.kind() != io::ErrorKind::NotFound {
                                         errors.push(format!(
                                             "Failed to canonicalize project folder: {}",
                                             e
@@ -2849,9 +2871,14 @@ impl App {
                 }
                 Effect::CopyToClipboard(text) => {
                     use arboard::Clipboard;
-                    if let Ok(mut clipboard) = Clipboard::new() {
-                        if let Err(e) = clipboard.set_text(text) {
-                            tracing::debug!(error = %e, "Failed to copy text to clipboard");
+                    match Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            if let Err(e) = clipboard.set_text(text) {
+                                tracing::debug!(error = %e, "Failed to copy text to clipboard");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "Failed to initialize clipboard");
                         }
                     }
                 }
