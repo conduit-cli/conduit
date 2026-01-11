@@ -10,7 +10,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
-use crate::git::{CheckState, GitDiffStats, MergeReadiness, PrState, PrStatus};
+use crate::git::{CheckState, CheckStatus, GitDiffStats, MergeReadiness, PrState, PrStatus};
 
 use super::{
     accent_error, accent_success, pr_closed_bg, pr_draft_bg, pr_merged_bg, pr_open_bg,
@@ -1010,13 +1010,18 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
     // Use mock data if enabled, otherwise use real data
     let (additions, deletions, pr_status) = if MOCK_SIDEBAR_PR_DISPLAY {
         // Mock: small realistic values
-        let mut status = PrStatus::default();
-        status.exists = true;
-        status.number = Some(42);
-        status.state = PrState::Open;
-        status.checks.total = 1;
-        status.checks.passed = 1;
-        status.merge_readiness = MergeReadiness::Ready;
+        let status = PrStatus {
+            exists: true,
+            number: Some(42),
+            state: PrState::Open,
+            checks: CheckStatus {
+                total: 1,
+                passed: 1,
+                ..Default::default()
+            },
+            merge_readiness: MergeReadiness::Ready,
+            ..Default::default()
+        };
         (1, 1, Some(status))
     } else {
         // Real data from node

@@ -3935,10 +3935,11 @@ impl App {
 
     /// Build a minimal PR status from a known PR number (used when full status is unavailable).
     fn synthesize_pr_status(number: u32) -> PrStatus {
-        let mut status = PrStatus::default();
-        status.exists = true;
-        status.number = Some(number);
-        status
+        PrStatus {
+            exists: true,
+            number: Some(number),
+            ..Default::default()
+        }
     }
 
     /// Estimate token usage for a prompt (rough heuristic)
