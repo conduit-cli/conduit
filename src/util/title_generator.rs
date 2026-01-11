@@ -13,7 +13,7 @@ use tokio::process::Command;
 use super::{Tool, ToolAvailability};
 
 /// Timeout for AI title generation calls
-const AI_CALL_TIMEOUT_SECS: u64 = 30;
+const AI_CALL_TIMEOUT_SECS: u64 = 10;
 
 /// Result of title/branch generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,10 +425,10 @@ Done!"#;
 
     #[test]
     fn test_timeout_error_display() {
-        let error = TitleGeneratorError::Timeout(30);
+        let error = TitleGeneratorError::Timeout(10);
         let msg = error.to_string();
         assert!(
-            msg.contains("30 seconds"),
+            msg.contains("10 seconds"),
             "Timeout error should show duration: {}",
             msg
         );

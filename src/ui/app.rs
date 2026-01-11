@@ -2769,7 +2769,7 @@ impl App {
                         // for the AI call. This ensures:
                         // 1. The event_tx.send always runs (not cancelled by outer timeout)
                         // 2. spawn_blocking git/db work always completes or fails deterministically
-                        // 3. AI call has its own 30-second timeout in title_generator.rs
+                        // 3. AI call has its own 10-second timeout in title_generator.rs
                         let result = generate_title_and_branch_impl(
                             tools,
                             user_message,
@@ -8194,17 +8194,21 @@ async fn generate_title_and_branch_impl(
 
     // Try to rename branch if workspace exists
     let new_branch = if workspace_id.is_some() {
-        // Resolve current branch: use provided value or fetch from git if empty/stale
-        let resolved_branch = if current_branch.is_empty() {
+        // Always fetch fresh branch from git - the passed-in current_branch may be stale
+        // Only fall back to passed-in value if git lookup fails or returns empty
+        let resolved_branch = {
             let wd = working_dir.clone();
             let wm = worktree_manager.clone();
-            tokio::task::spawn_blocking(move || wm.get_current_branch(&wd).ok())
+            let fresh_branch = tokio::task::spawn_blocking(move || wm.get_current_branch(&wd).ok())
                 .await
                 .ok()
                 .flatten()
-                .unwrap_or_default()
-        } else {
-            current_branch.clone()
+                .unwrap_or_default();
+            if fresh_branch.is_empty() {
+                current_branch.clone()
+            } else {
+                fresh_branch
+            }
         };
 
         if resolved_branch.is_empty() {
