@@ -203,8 +203,6 @@ pub struct TreeViewState {
     pub offset: usize,
     /// Currently hovered workspace ID (for showing expanded name on hover)
     pub hovered_workspace_id: Option<Uuid>,
-    /// Y position of hovered workspace's name line (for hit testing)
-    pub hovered_name_line_y: Option<u16>,
 }
 
 impl TreeViewState {
@@ -231,13 +229,11 @@ impl TreeViewState {
     /// Clear hover state
     pub fn clear_hover(&mut self) {
         self.hovered_workspace_id = None;
-        self.hovered_name_line_y = None;
     }
 
     /// Set hovered workspace
-    pub fn set_hover(&mut self, workspace_id: Uuid, name_line_y: u16) {
+    pub fn set_hover(&mut self, workspace_id: Uuid) {
         self.hovered_workspace_id = Some(workspace_id);
-        self.hovered_name_line_y = Some(name_line_y);
     }
 }
 
@@ -905,8 +901,6 @@ fn truncate_branch_name(branch: &str, max_width: usize) -> String {
 
 /// Build the right-side spans for a workspace line (git stats + PR badge)
 fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
-    use ratatui::style::Style;
-
     let mut spans = Vec::new();
 
     // Use mock data if enabled, otherwise use real data
@@ -1060,26 +1054,60 @@ mod tests {
         let scroll_offset = 0;
         let inner_width: usize = 30;
 
+        // Get workspace ID and calculate expected bounds
+        let visible = sidebar.visible_nodes();
+        let ws_node = visible
+            .iter()
+            .find(|n| n.node_type == NodeType::Workspace)
+            .unwrap();
+        let ws_id = ws_node.id;
+
+        // Calculate expected name bounds (same logic as workspace_at_name_line)
+        let indent_width = 4;
+        let right_spans = build_right_side_spans(ws_node);
+        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
+        let name_width = ws_node.label.chars().count().min(available_for_name);
+        let name_end = indent_width + name_width;
+
         // Find the name line row (should be row 4 based on layout)
         // Row 0: blank, Row 1: repo, Row 2: action, Row 3: branch, Row 4: name
         let name_line_row = 4;
 
-        // Test various x positions
-        let test_cases = vec![
-            (0, "before indent"),
-            (3, "in indent"),
-            (4, "at name start"),
-            (5, "in name"),
-            (10, "in name middle"),
-            (25, "near end - might be in stats"),
-            (29, "at far right"),
-        ];
+        // Before name area - should not match
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, 0, scroll_offset, inner_width)
+                .is_none(),
+            "x=0 (before indent) should not match"
+        );
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, 3, scroll_offset, inner_width)
+                .is_none(),
+            "x=3 (in indent) should not match"
+        );
 
-        for (x, desc) in test_cases {
-            let result =
-                sidebar.workspace_at_name_line(name_line_row, x, scroll_offset, inner_width);
-            println!("x={:2} ({}): {:?}", x, desc, result.is_some());
-        }
+        // In name area - should match
+        assert_eq!(
+            sidebar.workspace_at_name_line(name_line_row, 4, scroll_offset, inner_width),
+            Some(ws_id),
+            "x=4 (at name start) should match"
+        );
+        assert_eq!(
+            sidebar.workspace_at_name_line(name_line_row, 5, scroll_offset, inner_width),
+            Some(ws_id),
+            "x=5 (in name) should match"
+        );
+
+        // Past name area - should not match
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, name_end, scroll_offset, inner_width)
+                .is_none(),
+            "x={} (past name end) should not match",
+            name_end
+        );
     }
 
     #[test]

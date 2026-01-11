@@ -4281,10 +4281,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                             scroll_offset,
                             inner_width,
                         ) {
-                            self.state
-                                .sidebar_state
-                                .tree_state
-                                .set_hover(workspace_id, y);
+                            self.state.sidebar_state.tree_state.set_hover(workspace_id);
                         } else {
                             self.state.sidebar_state.tree_state.clear_hover();
                         }
@@ -5976,6 +5973,9 @@ Acknowledge that you have received this context by replying ONLY with the single
         let mut effects = Vec::new();
 
         // Extract session info in a limited borrow scope
+        // NOTE: We don't take() resume_session_id here because early returns below
+        // (e.g., working_dir validation) would consume it incorrectly. We only
+        // consume resume_session_id later when we're committed to spawning the agent.
         let (
             agent_type,
             agent_mode,
@@ -5998,11 +5998,11 @@ Acknowledge that you have received this context by replying ONLY with the single
             let agent_mode = session.agent_mode;
             let model = session.model.clone();
             // Use agent_session_id if available (set by agent after first prompt)
-            // Fall back to resume_session_id only for initial session restoration
+            // Fall back to resume_session_id (clone, don't take - we consume it later)
             let session_id_to_use = session
                 .agent_session_id
                 .clone()
-                .or_else(|| session.resume_session_id.take());
+                .or_else(|| session.resume_session_id.clone());
             // Use session's working_dir if set, otherwise fall back to config
             let working_dir = session
                 .working_dir
@@ -6119,6 +6119,12 @@ Acknowledge that you have received this context by replying ONLY with the single
         // Add session ID to continue existing conversation
         if let Some(session_id) = session_id_to_use {
             config = config.with_resume(session_id);
+        }
+
+        // Now that we're committed to spawning the agent, consume the resume_session_id
+        // to prevent it from being used again on subsequent submits
+        if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+            session.resume_session_id.take();
         }
 
         effects.push(Effect::StartAgent {
@@ -8251,16 +8257,15 @@ async fn generate_title_and_branch_impl(
                     let wm = worktree_manager.clone();
 
                     // Capture full error result instead of just is_ok()
-                    let rename_result: Result<(), String> =
-                        tokio::task::spawn_blocking(move || {
-                            wm.rename_branch(&wd, &old, &new_name)
-                                .map_err(|e| e.to_string())
-                        })
-                        .await
-                        .map_err(|e| format!("spawn_blocking failed: {}", e))?;
+                    // Branch rename is best-effort: join errors shouldn't prevent applying the title
+                    let rename_join_result = tokio::task::spawn_blocking(move || {
+                        wm.rename_branch(&wd, &old, &new_name)
+                            .map_err(|e| e.to_string())
+                    })
+                    .await;
 
-                    match rename_result {
-                        Ok(()) => {
+                    match rename_join_result {
+                        Ok(Ok(())) => {
                             // Update database if rename succeeded
                             if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_dao) {
                                 let db_update_result = tokio::task::spawn_blocking({
@@ -8306,12 +8311,21 @@ async fn generate_title_and_branch_impl(
                             }
                             Some(new_branch_name)
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             tracing::warn!(
                                 error = %e,
                                 old_branch = %resolved_branch,
                                 new_branch = %new_branch_name,
                                 "Failed to rename git branch"
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                old_branch = %resolved_branch,
+                                new_branch = %new_branch_name,
+                                "spawn_blocking join failed during branch rename"
                             );
                             None
                         }
