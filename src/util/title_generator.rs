@@ -6,10 +6,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::process::Command;
 
 use super::{Tool, ToolAvailability};
+
+/// Timeout for AI title generation calls
+const AI_CALL_TIMEOUT_SECS: u64 = 30;
 
 /// Result of title/branch generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +33,8 @@ pub enum TitleGeneratorError {
     AiCallFailed(String),
     #[error("Failed to parse response: {0}")]
     ParseError(String),
+    #[error("AI call timed out after {0} seconds")]
+    Timeout(u64),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -60,11 +66,21 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         truncate_message(user_message, 500)
     );
 
-    if is_claude {
-        call_claude(&tool_path, &prompt, working_dir).await
+    let result = if is_claude {
+        tokio::time::timeout(
+            Duration::from_secs(AI_CALL_TIMEOUT_SECS),
+            call_claude(&tool_path, &prompt, working_dir),
+        )
+        .await
     } else {
-        call_codex(&tool_path, &prompt, working_dir).await
-    }
+        tokio::time::timeout(
+            Duration::from_secs(AI_CALL_TIMEOUT_SECS),
+            call_codex(&tool_path, &prompt, working_dir),
+        )
+        .await
+    };
+
+    result.map_err(|_| TitleGeneratorError::Timeout(AI_CALL_TIMEOUT_SECS))?
 }
 
 async fn call_claude(
@@ -73,15 +89,7 @@ async fn call_claude(
     working_dir: &PathBuf,
 ) -> Result<GeneratedMetadata, TitleGeneratorError> {
     let mut cmd = Command::new(binary_path);
-    cmd.args([
-        "-p",
-        "--output-format",
-        "text",
-        "--model",
-        "sonnet",
-        "--max-tokens",
-        "200",
-    ]);
+    cmd.args(["-p", "--output-format", "text", "--model", "sonnet"]);
     cmd.arg("--").arg(prompt);
     cmd.current_dir(working_dir);
     cmd.stdin(Stdio::null());
@@ -141,8 +149,22 @@ fn parse_json_response(response: &str) -> Result<GeneratedMetadata, TitleGenerat
 
     let json_str = &response[json_start..=json_end];
 
-    serde_json::from_str::<GeneratedMetadata>(json_str)
-        .map_err(|e| TitleGeneratorError::ParseError(format!("Failed to parse JSON: {}", e)))
+    let metadata: GeneratedMetadata = serde_json::from_str(json_str)
+        .map_err(|e| TitleGeneratorError::ParseError(format!("Failed to parse JSON: {}", e)))?;
+
+    // Validate that title and branch_suffix are non-empty
+    if metadata.title.trim().is_empty() {
+        return Err(TitleGeneratorError::ParseError(
+            "Empty title from AI".to_string(),
+        ));
+    }
+    if metadata.branch_suffix.trim().is_empty() {
+        return Err(TitleGeneratorError::ParseError(
+            "Empty branch_suffix from AI".to_string(),
+        ));
+    }
+
+    Ok(metadata)
 }
 
 /// UTF-8 safe message truncation that respects character boundaries
@@ -200,6 +222,94 @@ pub fn sanitize_branch_suffix(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test that Claude CLI works without the invalid --max-tokens option.
+    /// This test verifies the fix for the bug where we were using --max-tokens
+    /// which is not a valid Claude CLI option.
+    #[tokio::test]
+    #[ignore = "requires claude CLI binary - run with --ignored to verify fix"]
+    async fn test_call_claude_without_max_tokens() {
+        use std::process::Stdio;
+        use tokio::process::Command;
+
+        // Find claude binary (same logic as ToolAvailability)
+        let claude_path = which::which("claude").expect("claude CLI not found in PATH");
+
+        // Test with the FIXED arguments (no --max-tokens)
+        let mut cmd = Command::new(&claude_path);
+        cmd.args(["-p", "--output-format", "text", "--model", "sonnet"]);
+        cmd.arg("--")
+            .arg("Reply with just: {\"title\": \"test\", \"branch_suffix\": \"test\"}");
+        cmd.current_dir(std::env::current_dir().unwrap());
+        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let output = cmd.output().await.expect("Failed to run claude");
+
+        // This should succeed now that --max-tokens is removed
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "Claude CLI should succeed without --max-tokens. stderr: {}",
+            stderr
+        );
+
+        // Also verify the old buggy command still fails (demonstrates the bug existed)
+        let mut buggy_cmd = Command::new(&claude_path);
+        buggy_cmd.args([
+            "-p",
+            "--output-format",
+            "text",
+            "--model",
+            "sonnet",
+            "--max-tokens", // This was the bug
+            "200",
+        ]);
+        buggy_cmd.arg("--").arg("test");
+        buggy_cmd.current_dir(std::env::current_dir().unwrap());
+        buggy_cmd.stdin(Stdio::null());
+        buggy_cmd.stdout(Stdio::piped());
+        buggy_cmd.stderr(Stdio::piped());
+
+        let buggy_output = buggy_cmd.output().await.expect("Failed to run claude");
+        assert!(
+            !buggy_output.status.success(),
+            "Buggy command with --max-tokens should fail"
+        );
+        let buggy_stderr = String::from_utf8_lossy(&buggy_output.stderr);
+        assert!(
+            buggy_stderr.contains("unknown option '--max-tokens'"),
+            "Buggy command should fail with 'unknown option' error, got: {}",
+            buggy_stderr
+        );
+    }
+
+    /// Test that TitleGeneratorError::AiCallFailed produces the correct error message
+    /// that will be displayed in the chat warning.
+    #[test]
+    fn test_title_generator_error_display_for_warning() {
+        let error = TitleGeneratorError::AiCallFailed(
+            "Claude process failed: error: unknown option '--max-tokens'".to_string(),
+        );
+
+        // This is the format that will be displayed in the chat
+        let warning_message = format!("⚠️ Failed to generate session title: {}", error);
+
+        // Verify the error message contains the critical information
+        assert!(
+            warning_message.contains("Failed to generate session title"),
+            "Warning should explain the failure"
+        );
+        assert!(
+            warning_message.contains("--max-tokens"),
+            "Warning should contain the specific error about --max-tokens"
+        );
+        assert!(
+            warning_message.contains("⚠️"),
+            "Warning should have warning emoji prefix"
+        );
+    }
 
     #[test]
     fn test_sanitize_branch_suffix() {
@@ -272,5 +382,55 @@ Done!"#;
         let result = parse_json_response(response).unwrap();
         assert_eq!(result.title, "Fix bug");
         assert_eq!(result.branch_suffix, "fix-bug");
+    }
+
+    #[test]
+    fn test_parse_json_response_empty_title() {
+        let response = r#"{"title": "", "branch_suffix": "add-login"}"#;
+        let result = parse_json_response(response);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Empty title from AI"),
+            "Expected error about empty title, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_json_response_whitespace_title() {
+        let response = r#"{"title": "   ", "branch_suffix": "add-login"}"#;
+        let result = parse_json_response(response);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Empty title from AI"),
+            "Expected error about empty title, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_json_response_empty_branch_suffix() {
+        let response = r#"{"title": "Add login", "branch_suffix": ""}"#;
+        let result = parse_json_response(response);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Empty branch_suffix from AI"),
+            "Expected error about empty branch_suffix, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_timeout_error_display() {
+        let error = TitleGeneratorError::Timeout(30);
+        let msg = error.to_string();
+        assert!(
+            msg.contains("30 seconds"),
+            "Timeout error should show duration: {}",
+            msg
+        );
     }
 }

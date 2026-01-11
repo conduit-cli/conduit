@@ -2765,24 +2765,21 @@ impl App {
                     let workspace_dao = self.workspace_dao.clone();
 
                     tokio::spawn(async move {
-                        // Note: timeout only wraps the entire impl to avoid partial completions
-                        // (e.g., AI call succeeds but timeout fires during branch rename).
-                        // The impl internally handles errors gracefully and always reports
-                        // a usable result even if branch rename fails.
-                        let result = tokio::time::timeout(
-                            std::time::Duration::from_secs(30), // Increased to allow AI + git ops
-                            generate_title_and_branch_impl(
-                                tools,
-                                user_message,
-                                working_dir,
-                                workspace_id,
-                                current_branch,
-                                worktree_manager,
-                                workspace_dao,
-                            ),
+                        // No outer timeout here - timeout is applied inside generate_title_and_branch
+                        // for the AI call. This ensures:
+                        // 1. The event_tx.send always runs (not cancelled by outer timeout)
+                        // 2. spawn_blocking git/db work always completes or fails deterministically
+                        // 3. AI call has its own 30-second timeout in title_generator.rs
+                        let result = generate_title_and_branch_impl(
+                            tools,
+                            user_message,
+                            working_dir,
+                            workspace_id,
+                            current_branch,
+                            worktree_manager,
+                            workspace_dao,
                         )
-                        .await
-                        .unwrap_or_else(|_| Err("Timeout generating title".into()));
+                        .await;
 
                         let _ = event_tx.send(AppEvent::TitleGenerated { session_id, result });
                     });
@@ -5527,6 +5524,13 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Clear pending flag regardless of result
                 if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) {
                     session.title_generation_pending = false;
+                } else {
+                    tracing::debug!(
+                        %session_id,
+                        "Stale TitleGenerated event: session no longer exists"
+                    );
+                    // Session was closed - nothing more to do
+                    return Ok(effects);
                 }
 
                 match result {
@@ -5560,7 +5564,14 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                     Err(e) => {
                         tracing::warn!(%session_id, error = %e, "Failed to generate session title");
-                        // Non-fatal - continue without title
+                        // Display warning in the conversation
+                        if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id)
+                        {
+                            let display = MessageDisplay::System {
+                                content: format!("⚠️ Failed to generate session title: {}", e),
+                            };
+                            session.chat_view.push(display.to_chat_message());
+                        }
                     }
                 }
             }
@@ -7535,7 +7546,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                         None
                     };
                     let input_mode = self.state.input_mode;
-                    let queue_lines = Self::build_queue_lines(session, chunks[1].width, input_mode);
+                    let queue_lines = Self::build_queue_lines(session, chunks[2].width, input_mode);
                     session.chat_view.render_with_indicator(
                         chunks[2],
                         f.buffer_mut(),
@@ -8108,7 +8119,9 @@ async fn generate_title_and_branch_impl(
 
     // Try to rename branch if workspace exists
     let new_branch = if workspace_id.is_some() && !current_branch.is_empty() {
-        let username = get_git_username();
+        let raw_username = get_git_username();
+        // Sanitize username to ensure valid git ref (spaces, special chars become hyphens)
+        let username = sanitize_branch_suffix(&raw_username);
         let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
 
         // Skip branch rename if suffix is empty or just the fallback "task"
@@ -8117,6 +8130,14 @@ async fn generate_title_and_branch_impl(
             tracing::debug!(
                 suffix = %suffix,
                 "Skipping branch rename: sanitized suffix is empty or generic fallback"
+            );
+            None
+        } else if username.is_empty() || username == "task" {
+            // If username sanitizes to empty/fallback, skip the prefix entirely
+            tracing::debug!(
+                raw_username = %raw_username,
+                sanitized = %username,
+                "Skipping username prefix: sanitized username is empty or fallback"
             );
             None
         } else {
