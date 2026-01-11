@@ -5521,17 +5521,16 @@ Acknowledge that you have received this context by replying ONLY with the single
                 self.handle_git_tracker_update(update);
             }
             AppEvent::TitleGenerated { session_id, result } => {
-                // Clear pending flag regardless of result
-                if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) {
-                    session.title_generation_pending = false;
-                } else {
+                // Single lookup - session must exist to proceed
+                let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) else {
                     tracing::debug!(
                         %session_id,
                         "Stale TitleGenerated event: session no longer exists"
                     );
-                    // Session was closed - nothing more to do
                     return Ok(effects);
-                }
+                };
+                // Clear pending flag once, regardless of result
+                session.title_generation_pending = false;
 
                 match result {
                     Ok(generated) => {
@@ -5543,20 +5542,19 @@ Acknowledge that you have received this context by replying ONLY with the single
                         );
 
                         // Update session title and branch display
-                        // (find again since we need fresh mutable borrow)
-                        if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id)
-                        {
-                            session.title = Some(generated.title.clone());
-
-                            // Update status bar branch display (not workspace_name which is a label)
-                            if let Some(new_branch) = &generated.new_branch {
-                                session.status_bar.set_branch_name(Some(new_branch.clone()));
-                            }
+                        session.title = Some(generated.title.clone());
+                        if let Some(new_branch) = &generated.new_branch {
+                            session.status_bar.set_branch_name(Some(new_branch.clone()));
                         }
 
-                        // Refresh sidebar to show updated branch name
-                        if generated.new_branch.is_some() {
-                            self.refresh_sidebar_data();
+                        // Update sidebar directly with new branch name
+                        // (avoids stale DB read if DB update failed but git rename succeeded)
+                        if let (Some(ws_id), Some(ref new_branch)) =
+                            (generated.workspace_id, &generated.new_branch)
+                        {
+                            self.state
+                                .sidebar_data
+                                .update_workspace_branch(ws_id, Some(new_branch.clone()));
                         }
 
                         // Save session state to persist the title
@@ -5564,11 +5562,6 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                     Err(e) => {
                         tracing::warn!(%session_id, error = %e, "Failed to generate session title");
-                        // Clear pending flag so user can retry
-                        if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id)
-                        {
-                            session.title_generation_pending = false;
-                        }
                         // Show transient footer message (less noisy than chat message)
                         self.state.set_timed_footer_message(
                             format!("Title generation failed: {}", e),
