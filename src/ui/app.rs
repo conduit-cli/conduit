@@ -50,8 +50,8 @@ use crate::ui::components::{
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
-    AppEvent, ForkWorkspaceCreated, InputMode, RemoveProjectResult, TitleGeneratedResult,
-    ViewMode, WorkspaceArchived, WorkspaceCreated,
+    AppEvent, ForkWorkspaceCreated, InputMode, RemoveProjectResult, TitleGeneratedResult, ViewMode,
+    WorkspaceArchived, WorkspaceCreated,
 };
 use crate::ui::session::AgentSession;
 use crate::ui::terminal_guard::TerminalGuard;
@@ -5991,6 +5991,11 @@ Acknowledge that you have received this context by replying ONLY with the single
             return Ok(effects);
         }
 
+        // Capture original user message for title generation BEFORE agent-specific transformations
+        // (e.g., Codex placeholder stripping, Claude image-path appends)
+        let prompt_for_title = prompt.clone();
+        let working_dir_for_title = working_dir.clone();
+
         // Add user message to chat and start processing (after validation passes)
         // For hidden prompts (like fork seeds), skip showing in chat and pending_user_message
         if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
@@ -6056,10 +6061,6 @@ Acknowledge that you have received this context by replying ONLY with the single
         if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
             session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
         }
-
-        // Save copies for potential title generation before consuming in config
-        let prompt_for_title = prompt.clone();
-        let working_dir_for_title = working_dir.clone();
 
         let mut config = AgentStartConfig::new(prompt, working_dir)
             .with_tools(self.config.claude_allowed_tools.clone())
@@ -7612,6 +7613,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1), // Tab bar
+                        Constraint::Length(1), // Session header
                         Constraint::Min(5),    // Raw events view (full height)
                     ])
                     .split(content_area);
@@ -7619,7 +7621,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Store layout areas for mouse hit-testing (no input/status in this mode)
                 self.state.tab_bar_area = Some(chunks[0]);
                 self.state.chat_area = None;
-                self.state.raw_events_area = Some(chunks[1]);
+                self.state.raw_events_area = Some(chunks[2]);
                 self.state.input_area = None;
                 self.state.status_bar_area = None;
                 self.state.footer_area = Some(footer_area);
@@ -7658,9 +7660,17 @@ Acknowledge that you have received this context by replying ONLY with the single
                 .with_spinner_frame(self.state.spinner_frame);
                 tab_bar.render(chunks[0], f.buffer_mut());
 
+                // Draw session header (below tab bar) - consistent with Chat view
+                let session_title = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .and_then(|s| s.title.as_deref());
+                SessionHeader::new(session_title).render(chunks[1], f.buffer_mut());
+
                 // Draw raw events view
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.render(chunks[1], f.buffer_mut());
+                    session.raw_events_view.render(chunks[2], f.buffer_mut());
                 }
 
                 // Draw footer (full width) - context-aware based on input mode
@@ -8132,16 +8142,19 @@ async fn generate_title_and_branch_impl(
                 "Skipping branch rename: sanitized suffix is empty or generic fallback"
             );
             None
-        } else if username.is_empty() || username == "task" {
-            // If username sanitizes to empty/fallback, skip the prefix entirely
-            tracing::debug!(
-                raw_username = %raw_username,
-                sanitized = %username,
-                "Skipping username prefix: sanitized username is empty or fallback"
-            );
-            None
         } else {
-            let new_branch_name = format!("{}/{}", username, suffix);
+            // If username sanitizes to empty/fallback, drop the prefix and use the suffix alone.
+            // (Suffix is already sanitized to ASCII kebab-case with no slashes.)
+            let new_branch_name = if username.is_empty() || username == "task" {
+                tracing::debug!(
+                    raw_username = %raw_username,
+                    sanitized = %username,
+                    "Username unusable; generating branch without username prefix"
+                );
+                suffix.clone()
+            } else {
+                format!("{}/{}", username, suffix)
+            };
 
             // Only rename if the new name differs from current
             if new_branch_name != current_branch {
@@ -8204,7 +8217,6 @@ async fn generate_title_and_branch_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::ChatMessage;
 
     /// Helper to check if a colon keypress should trigger command mode.
     /// This mirrors the logic in handle_key_event (lines 572-601).
