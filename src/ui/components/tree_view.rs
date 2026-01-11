@@ -7,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, StatefulWidget, Widget},
 };
+use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
 use crate::git::GitDiffStats;
@@ -434,8 +435,9 @@ impl StatefulWidget for TreeView<'_> {
                 // First line shows branch (suffix) with the primary label style
                 // Truncate long branch names with "…/suffix" format
                 if let Some(suffix) = &node.suffix {
-                    let indent_width = indent.chars().count() + 2; // indent + expand marker
-                    let available = (inner.width as usize).saturating_sub(indent_width);
+                    // Use centralized constant for indent width (depth-1 indent + expand marker)
+                    let available =
+                        (inner.width as usize).saturating_sub(WORKSPACE_NAME_LINE_INDENT);
                     let branch_display = truncate_branch_name(suffix, available);
                     spans.push(Span::styled(branch_display, label_style));
                 }
@@ -875,13 +877,39 @@ impl SidebarData {
     }
 }
 
+/// Truncate a string to fit within max_width display columns, appending ellipsis if truncated.
+/// Uses unicode display width for proper handling of wide characters.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if s.width() <= max_width {
+        return s.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    // Reserve 1 column for ellipsis
+    let target_width = max_width.saturating_sub(1);
+    let mut result = String::new();
+    let mut current_width = 0;
+    for ch in s.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > target_width {
+            break;
+        }
+        result.push(ch);
+        current_width += ch_width;
+    }
+    result.push('…');
+    result
+}
+
 /// Truncate a branch name to fit available width, using "…/suffix" format
 /// E.g., "fcoury/very-long-branch-name" → "…/very-long-branch-name" → "…/very-long-bra…"
+/// Uses unicode display width for proper handling of wide characters.
 fn truncate_branch_name(branch: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
     }
-    if branch.chars().count() <= max_width {
+    if branch.width() <= max_width {
         return branch.to_string();
     }
 
@@ -890,21 +918,30 @@ fn truncate_branch_name(branch: &str, max_width: usize) -> String {
         let suffix = &branch[slash_pos + 1..];
         let prefix_with_ellipsis = format!("…/{}", suffix);
 
-        if prefix_with_ellipsis.chars().count() <= max_width {
+        if prefix_with_ellipsis.width() <= max_width {
             return prefix_with_ellipsis;
         }
 
         // Still too long, truncate the suffix part too
-        let available_for_suffix = max_width.saturating_sub(2); // "…/" = 2 chars
-        if available_for_suffix > 1 {
-            let truncated_suffix: String = suffix.chars().take(available_for_suffix - 1).collect();
+        // "…/" takes 2 columns, trailing "…" takes 1 column
+        let available_for_suffix = max_width.saturating_sub(3); // "…/" + "…" = 3 columns
+        if available_for_suffix > 0 {
+            let mut truncated_suffix = String::new();
+            let mut current_width = 0;
+            for ch in suffix.chars() {
+                let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if current_width + ch_width > available_for_suffix {
+                    break;
+                }
+                truncated_suffix.push(ch);
+                current_width += ch_width;
+            }
             return format!("…/{}…", truncated_suffix);
         }
     }
 
     // No slash or very limited space - just truncate with ellipsis
-    let truncated: String = branch.chars().take(max_width.saturating_sub(1)).collect();
-    format!("{}…", truncated)
+    truncate_to_width(branch, max_width)
 }
 
 /// Calculate the available width for a workspace name and its displayed bounds.
@@ -1352,5 +1389,20 @@ mod tests {
         assert_eq!(truncate_branch_name("test/branch", 3), "te…");
         // Zero max_width returns empty string
         assert_eq!(truncate_branch_name("any/branch", 0), "");
+    }
+
+    #[test]
+    fn test_truncate_branch_name_wide_chars() {
+        // Wide characters (CJK) take 2 display columns each
+        // "日本語" = 3 chars, 6 columns
+        assert_eq!(truncate_branch_name("日本語", 6), "日本語"); // Fits exactly
+        assert_eq!(truncate_branch_name("日本語", 5), "日本…"); // 2+2+1 = 5 columns
+        assert_eq!(truncate_branch_name("日本語", 4), "日…"); // 2+1 = 3 columns (can't fit 日本)
+
+        // Mixed ASCII and wide chars
+        // "user/日本語" = "user/" (5 cols) + "日本語" (6 cols) = 11 cols total
+        assert_eq!(truncate_branch_name("user/日本語", 11), "user/日本語"); // Fits
+        assert_eq!(truncate_branch_name("user/日本語", 8), "…/日本語"); // 1 + 1 + 6 = 8 cols
+        assert_eq!(truncate_branch_name("user/日本語", 7), "…/日本…"); // 1 + 1 + 4 + 1 = 7 cols
     }
 }
