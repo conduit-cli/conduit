@@ -11,7 +11,10 @@ use uuid::Uuid;
 
 use crate::git::GitDiffStats;
 
-use super::{accent_error, accent_success, accent_warning, selected_bg, text_muted};
+use super::{accent_error, accent_success, pr_open_bg, selected_bg, text_muted};
+
+/// Enable mock PR display for layout testing
+const MOCK_SIDEBAR_PR_DISPLAY: bool = false;
 
 /// Display mode for git status in the sidebar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -198,6 +201,10 @@ pub struct TreeViewState {
     pub selected: usize,
     /// Scroll offset
     pub offset: usize,
+    /// Currently hovered workspace ID (for showing expanded name on hover)
+    pub hovered_workspace_id: Option<Uuid>,
+    /// Y position of hovered workspace's name line (for hit testing)
+    pub hovered_name_line_y: Option<u16>,
 }
 
 impl TreeViewState {
@@ -219,6 +226,18 @@ impl TreeViewState {
         if visible_count > 0 {
             self.selected = (self.selected + 1) % visible_count;
         }
+    }
+
+    /// Clear hover state
+    pub fn clear_hover(&mut self) {
+        self.hovered_workspace_id = None;
+        self.hovered_name_line_y = None;
+    }
+
+    /// Set hovered workspace
+    pub fn set_hover(&mut self, workspace_id: Uuid, name_line_y: u16) {
+        self.hovered_workspace_id = Some(workspace_id);
+        self.hovered_name_line_y = Some(name_line_y);
     }
 }
 
@@ -403,9 +422,12 @@ impl StatefulWidget for TreeView<'_> {
 
             if is_two_line_workspace {
                 // First line shows branch (suffix) with the primary label style
-                // Git stats are shown on the second line (workspace name line)
+                // Truncate long branch names with "…/suffix" format
                 if let Some(suffix) = &node.suffix {
-                    spans.push(Span::styled(suffix.as_str(), label_style));
+                    let indent_width = indent.chars().count() + 2; // indent + expand marker
+                    let available = (inner.width as usize).saturating_sub(indent_width);
+                    let branch_display = truncate_branch_name(suffix, available);
+                    spans.push(Span::styled(branch_display, label_style));
                 }
             } else {
                 // Single line items show label
@@ -448,72 +470,68 @@ impl StatefulWidget for TreeView<'_> {
                 if name_y < inner.y + inner.height {
                     // Indent for second line: align under the branch name
                     let name_indent = format!("{}  ", indent);
-                    let mut name_spans = vec![
-                        Span::raw(name_indent),
-                        Span::styled(&node.label, self.suffix_style),
+                    let indent_width = name_indent.chars().count();
+
+                    // Build right-side content: git stats + PR badge
+                    let right_spans = build_right_side_spans(node);
+                    let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+
+                    // Calculate available space for workspace name
+                    let total_width = inner.width as usize;
+                    let available_for_name =
+                        total_width.saturating_sub(indent_width + right_width + 1); // +1 for gap
+
+                    // Check if name needs truncation
+                    let name_is_truncated = node.label.chars().count() > available_for_name;
+
+                    // Check if this workspace is being hovered AND name is truncated
+                    let is_hovered = state.hovered_workspace_id == Some(node.id);
+                    let show_expanded = is_hovered && name_is_truncated;
+
+                    // When hovered AND truncated, show full name (overflows into right side area)
+                    // Otherwise show normal (truncated if needed, or full if it fits)
+                    let name_display = if show_expanded {
+                        // Show full name when hovered and truncated
+                        node.label.clone()
+                    } else if name_is_truncated {
+                        let truncated: String = node
+                            .label
+                            .chars()
+                            .take(available_for_name.saturating_sub(1))
+                            .collect();
+                        format!("{}…", truncated)
+                    } else {
+                        node.label.clone()
+                    };
+
+                    // Left side: indent + workspace name
+                    let left_spans = vec![
+                        Span::raw(name_indent.clone()),
+                        Span::styled(name_display.clone(), self.suffix_style),
                     ];
+                    let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
 
-                    // Add git stats on the second line (workspace name line)
-                    match SIDEBAR_GIT_DISPLAY {
-                        SidebarGitDisplay::Off => {}
-                        SidebarGitDisplay::ColoredDot => {
-                            // Colored dot: green=clean, orange=dirty
-                            if let Some(ref stats) = node.git_stats {
-                                if stats.has_changes() {
-                                    name_spans.push(Span::styled(
-                                        "  ●",
-                                        Style::default().fg(accent_warning()),
-                                    ));
-                                } else {
-                                    name_spans.push(Span::styled(
-                                        "  ●",
-                                        Style::default().fg(accent_success()),
-                                    ));
-                                }
-                            }
-                        }
-                        SidebarGitDisplay::InlineStats => {
-                            // Inline stats: +12 -4 (omit zeros)
-                            if let Some(ref stats) = node.git_stats {
-                                if stats.has_changes() {
-                                    name_spans.push(Span::styled(
-                                        "  ",
-                                        Style::default().fg(text_muted()),
-                                    ));
-
-                                    let has_additions = stats.additions > 0;
-                                    let has_deletions = stats.deletions > 0;
-
-                                    if has_additions {
-                                        name_spans.push(Span::styled(
-                                            format!("+{}", stats.additions),
-                                            Style::default().fg(accent_success()),
-                                        ));
-                                    }
-
-                                    if has_additions && has_deletions {
-                                        name_spans.push(Span::styled(" ", Style::default()));
-                                    }
-
-                                    if has_deletions {
-                                        name_spans.push(Span::styled(
-                                            format!("-{}", stats.deletions),
-                                            Style::default().fg(accent_error()),
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    let name_line = Line::from(name_spans);
-                    let name_area = Rect {
+                    // Render left side (full width when expanded to cover right side)
+                    let render_width = if show_expanded {
+                        inner.width
+                    } else {
+                        left_width as u16
+                    };
+                    let left_line = Line::from(left_spans);
+                    let left_area = Rect {
                         x: inner.x,
                         y: name_y,
-                        width: inner.width,
+                        width: render_width,
                         height: 1,
                     };
-                    name_line.render(name_area, buf);
+                    left_line.render(left_area, buf);
+
+                    // Render right side (right-aligned) - hide only when expanded
+                    if !show_expanded && !right_spans.is_empty() && right_width < total_width {
+                        let right_x = inner.x + (total_width - right_width) as u16;
+                        let right_line = Line::from(right_spans);
+                        buf.set_line(right_x, name_y, &right_line, right_width as u16);
+                    }
                 }
                 // Account for the extra line in visual row tracking
                 visual_row += 1;
@@ -757,6 +775,75 @@ impl SidebarData {
         );
     }
 
+    /// Find the workspace ID if the given position is hovering over the workspace name text.
+    /// Only triggers if hovering over the visible name portion (not git stats or PR badge).
+    ///
+    /// - `visual_row`: row within the tree view (0-indexed from tree start)
+    /// - `x_in_tree`: x position within the tree inner area (0-indexed)
+    /// - `scroll_offset`: current scroll offset
+    /// - `inner_width`: width of the tree inner area
+    pub fn workspace_at_name_line(
+        &self,
+        visual_row: usize,
+        x_in_tree: usize,
+        scroll_offset: usize,
+        inner_width: usize,
+    ) -> Option<Uuid> {
+        let visible = self.visible_nodes();
+        let mut current_row: usize = 0;
+
+        for node in visible.iter().skip(scroll_offset) {
+            // Blank line before top-level items (depth=0)
+            if node.depth == 0 {
+                current_row += 1;
+            }
+
+            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+
+            if is_two_line {
+                // First row is branch line, second row is name line
+                let name_line_row = current_row + 1;
+                if visual_row == name_line_row {
+                    // Calculate where the name text starts and ends
+                    // Layout: "    " (indent) + name_display
+                    let indent_width = 4; // "  " (depth-1 indent) + "  " (expand marker space)
+
+                    // Calculate available space for name (same logic as render)
+                    let right_spans = build_right_side_spans(node);
+                    let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+                    let available_for_name =
+                        inner_width.saturating_sub(indent_width + right_width + 1);
+
+                    // Calculate actual displayed name width
+                    let name_width = if node.label.chars().count() > available_for_name {
+                        available_for_name // truncated name fills available space
+                    } else {
+                        node.label.chars().count()
+                    };
+
+                    // Check if x is within the name text area
+                    let name_start = indent_width;
+                    let name_end = name_start + name_width;
+
+                    if x_in_tree >= name_start && x_in_tree < name_end {
+                        return Some(node.id);
+                    }
+                    return None; // On this row but not over the name
+                }
+                current_row += 2;
+            } else {
+                current_row += 1;
+            }
+
+            // Stop if we've passed the target row
+            if current_row > visual_row + 1 {
+                break;
+            }
+        }
+
+        None
+    }
+
     /// Update branch name for a workspace by its ID
     ///
     /// Pass `None` to clear the branch (e.g., for detached HEAD state)
@@ -784,5 +871,353 @@ impl SidebarData {
                 }
             }
         }
+    }
+}
+
+/// Truncate a branch name to fit available width, using "…/suffix" format
+/// E.g., "fcoury/very-long-branch-name" → "…/very-long-branch-name" → "…/very-long-bra…"
+fn truncate_branch_name(branch: &str, max_width: usize) -> String {
+    if branch.chars().count() <= max_width {
+        return branch.to_string();
+    }
+
+    // Try to preserve the part after the last slash
+    if let Some(slash_pos) = branch.rfind('/') {
+        let suffix = &branch[slash_pos + 1..];
+        let prefix_with_ellipsis = format!("…/{}", suffix);
+
+        if prefix_with_ellipsis.chars().count() <= max_width {
+            return prefix_with_ellipsis;
+        }
+
+        // Still too long, truncate the suffix part too
+        let available_for_suffix = max_width.saturating_sub(2); // "…/" = 2 chars
+        if available_for_suffix > 1 {
+            let truncated_suffix: String = suffix.chars().take(available_for_suffix - 1).collect();
+            return format!("…/{}…", truncated_suffix);
+        }
+    }
+
+    // No slash or very limited space - just truncate with ellipsis
+    let truncated: String = branch.chars().take(max_width.saturating_sub(1)).collect();
+    format!("{}…", truncated)
+}
+
+/// Build the right-side spans for a workspace line (git stats + PR badge)
+fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
+    use ratatui::style::Style;
+
+    let mut spans = Vec::new();
+
+    // Use mock data if enabled, otherwise use real data
+    let (additions, deletions, pr_number, pr_passing) = if MOCK_SIDEBAR_PR_DISPLAY {
+        // Mock: small realistic values
+        (1, 1, Some(42u32), true)
+    } else {
+        // Real data from node
+        let stats = node.git_stats.as_ref();
+        let additions = stats.map(|s| s.additions).unwrap_or(0);
+        let deletions = stats.map(|s| s.deletions).unwrap_or(0);
+        // TODO: Add real PR data to TreeNode when wired up
+        (additions, deletions, None, false)
+    };
+
+    let has_git_changes = additions > 0 || deletions > 0;
+    let has_pr = pr_number.is_some();
+
+    // Git stats: +N -N
+    if has_git_changes {
+        if additions > 0 {
+            spans.push(Span::styled(
+                format!("+{}", additions),
+                Style::default().fg(accent_success()),
+            ));
+        }
+        if additions > 0 && deletions > 0 {
+            spans.push(Span::styled(" ", Style::default()));
+        }
+        if deletions > 0 {
+            spans.push(Span::styled(
+                format!("-{}", deletions),
+                Style::default().fg(accent_error()),
+            ));
+        }
+    }
+
+    // Space between git stats and PR (no separator)
+    if has_git_changes && has_pr {
+        spans.push(Span::styled(" ", Style::default()));
+    }
+
+    // PR badge: #123✓ with colored background
+    if let Some(pr_num) = pr_number {
+        let check_icon = if pr_passing { "✓" } else { "✗" };
+        let bg_color = if pr_passing {
+            pr_open_bg() // Green-ish for passing
+        } else {
+            accent_error() // Red for failing
+        };
+        spans.push(Span::styled(
+            format!(" #{}{} ", pr_num, check_icon),
+            Style::default().bg(bg_color).fg(Color::White),
+        ));
+    }
+
+    // Trailing space for padding
+    if !spans.is_empty() {
+        spans.push(Span::raw(" "));
+    }
+
+    spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_sidebar() -> SidebarData {
+        let mut sidebar = SidebarData::new();
+        let repo_id = Uuid::new_v4();
+        // Workspace with a long name that will be truncated
+        let ws_id = Uuid::new_v4();
+        sidebar.add_repository(
+            repo_id,
+            "test-repo",
+            vec![(ws_id, "my-workspace-name".to_string(), "main".to_string())],
+        );
+        sidebar
+    }
+
+    #[test]
+    fn test_workspace_at_name_line_layout() {
+        // This test verifies the visual row calculation
+        // Layout with one repo + one workspace:
+        // Row 0: (blank line before repo)
+        // Row 1: "test-repo" (repository)
+        // Row 2: "+ New workspace" (action)
+        // Row 3: "main" (workspace branch line)
+        // Row 4: "my-workspace-name" (workspace name line) <-- this is the target
+
+        let sidebar = create_test_sidebar();
+        let scroll_offset = 0;
+        let inner_width: usize = 30;
+
+        // Print the visual structure for debugging
+        let visible = sidebar.visible_nodes();
+        println!("Visible nodes:");
+        for (i, node) in visible.iter().enumerate() {
+            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            println!(
+                "  [{}] depth={}, type={:?}, label='{}', suffix={:?}, two_line={}",
+                i, node.depth, node.node_type, node.label, node.suffix, is_two_line
+            );
+        }
+
+        // Calculate expected visual rows
+        let mut current_row = 0;
+        let mut name_line_row = None;
+        let mut workspace_id = None;
+
+        for node in visible.iter() {
+            if node.depth == 0 {
+                current_row += 1; // blank line before repo
+            }
+            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            if is_two_line {
+                // branch line is current_row, name line is current_row + 1
+                name_line_row = Some(current_row + 1);
+                workspace_id = Some(node.id);
+                current_row += 2;
+            } else {
+                current_row += 1;
+            }
+        }
+
+        println!("Expected name line row: {:?}", name_line_row);
+        println!("Workspace ID: {:?}", workspace_id);
+
+        // Test: hovering on the name line at x=4 (start of name after indent)
+        let result = sidebar.workspace_at_name_line(
+            name_line_row.unwrap(),
+            4, // x position right at indent start
+            scroll_offset,
+            inner_width,
+        );
+        println!(
+            "Result for row={}, x=4: {:?}",
+            name_line_row.unwrap(),
+            result
+        );
+        assert_eq!(
+            result, workspace_id,
+            "Should find workspace when hovering on name"
+        );
+    }
+
+    #[test]
+    fn test_workspace_at_name_line_x_bounds() {
+        let sidebar = create_test_sidebar();
+        let scroll_offset = 0;
+        let inner_width: usize = 30;
+
+        // Find the name line row (should be row 4 based on layout)
+        // Row 0: blank, Row 1: repo, Row 2: action, Row 3: branch, Row 4: name
+        let name_line_row = 4;
+
+        // Test various x positions
+        let test_cases = vec![
+            (0, "before indent"),
+            (3, "in indent"),
+            (4, "at name start"),
+            (5, "in name"),
+            (10, "in name middle"),
+            (25, "near end - might be in stats"),
+            (29, "at far right"),
+        ];
+
+        for (x, desc) in test_cases {
+            let result =
+                sidebar.workspace_at_name_line(name_line_row, x, scroll_offset, inner_width);
+            println!("x={:2} ({}): {:?}", x, desc, result.is_some());
+        }
+    }
+
+    #[test]
+    fn test_workspace_at_name_line_calculates_bounds_correctly() {
+        let sidebar = create_test_sidebar();
+        let scroll_offset = 0;
+        let inner_width: usize = 30;
+        let name_line_row = 4;
+
+        // Get the workspace node to check its label length
+        let visible = sidebar.visible_nodes();
+        let ws_node = visible
+            .iter()
+            .find(|n| n.node_type == NodeType::Workspace)
+            .unwrap();
+
+        println!(
+            "Workspace label: '{}' (len={})",
+            ws_node.label,
+            ws_node.label.chars().count()
+        );
+
+        // Calculate expected bounds (same logic as workspace_at_name_line)
+        let indent_width = 4;
+        let right_spans = build_right_side_spans(ws_node);
+        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
+        let name_width = if ws_node.label.chars().count() > available_for_name {
+            available_for_name
+        } else {
+            ws_node.label.chars().count()
+        };
+
+        println!(
+            "inner_width={}, indent_width={}, right_width={}",
+            inner_width, indent_width, right_width
+        );
+        println!(
+            "available_for_name={}, name_width={}",
+            available_for_name, name_width
+        );
+        println!(
+            "Expected name bounds: [{}, {})",
+            indent_width,
+            indent_width + name_width
+        );
+
+        // x=4 should be at start of name
+        let result_at_start =
+            sidebar.workspace_at_name_line(name_line_row, 4, scroll_offset, inner_width);
+        assert!(result_at_start.is_some(), "x=4 should be at name start");
+
+        // x just before indent should fail
+        let result_before =
+            sidebar.workspace_at_name_line(name_line_row, 3, scroll_offset, inner_width);
+        assert!(result_before.is_none(), "x=3 should be in indent, not name");
+    }
+
+    #[test]
+    fn test_workspace_at_name_line_wider_sidebar() {
+        // Test with a more realistic wider sidebar (40 chars)
+        let sidebar = create_test_sidebar();
+        let scroll_offset = 0;
+        let inner_width: usize = 40;
+        let name_line_row = 4;
+
+        // Get the workspace node
+        let visible = sidebar.visible_nodes();
+        let ws_node = visible
+            .iter()
+            .find(|n| n.node_type == NodeType::Workspace)
+            .unwrap();
+
+        // Calculate expected bounds
+        let indent_width = 4;
+        let right_spans = build_right_side_spans(ws_node);
+        let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        let available_for_name = inner_width.saturating_sub(indent_width + right_width + 1);
+        let name_width = if ws_node.label.chars().count() > available_for_name {
+            available_for_name
+        } else {
+            ws_node.label.chars().count()
+        };
+
+        println!("\n=== WIDER SIDEBAR TEST (40 chars) ===");
+        println!(
+            "inner_width={}, indent_width={}, right_width={}",
+            inner_width, indent_width, right_width
+        );
+        println!(
+            "available_for_name={}, name_width={}",
+            available_for_name, name_width
+        );
+        println!(
+            "Expected name bounds: [{}, {})",
+            indent_width,
+            indent_width + name_width
+        );
+
+        // With wider sidebar, we should have more hover area
+        let name_end = indent_width + name_width;
+
+        // Test all positions
+        for x in 0..inner_width {
+            let result =
+                sidebar.workspace_at_name_line(name_line_row, x, scroll_offset, inner_width);
+            let expected = x >= indent_width && x < name_end;
+            if result.is_some() != expected {
+                println!(
+                    "MISMATCH at x={}: got {:?}, expected {}",
+                    x,
+                    result.is_some(),
+                    expected
+                );
+            }
+        }
+
+        // Verify specific positions
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, indent_width, scroll_offset, inner_width)
+                .is_some(),
+            "x={} should be in name area",
+            indent_width
+        );
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, name_end - 1, scroll_offset, inner_width)
+                .is_some(),
+            "x={} should be in name area",
+            name_end - 1
+        );
+        assert!(
+            sidebar
+                .workspace_at_name_line(name_line_row, name_end, scroll_offset, inner_width)
+                .is_none(),
+            "x={} should be outside name area",
+            name_end
+        );
     }
 }

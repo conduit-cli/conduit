@@ -4259,6 +4259,41 @@ Acknowledge that you have received this context by replying ONLY with the single
                 Ok(Vec::new())
             }
             MouseEventKind::Moved => {
+                // Update hover state for sidebar workspace name expansion
+                if let Some(sidebar_area) = self.state.sidebar_area {
+                    // Tree view starts after title (3 rows) + separator (1 row) = 4 rows
+                    let tree_start_y = sidebar_area.y + 4;
+                    // Sidebar has no borders - tree renders directly in content area
+                    let inner_x = sidebar_area.x;
+                    let inner_width = sidebar_area.width as usize;
+
+                    if Self::point_in_rect(x, y, sidebar_area) && y >= tree_start_y {
+                        // Calculate visual row within the tree view
+                        let visual_row = (y - tree_start_y) as usize;
+                        // Calculate x position within the tree inner area
+                        let x_in_tree = x.saturating_sub(inner_x) as usize;
+                        let scroll_offset = self.state.sidebar_state.tree_state.offset;
+
+                        // Check if hovering over a workspace name (not git stats or PR)
+                        if let Some(workspace_id) = self.state.sidebar_data.workspace_at_name_line(
+                            visual_row,
+                            x_in_tree,
+                            scroll_offset,
+                            inner_width,
+                        ) {
+                            self.state
+                                .sidebar_state
+                                .tree_state
+                                .set_hover(workspace_id, y);
+                        } else {
+                            self.state.sidebar_state.tree_state.clear_hover();
+                        }
+                    } else {
+                        // Mouse left sidebar, clear hover
+                        self.state.sidebar_state.tree_state.clear_hover();
+                    }
+                }
+
                 // Update hover state for raw events session ID
                 if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(raw_events_area) = self.state.raw_events_area {
