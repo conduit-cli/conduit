@@ -5795,7 +5795,6 @@ Acknowledge that you have received this context by replying ONLY with the single
             attention_flags.push(session.needs_attention);
         }
 
-<<<<<<< HEAD
         TabBar::new(
             self.state.tab_manager.tab_names(),
             self.state.tab_manager.active_index(),
