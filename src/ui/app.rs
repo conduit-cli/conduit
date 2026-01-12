@@ -976,6 +976,10 @@ impl App {
             pid = session.agent_pid.take();
             pid_start_time = session.agent_pid_start_time.take();
             session.agent_input_tx = None;
+            // Clear any active inline prompt and pending permissions since the agent is gone
+            session.inline_prompt = None;
+            session.pending_tool_permissions.clear();
+            session.pending_tool_permission_responses.clear();
             if session.is_processing {
                 was_processing = true;
                 session.stop_processing();
@@ -1672,8 +1676,16 @@ impl App {
 
         // Global command mode trigger - ':' from most modes enters command mode
         // Only trigger when input box is empty (so pasting "hello:world" doesn't activate command mode)
+        // Also skip when inline prompt is active (user should respond to prompt first)
+        let has_inline_prompt = self
+            .state
+            .tab_manager
+            .active_session()
+            .is_some_and(|s| s.inline_prompt.is_some());
+
         if key.code == KeyCode::Char(':')
             && key.modifiers.is_empty()
+            && !has_inline_prompt
             && !matches!(
                 self.state.input_mode,
                 InputMode::Command
@@ -7460,7 +7472,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                                     );
                                 }
                             });
+                            // Preserve tools_in_flight count, then decrement after starting processing
+                            // (mirrors send_tool_result behavior for consistency)
+                            let pending_tools = session.tools_in_flight;
                             session.start_processing();
+                            session.tools_in_flight = pending_tools.saturating_sub(1);
                             session.set_processing_state(ProcessingState::Thinking);
                             self.state.start_footer_spinner(None);
                             return Vec::new();

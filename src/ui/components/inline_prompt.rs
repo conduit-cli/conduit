@@ -625,35 +625,6 @@ impl InlinePromptState {
         }
     }
 
-    /// Calculate the height needed to render this prompt
-    pub fn required_height(&self) -> u16 {
-        match &self.prompt_type {
-            InlinePromptType::AskUserQuestion { questions } => {
-                if let Some(q) = questions.get(self.current_question_idx) {
-                    // Separator (1) + tab bar if multi-question (1) + blank (1) + question (1)
-                    // + blank (1) + options (2 lines each) + blank (1) + instructions (1)
-                    let base = 6;
-                    let tab_bar = if questions.len() > 1 || self.has_submit_tab() {
-                        2
-                    } else {
-                        0
-                    };
-                    let options = (q.options.len() + 1) * 2; // +1 for "Type something"
-                    base + tab_bar + options as u16
-                } else {
-                    10
-                }
-            }
-            InlinePromptType::ExitPlanMode { plan_content, .. } => {
-                // Header (1) + dashed line (1) + plan lines + dashed line (1)
-                // + blank (1) + "Would you like..." (1) + blank (1) + options (2) + blank (1)
-                // + file path (1) + blank (1) + instructions (1)
-                let plan_lines = plan_content.lines().count().min(15) as u16; // Cap at 15 lines
-                12 + plan_lines
-            }
-        }
-    }
-
     // ========================================================================
     // Line-based rendering (for scrollable chat integration)
     // ========================================================================
