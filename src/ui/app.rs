@@ -48,8 +48,8 @@ use crate::ui::components::{
     bg_highlight, scrollbar_offset_from_point, text_muted, text_primary, AddRepoDialog,
     AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
     ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog, EventDirection,
-    GlobalFooter, HelpDialog, InlinePrompt, InlinePromptState, InlinePromptType, MessageRole,
-    MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, PromptAnswer, RawEventsClick,
+    GlobalFooter, HelpDialog, InlinePromptState, InlinePromptType, MessageRole, MissingToolDialog,
+    ModelSelector, ProcessingState, ProjectPicker, PromptAnswer, RawEventsClick,
     RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
     SidebarData, TabBar, TabBarHitTarget, ThemePicker, SIDEBAR_HEADER_ROWS,
 };
@@ -1416,11 +1416,11 @@ impl App {
                         session.inline_prompt = None;
 
                         // Handle the response - format as natural language for the model
-                        let effects = if agent_type == AgentType::Claude
-                            && session.agent_input_tx.is_some()
-                            && pending_request_id.is_some()
-                        {
-                            let request_id = pending_request_id.unwrap();
+                        let effects = if let (AgentType::Claude, true, Some(request_id)) = (
+                            agent_type,
+                            session.agent_input_tx.is_some(),
+                            pending_request_id.as_ref(),
+                        ) {
                             match response_clone {
                                 PromptResponse::AskUserAnswers { answers } => {
                                     let updated_input = Self::build_ask_user_updated_input(
@@ -1431,7 +1431,7 @@ impl App {
                                         updated_input,
                                         Some(&tool_id),
                                     );
-                                    self.send_control_response(&request_id, response_payload)
+                                    self.send_control_response(request_id, response_payload)
                                 }
                                 PromptResponse::ExitPlanApprove => {
                                     // Switch to Build mode
@@ -1443,14 +1443,14 @@ impl App {
                                         updated_input,
                                         Some(&tool_id),
                                     );
-                                    self.send_control_response(&request_id, response_payload)
+                                    self.send_control_response(request_id, response_payload)
                                 }
                                 PromptResponse::ExitPlanFeedback(feedback) => {
                                     let response_payload = Self::build_permission_deny_response(
                                         format!("User feedback on plan: {}", feedback),
                                         Some(&tool_id),
                                     );
-                                    self.send_control_response(&request_id, response_payload)
+                                    self.send_control_response(request_id, response_payload)
                                 }
                             }
                         } else if agent_type == AgentType::Claude
@@ -1530,16 +1530,16 @@ impl App {
                         let agent_type = session.agent_type;
                         session.inline_prompt = None;
                         // Send cancellation as clear message
-                        let effects = if agent_type == AgentType::Claude
-                            && session.agent_input_tx.is_some()
-                            && pending_request_id.is_some()
-                        {
-                            let request_id = pending_request_id.unwrap();
+                        let effects = if let (AgentType::Claude, true, Some(request_id)) = (
+                            agent_type,
+                            session.agent_input_tx.is_some(),
+                            pending_request_id.as_ref(),
+                        ) {
                             let response_payload = Self::build_permission_deny_response(
                                 "User cancelled the prompt.".to_string(),
                                 Some(&tool_id),
                             );
-                            self.send_control_response(&request_id, response_payload)
+                            self.send_control_response(request_id, response_payload)
                         } else if agent_type == AgentType::Claude
                             && session.agent_input_tx.is_some()
                         {
@@ -4709,19 +4709,18 @@ Acknowledge that you have received this context by replying ONLY with the single
 
     /// Sync footer spinner state to the active tab's processing state
     fn sync_footer_spinner(&mut self) {
-        let is_active_processing = self
-            .state
-            .tab_manager
-            .active_session()
-            .is_some_and(|s| s.is_processing);
+        let active_session = self.state.tab_manager.active_session();
+        let is_active_processing = active_session.is_some_and(|s| s.is_processing);
+        let has_inline_prompt = active_session.is_some_and(|s| s.inline_prompt.is_some());
 
-        if is_active_processing {
+        // Don't show spinner when awaiting user response (inline prompt active)
+        if is_active_processing && !has_inline_prompt {
             // Start spinner if active tab is processing and spinner not already running
             if self.state.footer_spinner.is_none() {
                 self.state.start_footer_spinner(None);
             }
         } else if self.state.footer_spinner.is_some() {
-            // Stop spinner if active tab is not processing and spinner is running
+            // Stop spinner if not processing, or awaiting response
             self.state.stop_footer_spinner();
         }
     }
@@ -5980,10 +5979,14 @@ Acknowledge that you have received this context by replying ONLY with the single
         let mut pr_numbers = Vec::with_capacity(sessions.len());
         let mut processing_flags = Vec::with_capacity(sessions.len());
         let mut attention_flags = Vec::with_capacity(sessions.len());
+        let mut awaiting_response_flags = Vec::with_capacity(sessions.len());
         for session in sessions {
             pr_numbers.push(session.pr_number);
-            processing_flags.push(session.is_processing);
+            // Don't show processing spinner if awaiting response (inline prompt active)
+            let has_inline_prompt = session.inline_prompt.is_some();
+            processing_flags.push(session.is_processing && !has_inline_prompt);
             attention_flags.push(session.needs_attention);
+            awaiting_response_flags.push(has_inline_prompt);
         }
 
         TabBar::new(
@@ -5991,7 +5994,12 @@ Acknowledge that you have received this context by replying ONLY with the single
             self.state.tab_manager.active_index(),
         )
         .focused(focused)
-        .with_tab_states(pr_numbers, processing_flags, attention_flags)
+        .with_tab_states(
+            pr_numbers,
+            processing_flags,
+            attention_flags,
+            awaiting_response_flags,
+        )
         .with_spinner_frame(self.state.spinner_frame)
         .with_scroll_offset(self.state.tab_bar_scroll)
     }
@@ -7060,8 +7068,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                 }
                 AgentEvent::ToolStarted(tool) => {
-                    // Check for special interactive tools
-                    if tool.tool_name == "AskUserQuestion" {
+                    // Check for special interactive tools that use inline prompts
+                    let is_inline_prompt_tool = if tool.tool_name == "AskUserQuestion" {
                         // Parse the questions from the tool arguments
                         if let Ok(wrapper) =
                             serde_json::from_value::<AskUserQuestionWrapper>(tool.arguments.clone())
@@ -7070,9 +7078,15 @@ Acknowledge that you have received this context by replying ONLY with the single
                                 tool.tool_id.clone(),
                                 wrapper.questions,
                             ));
-                            // Don't push to chat - the inline prompt will be rendered separately
+                            // Scroll to bottom so prompt is visible
+                            session.chat_view.scroll_to_bottom();
+                            // Don't push to chat - the inline prompt will be rendered as extra lines
                             session.tools_in_flight = session.tools_in_flight.saturating_add(1);
-                            return Ok(());
+                            // Stop footer spinner since we're now awaiting user response
+                            should_stop_footer_spinner = true;
+                            true
+                        } else {
+                            false
                         }
                     } else if tool.tool_name == "ExitPlanMode" {
                         // Use plan content from tool arguments when available
@@ -7091,31 +7105,41 @@ Acknowledge that you have received this context by replying ONLY with the single
                             plan_content,
                             plan_path,
                         ));
-                        // Don't push to chat - the inline prompt will be rendered separately
+                        // Scroll to bottom so prompt is visible
+                        session.chat_view.scroll_to_bottom();
+                        // Don't push to chat - the inline prompt will be rendered as extra lines
                         session.tools_in_flight = session.tools_in_flight.saturating_add(1);
-                        return Ok(());
-                    }
-
-                    // Update processing state to show tool name
-                    session.set_processing_state(ProcessingState::ToolUse(tool.tool_name.clone()));
-                    // ToolStarted pairs with ToolCompleted for non-shell tools or CommandOutput
-                    // for shell tools; these events are mutually exclusive in agent runners.
-                    session.tools_in_flight = session.tools_in_flight.saturating_add(1);
-
-                    let args_str = if tool.arguments.is_null() {
-                        String::new()
+                        // Stop footer spinner since we're now awaiting user response
+                        should_stop_footer_spinner = true;
+                        true
                     } else {
-                        // Compact single-line for display
-                        serde_json::to_string(&tool.arguments).unwrap_or_default()
+                        false
                     };
-                    let display = MessageDisplay::Tool {
-                        name: MessageDisplay::tool_display_name_owned(&tool.tool_name),
-                        args: args_str,
-                        output: "Running...".to_string(),
-                        exit_code: None,
-                        file_size: None, // Only set for Read tool on images via update_last_tool
-                    };
-                    session.chat_view.push(display.to_chat_message());
+
+                    // Skip normal tool processing for inline prompt tools
+                    if !is_inline_prompt_tool {
+                        // Update processing state to show tool name
+                        session
+                            .set_processing_state(ProcessingState::ToolUse(tool.tool_name.clone()));
+                        // ToolStarted pairs with ToolCompleted for non-shell tools or CommandOutput
+                        // for shell tools; these events are mutually exclusive in agent runners.
+                        session.tools_in_flight = session.tools_in_flight.saturating_add(1);
+
+                        let args_str = if tool.arguments.is_null() {
+                            String::new()
+                        } else {
+                            // Compact single-line for display
+                            serde_json::to_string(&tool.arguments).unwrap_or_default()
+                        };
+                        let display = MessageDisplay::Tool {
+                            name: MessageDisplay::tool_display_name_owned(&tool.tool_name),
+                            args: args_str,
+                            output: "Running...".to_string(),
+                            exit_code: None,
+                            file_size: None, // Only set for Read tool on images via update_last_tool
+                        };
+                        session.chat_view.push(display.to_chat_message());
+                    }
                 }
                 AgentEvent::ControlRequest(request) => {
                     if let Some(tool_use_id) = request.tool_use_id.clone() {
@@ -9447,9 +9471,19 @@ Acknowledge that you have received this context by replying ONLY with the single
                 let input_total_margin = INPUT_MARGIN_LEFT + INPUT_MARGIN_RIGHT;
 
                 // Calculate dynamic input height (max 30% of screen)
+                // When inline prompt is active, set to 0 so chat area expands
                 let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
                 let input_width = content_area.width.saturating_sub(input_total_margin);
-                let input_height = if let Some(session) = self.state.tab_manager.active_session() {
+                let has_inline_prompt = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .map(|s| s.inline_prompt.is_some())
+                    .unwrap_or(false);
+
+                let input_height = if has_inline_prompt {
+                    0 // No input box when inline prompt is active
+                } else if let Some(session) = self.state.tab_manager.active_session() {
                     session
                         .input_box
                         .desired_height(max_input_height, input_width)
@@ -9457,16 +9491,20 @@ Acknowledge that you have received this context by replying ONLY with the single
                     3 // Minimum height
                 };
 
+                // When inline prompt is active, hide status bar and gap too
+                let status_bar_height = if has_inline_prompt { 0 } else { 1 };
+                let gap_height = if has_inline_prompt { 0 } else { 1 };
+
                 // Chat layout with session header, input box, status bar, and gap
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(1),            // Tab bar
-                        Constraint::Length(1),            // Session header
-                        Constraint::Min(5),               // Chat view
-                        Constraint::Length(input_height), // Input box (dynamic)
-                        Constraint::Length(1),            // Status bar
-                        Constraint::Length(1),            // Gap row before footer
+                        Constraint::Length(1),                 // Tab bar
+                        Constraint::Length(1),                 // Session header
+                        Constraint::Min(5),                    // Chat view
+                        Constraint::Length(input_height),      // Input box (dynamic)
+                        Constraint::Length(status_bar_height), // Status bar (hidden during inline prompt)
+                        Constraint::Length(gap_height),        // Gap row before footer
                     ])
                     .split(content_area);
 
@@ -9538,11 +9576,14 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 // Draw separator line in the gap row (▀ characters)
                 // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
-                use crate::ui::components::status_bar_bg;
-                for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
-                    buf[(x, gap_area_inner.y)]
-                        .set_char('▀')
-                        .set_fg(status_bar_bg());
+                // Skip when inline prompt is active (gap row is hidden)
+                if !has_inline_prompt {
+                    use crate::ui::components::status_bar_bg;
+                    for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
+                        buf[(x, gap_area_inner.y)]
+                            .set_char('▀')
+                            .set_fg(status_bar_bg());
+                    }
                 }
 
                 // Store layout areas for mouse hit-testing
@@ -9570,26 +9611,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Draw active session components
                 let is_command_mode = self.state.input_mode == InputMode::Command;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    let inline_prompt_state = session.inline_prompt.as_ref();
-
-                    let mut chat_area = chat_chunk;
-                    let mut prompt_area: Option<Rect> = None;
-                    if let Some(inline_prompt_state) = inline_prompt_state {
-                        let prompt_height =
-                            inline_prompt_state.required_height().min(chat_chunk.height);
-                        if prompt_height > 0 {
-                            chat_area.height = chat_area.height.saturating_sub(prompt_height);
-                            let prompt_container = Rect {
-                                x: chat_chunk.x,
-                                y: chat_chunk.y + chat_area.height,
-                                width: chat_chunk.width,
-                                height: prompt_height,
-                            };
-                            prompt_area =
-                                crate::ui::components::ChatView::content_area_for(prompt_container)
-                                    .or(Some(prompt_container));
-                        }
-                    }
+                    // Use full chat area - prompt is now rendered as part of scrollable content
+                    let chat_area = chat_chunk;
 
                     self.state.chat_area = if chat_area.height == 0 {
                         None
@@ -9606,62 +9629,51 @@ Acknowledge that you have received this context by replying ONLY with the single
                     };
                     let input_mode = self.state.input_mode;
                     let queue_lines = Self::build_queue_lines(session, chat_area.width, input_mode);
+
+                    // Build prompt lines from inline_prompt (renders as part of scrollable chat)
+                    let prompt_lines = session
+                        .inline_prompt
+                        .as_ref()
+                        .map(|p| p.render_as_lines(chat_area.width as usize));
+
                     session.chat_view.render_with_indicator(
                         chat_area,
                         f.buffer_mut(),
                         thinking_line,
                         queue_lines,
+                        prompt_lines,
                     );
 
                     // Check if inline prompt is active
-                    let has_inline_prompt = inline_prompt_state.is_some();
+                    let has_inline_prompt = session.inline_prompt.is_some();
 
                     // Render input box (not in command mode, not when inline prompt active)
                     if !is_command_mode && !has_inline_prompt {
                         session.input_box.render(input_area_inner, f.buffer_mut());
                     }
-
-                    // Render inline prompt if active (within chat area)
-                    if let Some(inline_prompt_state) = inline_prompt_state {
-                        if let Some(prompt_area) = prompt_area {
-                            InlinePrompt::new(inline_prompt_state)
-                                .render(prompt_area, f.buffer_mut());
-                        }
+                    // Update and render status bar (skip when inline prompt is active)
+                    if !has_inline_prompt {
+                        session.status_bar.set_metrics(
+                            self.state.show_metrics,
+                            self.state.metrics.draw_time,
+                            self.state.metrics.event_time,
+                            self.state.metrics.fps,
+                            self.state.metrics.scroll_latency,
+                            self.state.metrics.scroll_latency_avg,
+                            self.state.metrics.scroll_lines_per_sec,
+                            self.state.metrics.scroll_events_per_sec,
+                            self.state.metrics.scroll_active,
+                        );
+                        session
+                            .status_bar
+                            .render(status_bar_area_inner, f.buffer_mut());
                     }
-                    // Update status bar with performance metrics
-                    session.status_bar.set_metrics(
-                        self.state.show_metrics,
-                        self.state.metrics.draw_time,
-                        self.state.metrics.event_time,
-                        self.state.metrics.fps,
-                        self.state.metrics.scroll_latency,
-                        self.state.metrics.scroll_latency_avg,
-                        self.state.metrics.scroll_lines_per_sec,
-                        self.state.metrics.scroll_events_per_sec,
-                        self.state.metrics.scroll_active,
-                    );
-                    session
-                        .status_bar
-                        .render(status_bar_area_inner, f.buffer_mut());
 
                     // Set cursor position (accounting for scroll)
                     if self.state.input_mode == InputMode::Normal {
-                        // If inline prompt is in input mode, position cursor there
-                        if let Some(inline_prompt_state) = inline_prompt_state {
-                            if inline_prompt_state.input_mode {
-                                if let Some(prompt_area) = prompt_area {
-                                    // Position cursor in the inline prompt's text input
-                                    // Input is after: separator (1) + question (2) + blank (1) = 4 lines
-                                    // Plus account for multi-question tab bar
-                                    let input_y = prompt_area.y + 4;
-                                    // Cursor position: "> " prefix (2) + cursor position in text
-                                    let cx = prompt_area.x
-                                        + 2
-                                        + inline_prompt_state.text_input.cursor as u16;
-                                    f.set_cursor_position((cx, input_y));
-                                }
-                            }
-                        } else {
+                        // Inline prompt uses visual cursor (reversed style) in the rendered lines,
+                        // so no cursor positioning needed. Only set cursor for normal input box.
+                        if !has_inline_prompt {
                             let scroll_offset = session.input_box.scroll_offset();
                             let (cx, cy) = session
                                 .input_box

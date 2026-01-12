@@ -1701,16 +1701,22 @@ impl ChatView {
 
     /// Render the chat view
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        self.render_with_indicator(area, buf, None, None);
+        self.render_with_indicator(area, buf, None, None, None);
     }
 
-    /// Render the chat view with an optional thinking indicator
+    /// Render the chat view with optional indicators and prompt lines.
+    ///
+    /// # Arguments
+    /// * `thinking_line` - Optional thinking indicator line
+    /// * `queue_lines` - Optional queued message preview lines
+    /// * `prompt_lines` - Optional inline prompt lines (AskUserQuestion, ExitPlanMode)
     pub fn render_with_indicator(
         &mut self,
         area: Rect,
         buf: &mut Buffer,
         thinking_line: Option<Line<'static>>,
         queue_lines: Option<Vec<Line<'static>>>,
+        prompt_lines: Option<Vec<Line<'static>>>,
     ) {
         let Some(content) = Self::content_area(area) else {
             return;
@@ -1738,7 +1744,14 @@ impl ChatView {
         if let Some(mut queue) = queue_lines {
             extra_lines.append(&mut queue);
         }
-        if !extra_lines.is_empty() {
+        // Add inline prompt lines (AskUserQuestion, ExitPlanMode)
+        // No extra spacing needed before - prompt has its own separator line
+        if let Some(mut prompt) = prompt_lines {
+            extra_lines.append(&mut prompt);
+            // Add trailing empty line for better separation from footer
+            extra_lines.push(Line::from(""));
+        } else if !extra_lines.is_empty() {
+            // Only add trailing empty line when NOT showing inline prompt
             extra_lines.push(Line::from(""));
         }
 
@@ -1807,7 +1820,22 @@ impl ChatView {
             }
         }
         let highlighted = self.apply_selection_highlight(visible_lines, content.width);
-        Paragraph::new(highlighted).render(content, buf);
+
+        // When content is shorter than visible area, render at bottom (not top)
+        let actual_lines = highlighted.len();
+        let render_area = if actual_lines < visible_height {
+            // Calculate top offset to push content to bottom
+            let top_offset = (visible_height - actual_lines) as u16;
+            Rect {
+                x: content.x,
+                y: content.y + top_offset,
+                width: content.width,
+                height: actual_lines as u16,
+            }
+        } else {
+            content
+        };
+        Paragraph::new(highlighted).render(render_area, buf);
 
         render_minimal_scrollbar(
             Self::scrollbar_area(area),

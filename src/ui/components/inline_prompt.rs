@@ -653,6 +653,427 @@ impl InlinePromptState {
             }
         }
     }
+
+    // ========================================================================
+    // Line-based rendering (for scrollable chat integration)
+    // ========================================================================
+
+    /// Render the prompt as lines for inclusion in scrollable chat.
+    /// This is an alternative to the Widget-based rendering that allows
+    /// the prompt to be part of the conversation flow.
+    pub fn render_as_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        match &self.prompt_type {
+            InlinePromptType::AskUserQuestion { questions } => {
+                // Separator line
+                lines.push(self.separator_line(width));
+
+                // Tab bar for multi-question or submit mode
+                let show_tab_bar = questions.len() > 1 || self.has_submit_tab();
+                if show_tab_bar {
+                    lines.push(self.tab_bar_line(questions));
+                    lines.push(Line::from("")); // blank line
+                }
+
+                if self.is_submit_tab() {
+                    // Submit summary view
+                    self.append_submit_view_lines(&mut lines, questions);
+                } else if let Some(question) = self.current_question() {
+                    // Question content
+                    self.append_question_lines(&mut lines, question, questions.len() > 1);
+                }
+            }
+            InlinePromptType::ExitPlanMode {
+                plan_content,
+                plan_file_path,
+            } => {
+                // Header
+                lines.push(Line::from(Span::styled(
+                    " Here is Claude's plan:",
+                    Style::default().fg(text_primary()),
+                )));
+
+                // Top dashed line
+                lines.push(self.dashed_line(width));
+
+                // Plan content (limited to 15 lines)
+                let plan_style = Style::default().fg(text_secondary());
+                for line in plan_content.lines().take(15) {
+                    lines.push(Line::from(Span::styled(format!(" {}", line), plan_style)));
+                }
+
+                // Bottom dashed line
+                lines.push(self.dashed_line(width));
+                lines.push(Line::from("")); // blank line
+
+                // Question
+                lines.push(Line::from(Span::styled(
+                    " Would you like to proceed?",
+                    Style::default().fg(text_primary()),
+                )));
+                lines.push(Line::from("")); // blank line
+
+                // Options
+                lines.push(self.exit_plan_option_line(
+                    0,
+                    "Yes, start building",
+                    self.current_option == 0,
+                ));
+                lines.push(self.exit_plan_option_line(
+                    1,
+                    "Give feedback...",
+                    self.current_option == 1,
+                ));
+
+                if self.input_mode {
+                    lines.push(Line::from("")); // blank line
+                    lines.push(self.text_input_line());
+                    lines.push(Line::from("")); // blank line
+                    lines.push(
+                        self.instruction_bar_line(&[("Enter", "submit"), ("Esc", "go back")]),
+                    );
+                } else {
+                    lines.push(Line::from("")); // blank line
+                    lines.push(Line::from(Span::styled(
+                        format!(" Plan file: {}", plan_file_path),
+                        Style::default().fg(text_muted()),
+                    )));
+                    lines.push(Line::from("")); // blank line
+                    lines.push(self.instruction_bar_line(&[
+                        ("Enter", "select"),
+                        ("↑/↓", "navigate"),
+                        ("Esc", "cancel"),
+                    ]));
+                }
+            }
+        }
+
+        lines
+    }
+
+    /// Build a horizontal separator line
+    fn separator_line(&self, width: usize) -> Line<'static> {
+        Line::from(Span::styled(
+            HORIZONTAL_LINE.to_string().repeat(width),
+            Style::default().fg(text_faint()),
+        ))
+    }
+
+    /// Build a dashed line (for plan box)
+    fn dashed_line(&self, width: usize) -> Line<'static> {
+        Line::from(Span::styled(
+            DASHED_LINE.to_string().repeat(width),
+            Style::default().fg(text_faint()),
+        ))
+    }
+
+    /// Build the tab bar line for multi-question prompts
+    fn tab_bar_line(&self, questions: &[UserQuestion]) -> Line<'static> {
+        let mut spans = vec![Span::styled(
+            format!("{} ", LEFT_ARROW),
+            Style::default().fg(text_faint()),
+        )];
+
+        for (i, q) in questions.iter().enumerate() {
+            let is_current = i == self.current_question_idx;
+            let is_answered = self.question_answered(i);
+
+            let indicator = if is_answered { CHECKED } else { UNCHECKED };
+            let style = if is_current {
+                Style::default()
+                    .fg(accent_primary())
+                    .add_modifier(Modifier::BOLD)
+            } else if is_answered {
+                Style::default().fg(accent_secondary())
+            } else {
+                Style::default().fg(text_muted())
+            };
+
+            spans.push(Span::styled(format!("{} {} ", indicator, q.header), style));
+
+            if i < questions.len() - 1 {
+                spans.push(Span::styled(" ", Style::default()));
+            }
+        }
+
+        if self.has_submit_tab() {
+            let all_answered = self.all_questions_answered();
+            let is_current = self.is_submit_tab();
+            let indicator = if all_answered { CHECKED } else { UNCHECKED };
+            let submit_style = if is_current {
+                Style::default()
+                    .fg(accent_primary())
+                    .add_modifier(Modifier::BOLD)
+            } else if all_answered {
+                Style::default().fg(accent_secondary())
+            } else {
+                Style::default().fg(text_faint())
+            };
+            spans.push(Span::styled(
+                format!(" {} Submit ", indicator),
+                submit_style,
+            ));
+        }
+
+        spans.push(Span::styled(
+            format!(" {}", RIGHT_ARROW),
+            Style::default().fg(text_faint()),
+        ));
+
+        Line::from(spans)
+    }
+
+    /// Append submit view lines (summary of answers)
+    fn append_submit_view_lines(&self, lines: &mut Vec<Line<'static>>, questions: &[UserQuestion]) {
+        lines.push(Line::from(Span::styled(
+            " Ready to submit your selections?",
+            Style::default().fg(text_primary()),
+        )));
+        lines.push(Line::from("")); // blank line
+
+        for (i, question) in questions.iter().enumerate() {
+            let answer_text = match self.answers.get(i).and_then(|a| a.as_ref()) {
+                Some(QuestionAnswer::Custom(text)) => text.clone(),
+                Some(QuestionAnswer::Selected(idx)) => question
+                    .options
+                    .get(*idx)
+                    .map(|o| o.label.clone())
+                    .unwrap_or_default(),
+                Some(QuestionAnswer::MultiSelected(indices)) => {
+                    let mut labels = Vec::new();
+                    for (opt_idx, opt) in question.options.iter().enumerate() {
+                        if indices.contains(&opt_idx) {
+                            labels.push(opt.label.clone());
+                        }
+                    }
+                    labels.join(", ")
+                }
+                None => "(none)".to_string(),
+            };
+
+            lines.push(Line::from(Span::styled(
+                format!(" {}: {}", question.header, answer_text),
+                Style::default().fg(text_secondary()),
+            )));
+        }
+
+        lines.push(Line::from("")); // blank line
+        lines.push(self.instruction_bar_line(&[
+            ("Enter", "submit"),
+            ("Tab/←/→", "questions"),
+            ("Esc", "cancel"),
+        ]));
+    }
+
+    /// Append question content lines
+    fn append_question_lines(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        question: &UserQuestion,
+        is_multi_question: bool,
+    ) {
+        // Question text
+        lines.push(Line::from(Span::styled(
+            question.question.clone(),
+            Style::default().fg(text_primary()),
+        )));
+        lines.push(Line::from("")); // blank line
+
+        if self.input_mode {
+            // Text input mode
+            lines.push(self.text_input_line());
+            lines.push(Line::from("")); // blank line
+            lines.push(self.instruction_bar_line(&[("Enter", "submit"), ("Esc", "go back")]));
+        } else {
+            let show_checkbox = question.multi_select;
+            let answer = self
+                .answers
+                .get(self.current_question_idx)
+                .and_then(|a| a.as_ref());
+
+            // Options
+            for (i, opt) in question.options.iter().enumerate() {
+                let is_selected = self.current_option == i;
+                let is_checked = match answer {
+                    Some(QuestionAnswer::Selected(idx)) => *idx == i,
+                    Some(QuestionAnswer::MultiSelected(indices)) => indices.contains(&i),
+                    _ => false,
+                };
+                lines.push(self.option_line(i, &opt.label, is_selected, show_checkbox, is_checked));
+                lines.push(Line::from(vec![
+                    Span::raw("     "), // Indent to align with label
+                    Span::styled(opt.description.clone(), Style::default().fg(text_muted())),
+                ]));
+            }
+
+            // "Type something" option
+            let type_idx = question.options.len();
+            let is_selected = self.current_option == type_idx;
+            let is_checked = matches!(answer, Some(QuestionAnswer::Custom(_)));
+            lines.push(self.type_something_line(type_idx, is_selected, show_checkbox, is_checked));
+            lines.push(Line::from("")); // blank line after "Type something"
+
+            // Instructions
+            let instructions = if question.multi_select {
+                vec![
+                    ("Enter/Space", "toggle"),
+                    ("Tab/←/→", "questions"),
+                    ("↑/↓", "navigate"),
+                    ("Esc", "cancel"),
+                ]
+            } else if is_multi_question {
+                vec![
+                    ("Enter", "select"),
+                    ("Tab/←/→", "questions"),
+                    ("↑/↓", "navigate"),
+                    ("Esc", "cancel"),
+                ]
+            } else {
+                vec![("Enter", "select"), ("↑/↓", "navigate"), ("Esc", "cancel")]
+            };
+            lines.push(self.instruction_bar_line(&instructions));
+        }
+    }
+
+    /// Build an option line
+    fn option_line(
+        &self,
+        index: usize,
+        label: &str,
+        is_selected: bool,
+        show_checkbox: bool,
+        is_checked: bool,
+    ) -> Line<'static> {
+        let selector = if is_selected { SELECTOR } else { " " };
+        let selector_style = Style::default().fg(accent_primary());
+        let number_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_secondary())
+        };
+        let label_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_secondary())
+        };
+
+        let label_text = if show_checkbox {
+            format!("[{}] {}", if is_checked { "x" } else { " " }, label)
+        } else {
+            label.to_string()
+        };
+
+        Line::from(vec![
+            Span::styled(format!("{} ", selector), selector_style),
+            Span::styled(format!("{}. ", index + 1), number_style),
+            Span::styled(label_text, label_style),
+        ])
+    }
+
+    /// Build the "Type something" option line
+    fn type_something_line(
+        &self,
+        index: usize,
+        is_selected: bool,
+        show_checkbox: bool,
+        is_checked: bool,
+    ) -> Line<'static> {
+        let selector = if is_selected { SELECTOR } else { " " };
+        let selector_style = Style::default().fg(accent_primary());
+        let number_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_secondary())
+        };
+        let label_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_muted())
+        };
+
+        let label = if show_checkbox {
+            format!("[{}] Type something.", if is_checked { "x" } else { " " })
+        } else {
+            "Type something.".to_string()
+        };
+
+        Line::from(vec![
+            Span::styled(format!("{} ", selector), selector_style),
+            Span::styled(format!("{}. ", index + 1), number_style),
+            Span::styled(label, label_style),
+        ])
+    }
+
+    /// Build the text input line with cursor
+    fn text_input_line(&self) -> Line<'static> {
+        let prompt_style = Style::default().fg(accent_primary());
+        let input_style = Style::default().fg(text_primary());
+        let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
+
+        let input = &self.text_input.input;
+        let cursor_pos = self.text_input.cursor;
+
+        let mut spans = vec![Span::styled("> ", prompt_style)];
+
+        if input.is_empty() {
+            // Just show cursor at start
+            spans.push(Span::styled(" ", cursor_style));
+        } else if cursor_pos >= input.len() {
+            // Cursor at end
+            spans.push(Span::styled(input.clone(), input_style));
+            spans.push(Span::styled(" ", cursor_style));
+        } else {
+            // Cursor in middle
+            let (before, after) = input.split_at(cursor_pos);
+            let (cursor_char, rest) = after.split_at(1);
+            spans.push(Span::styled(before.to_string(), input_style));
+            spans.push(Span::styled(cursor_char.to_string(), cursor_style));
+            spans.push(Span::styled(rest.to_string(), input_style));
+        }
+
+        Line::from(spans)
+    }
+
+    /// Build the instruction bar line
+    fn instruction_bar_line(&self, instructions: &[(&str, &str)]) -> Line<'static> {
+        let mut spans = Vec::new();
+        let key_style = Style::default().fg(accent_primary());
+        let desc_style = Style::default().fg(text_muted());
+        let sep_style = Style::default().fg(text_faint());
+
+        for (i, (key, desc)) in instructions.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" │ ", sep_style));
+            }
+            spans.push(Span::styled(key.to_string(), key_style));
+            spans.push(Span::styled(format!(" {}", desc), desc_style));
+        }
+
+        Line::from(spans)
+    }
+
+    /// Build an option line for ExitPlanMode
+    fn exit_plan_option_line(&self, index: usize, label: &str, is_selected: bool) -> Line<'static> {
+        let selector = if is_selected { SELECTOR } else { " " };
+        let selector_style = Style::default().fg(accent_primary());
+        let number_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_secondary())
+        };
+        let label_style = if is_selected {
+            Style::default().fg(text_primary())
+        } else {
+            Style::default().fg(text_secondary())
+        };
+
+        Line::from(vec![
+            Span::styled(format!("{} ", selector), selector_style),
+            Span::styled(format!("{}. ", index + 1), number_style),
+            Span::styled(label.to_string(), label_style),
+        ])
+    }
 }
 
 // ============================================================================
@@ -751,6 +1172,7 @@ impl<'a> InlinePrompt<'a> {
     }
 
     /// Render a single option
+    #[allow(clippy::too_many_arguments)]
     fn render_option(
         &self,
         area: Rect,

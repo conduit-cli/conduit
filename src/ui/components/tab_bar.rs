@@ -69,6 +69,8 @@ pub struct TabBar {
     processing_flags: Vec<bool>,
     /// Whether each tab has unread content (new messages arrived while not focused)
     attention_flags: Vec<bool>,
+    /// Whether each tab is awaiting user response (inline prompt active)
+    awaiting_response_flags: Vec<bool>,
     /// Current spinner frame index
     spinner_frame: usize,
     /// Horizontal scroll offset in columns
@@ -85,6 +87,7 @@ impl TabBar {
             pr_numbers: vec![None; tab_count],
             processing_flags: vec![false; tab_count],
             attention_flags: vec![false; tab_count],
+            awaiting_response_flags: vec![false; tab_count],
             spinner_frame: 0,
             scroll_offset: 0,
         }
@@ -96,16 +99,18 @@ impl TabBar {
         self
     }
 
-    /// Set tab states (PR numbers, processing, attention flags)
+    /// Set tab states (PR numbers, processing, attention, awaiting response flags)
     pub fn with_tab_states(
         mut self,
         pr_numbers: Vec<Option<u32>>,
         processing: Vec<bool>,
         attention: Vec<bool>,
+        awaiting_response: Vec<bool>,
     ) -> Self {
         self.pr_numbers = pr_numbers;
         self.processing_flags = processing;
         self.attention_flags = attention;
+        self.awaiting_response_flags = awaiting_response;
         self
     }
 
@@ -308,6 +313,11 @@ impl TabBar {
             let is_active = i == self.active;
             let is_processing = self.processing_flags.get(i).copied().unwrap_or(false);
             let needs_attention = self.attention_flags.get(i).copied().unwrap_or(false);
+            let awaiting_response = self
+                .awaiting_response_flags
+                .get(i)
+                .copied()
+                .unwrap_or(false);
 
             let mut tab_width = 0usize;
 
@@ -327,7 +337,13 @@ impl TabBar {
             tab_width += span_width(&indicator_span);
             spans.push(indicator_span);
 
-            if is_processing {
+            // Priority: awaiting_response > processing > needs_attention
+            if awaiting_response {
+                // Show orange dot when awaiting user response (inline prompt active)
+                let awaiting_span = Span::styled("● ", active_bg_style.fg(accent_warning()));
+                tab_width += span_width(&awaiting_span);
+                spans.push(awaiting_span);
+            } else if is_processing {
                 let spinner_span = Span::styled(
                     format!("{} ", self.spinner_char()),
                     active_bg_style.fg(accent_warning()),
