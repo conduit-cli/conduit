@@ -366,8 +366,8 @@ impl StatusBar {
     }
 
     fn ripple_char(&self) -> &'static str {
-        // Target ~100ms per frame at ~50 FPS
-        let idx = (self.spinner_frame / 5) % RIPPLE_FRAMES.len();
+        // Target ~60ms per frame at ~50 FPS
+        let idx = (self.spinner_frame / 3) % RIPPLE_FRAMES.len();
         RIPPLE_FRAMES[idx]
     }
 
