@@ -1585,11 +1585,14 @@ impl App {
                 let sidebar_focused = self.state.sidebar_state.focused;
                 let repo_id_from_sidebar = if sidebar_focused {
                     let selected = self.state.sidebar_state.tree_state.selected;
-                    self.state.sidebar_data.get_at(selected).and_then(|node| match node.node_type {
-                        NodeType::Repository => Some(node.id),
-                        NodeType::Workspace => node.parent_id,
-                        NodeType::Action(ActionType::NewWorkspace) => node.parent_id,
-                    })
+                    self.state
+                        .sidebar_data
+                        .get_at(selected)
+                        .and_then(|node| match node.node_type {
+                            NodeType::Repository => Some(node.id),
+                            NodeType::Workspace => node.parent_id,
+                            NodeType::Action(ActionType::NewWorkspace) => node.parent_id,
+                        })
                 } else {
                     None
                 };
@@ -5670,7 +5673,6 @@ Acknowledge that you have received this context by replying ONLY with the single
             }
             current_x += tab_width;
         }
-
     }
 
     /// Handle click in input area
