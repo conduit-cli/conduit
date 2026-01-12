@@ -161,6 +161,11 @@ impl TabManager {
         self.sessions.iter().map(|s| s.tab_name()).collect()
     }
 
+    /// Check if we can add more tabs
+    pub fn can_add_tab(&self) -> bool {
+        self.sessions.len() < self.max_tabs
+    }
+
     /// Find a session index by its UUID
     pub fn session_index_by_id(&self, id: Uuid) -> Option<usize> {
         self.sessions.iter().position(|s| s.id == id)
