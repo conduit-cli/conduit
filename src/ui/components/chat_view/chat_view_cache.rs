@@ -189,7 +189,7 @@ impl ChatView {
 }
 
 /// Check if a line is blank (empty or only whitespace)
-fn is_blank_line(line: &Line<'_>) -> bool {
+pub(super) fn is_blank_line(line: &Line<'_>) -> bool {
     if line.spans.is_empty() {
         return true;
     }

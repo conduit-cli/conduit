@@ -64,6 +64,10 @@ pub enum Action {
     ScrollToTop,
     /// Scroll to bottom of chat
     ScrollToBottom,
+    /// Jump to previous user message in chat
+    ScrollPrevUserMessage,
+    /// Jump to next user message in chat
+    ScrollNextUserMessage,
 
     // ========== Input Box Editing ==========
     /// Insert a newline (for multi-line input)
@@ -248,6 +252,8 @@ impl Action {
             Action::ScrollPageDown => "Page down",
             Action::ScrollToTop => "Scroll to top",
             Action::ScrollToBottom => "Scroll to bottom",
+            Action::ScrollPrevUserMessage => "Previous user message",
+            Action::ScrollNextUserMessage => "Next user message",
 
             // Input editing
             Action::InsertNewline => "Insert newline",

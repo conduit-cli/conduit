@@ -347,6 +347,10 @@ impl ChatView {
         Some(content)
     }
 
+    pub(crate) fn content_area_for(area: Rect) -> Option<Rect> {
+        Self::content_area(area)
+    }
+
     /// Calculate scrollbar area (rightmost column)
     fn scrollbar_area(area: Rect) -> Rect {
         Rect {
@@ -498,6 +502,102 @@ impl ChatView {
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
+    }
+
+    /// Jump to previous user message (returns true if moved).
+    pub fn scroll_to_prev_user_message(
+        &mut self,
+        width: u16,
+        visible_height: usize,
+        extra_lines: usize,
+    ) -> bool {
+        self.scroll_to_user_message(width, visible_height, extra_lines, true)
+    }
+
+    /// Jump to next user message (returns true if moved).
+    pub fn scroll_to_next_user_message(
+        &mut self,
+        width: u16,
+        visible_height: usize,
+        extra_lines: usize,
+    ) -> bool {
+        self.scroll_to_user_message(width, visible_height, extra_lines, false)
+    }
+
+    fn scroll_to_user_message(
+        &mut self,
+        width: u16,
+        visible_height: usize,
+        extra_lines: usize,
+        prev: bool,
+    ) -> bool {
+        if visible_height == 0 {
+            return false;
+        }
+
+        self.ensure_cache(width);
+        self.ensure_flat_cache();
+        self.ensure_streaming_cache(width);
+
+        let user_lines = self.user_message_line_indices();
+        if user_lines.is_empty() {
+            return false;
+        }
+
+        let cached_len = self.flat_cache.len();
+        let streaming_len = self
+            .streaming_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let total_lines = cached_len + streaming_len + extra_lines;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
+
+        let target = if prev {
+            user_lines.iter().rev().find(|&&idx| idx < scroll_from_top)
+        } else {
+            user_lines.iter().find(|&&idx| idx > scroll_from_top)
+        };
+
+        let Some(&target_line) = target else {
+            return false;
+        };
+
+        let clamped_target = target_line.min(max_scroll);
+        self.scroll_offset = max_scroll.saturating_sub(clamped_target);
+        true
+    }
+
+    fn user_message_line_indices(&self) -> Vec<usize> {
+        let mut indices = Vec::new();
+        let mut flat_index = 0usize;
+        let mut last_is_blank = false;
+
+        for (msg_idx, msg) in self.messages.iter().enumerate() {
+            let Some(Some(cached)) = self.line_cache.entries.get(msg_idx) else {
+                continue;
+            };
+            let mut first_included: Option<usize> = None;
+            for line in &cached.lines {
+                let is_blank = chat_view_cache::is_blank_line(line);
+                if is_blank && last_is_blank {
+                    continue;
+                }
+                if msg.role == MessageRole::User && first_included.is_none() {
+                    first_included = Some(flat_index);
+                }
+                flat_index = flat_index.saturating_add(1);
+                last_is_blank = is_blank;
+            }
+            if msg.role == MessageRole::User {
+                if let Some(idx) = first_included {
+                    indices.push(idx);
+                }
+            }
+        }
+
+        indices
     }
 
     pub fn set_scroll_from_top(&mut self, offset_from_top: usize, total: usize, visible: usize) {

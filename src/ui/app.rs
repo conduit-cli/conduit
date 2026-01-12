@@ -1928,6 +1928,64 @@ impl App {
                     session.chat_view.scroll_to_bottom();
                 }
             }
+            Action::ScrollPrevUserMessage => {
+                if let (Some(session), Some(chat_area)) = (
+                    self.state.tab_manager.active_session_mut(),
+                    self.state.chat_area,
+                ) {
+                    if let Some(content) =
+                        crate::ui::components::ChatView::content_area_for(chat_area)
+                    {
+                        let mut extra_len = 0usize;
+                        if session.is_processing {
+                            extra_len += 1;
+                        }
+                        if let Some(queue_lines) =
+                            Self::build_queue_lines(session, chat_area.width, self.state.input_mode)
+                        {
+                            extra_len += queue_lines.len();
+                        }
+                        if extra_len > 0 {
+                            extra_len += 1; // spacing line after extras
+                        }
+
+                        session.chat_view.scroll_to_prev_user_message(
+                            content.width,
+                            content.height as usize,
+                            extra_len,
+                        );
+                    }
+                }
+            }
+            Action::ScrollNextUserMessage => {
+                if let (Some(session), Some(chat_area)) = (
+                    self.state.tab_manager.active_session_mut(),
+                    self.state.chat_area,
+                ) {
+                    if let Some(content) =
+                        crate::ui::components::ChatView::content_area_for(chat_area)
+                    {
+                        let mut extra_len = 0usize;
+                        if session.is_processing {
+                            extra_len += 1;
+                        }
+                        if let Some(queue_lines) =
+                            Self::build_queue_lines(session, chat_area.width, self.state.input_mode)
+                        {
+                            extra_len += queue_lines.len();
+                        }
+                        if extra_len > 0 {
+                            extra_len += 1; // spacing line after extras
+                        }
+
+                        session.chat_view.scroll_to_next_user_message(
+                            content.width,
+                            content.height as usize,
+                            extra_len,
+                        );
+                    }
+                }
+            }
 
             // ========== Input Box Editing ==========
             Action::InsertNewline => {

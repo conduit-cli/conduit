@@ -331,6 +331,8 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "scroll_page_down" => Some(Action::ScrollPageDown),
         "scroll_to_top" => Some(Action::ScrollToTop),
         "scroll_to_bottom" => Some(Action::ScrollToBottom),
+        "prev_user_message" => Some(Action::ScrollPrevUserMessage),
+        "next_user_message" => Some(Action::ScrollNextUserMessage),
 
         // Input editing
         "insert_newline" => Some(Action::InsertNewline),
@@ -436,6 +438,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "scroll_page_down",
     "scroll_to_top",
     "scroll_to_bottom",
+    "prev_user_message",
+    "next_user_message",
     // Input editing
     "insert_newline",
     "backspace",

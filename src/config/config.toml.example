@@ -134,6 +134,8 @@
 # scroll_page_up = "<PgUp>"
 # scroll_page_down = "<PgDn>"
 # scroll_to_bottom = "<Esc>"
+# prev_user_message = "M-<Up>"
+# next_user_message = "M-<Down>"
 # next_tab = "<Tab>"
 # prev_tab = "S-<Tab>"
 
