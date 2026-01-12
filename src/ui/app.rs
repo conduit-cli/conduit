@@ -3319,7 +3319,7 @@ impl App {
                 } => {
                     let event_tx = self.event_tx.clone();
                     tokio::spawn(async move {
-                        let result = (|| async {
+                        let result = async {
                             let (shell, flag) = if cfg!(windows) {
                                 ("cmd", "/C")
                             } else {
@@ -3357,7 +3357,7 @@ impl App {
                                 output: combined,
                                 exit_code: output.status.code(),
                             })
-                        })()
+                        }
                         .await;
 
                         send_app_event(
