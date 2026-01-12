@@ -24,7 +24,7 @@ use ratatui::{
 };
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -130,6 +130,8 @@ const AGENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(20);
 const AGENT_TERMINATION_GRACE: Duration = Duration::from_millis(500);
 // 50ms polling keeps wait loops short without a busy spin.
 const AGENT_TERMINATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
+// Limit shell output to keep memory bounded.
+const SHELL_COMMAND_OUTPUT_LIMIT: usize = 1024 * 1024;
 
 /// Main application state
 pub struct App {
@@ -3338,20 +3340,18 @@ impl App {
                             let mut child = cmd
                                 .spawn()
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?;
-                            let mut stdout = child.stdout.take().ok_or_else(|| {
-                                "Failed to capture shell command stdout".to_string()
+                            let stdout = child.stdout.take().ok_or_else(|| {
+                                "Failed to run shell command: stdout unavailable".to_string()
                             })?;
-                            let mut stderr = child.stderr.take().ok_or_else(|| {
-                                "Failed to capture shell command stderr".to_string()
+                            let stderr = child.stderr.take().ok_or_else(|| {
+                                "Failed to run shell command: stderr unavailable".to_string()
                             })?;
 
                             let stdout_task = tokio::spawn(async move {
-                                let mut buf = Vec::new();
-                                stdout.read_to_end(&mut buf).await.map(|_| buf)
+                                App::read_bounded_output(stdout, SHELL_COMMAND_OUTPUT_LIMIT).await
                             });
                             let stderr_task = tokio::spawn(async move {
-                                let mut buf = Vec::new();
-                                stderr.read_to_end(&mut buf).await.map(|_| buf)
+                                App::read_bounded_output(stderr, SHELL_COMMAND_OUTPUT_LIMIT).await
                             });
 
                             let status =
@@ -3366,20 +3366,26 @@ impl App {
                                                 error = %err,
                                                 "Failed to kill timed out shell command"
                                             );
-                                            return Err(format!(
-                                                "Shell command timed out after {}s",
-                                                SHELL_COMMAND_TIMEOUT.as_secs()
-                                            ));
                                         }
                                         if let Err(err) = child.wait().await {
                                             tracing::debug!(
                                                 error = %err,
                                                 "Failed to reap timed out shell command"
                                             );
-                                            return Err(format!(
-                                                "Shell command timed out after {}s",
-                                                SHELL_COMMAND_TIMEOUT.as_secs()
-                                            ));
+                                        }
+                                        stdout_task.abort();
+                                        stderr_task.abort();
+                                        if let Err(err) = stdout_task.await {
+                                            tracing::debug!(
+                                                error = %err,
+                                                "Failed to abort stdout reader task"
+                                            );
+                                        }
+                                        if let Err(err) = stderr_task.await {
+                                            tracing::debug!(
+                                                error = %err,
+                                                "Failed to abort stderr reader task"
+                                            );
                                         }
                                         return Err(format!(
                                             "Shell command timed out after {}s",
@@ -3388,11 +3394,11 @@ impl App {
                                     }
                                 };
 
-                            let stdout_bytes = stdout_task
+                            let (stdout_bytes, stdout_truncated) = stdout_task
                                 .await
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?;
-                            let stderr_bytes = stderr_task
+                            let (stderr_bytes, stderr_truncated) = stderr_task
                                 .await
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?;
@@ -3407,6 +3413,12 @@ impl App {
                                     combined.push('\n');
                                 }
                                 combined.push_str(&stderr);
+                            }
+                            if stdout_truncated || stderr_truncated {
+                                if !combined.is_empty() && !combined.ends_with('\n') {
+                                    combined.push('\n');
+                                }
+                                combined.push_str("[output truncated]\n");
                             }
                             Ok(crate::ui::events::ShellCommandResult {
                                 output: combined,
@@ -4150,6 +4162,35 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    async fn read_bounded_output<R>(mut reader: R, limit: usize) -> io::Result<(Vec<u8>, bool)>
+    where
+        R: AsyncRead + Unpin,
+    {
+        let mut buf = Vec::with_capacity(limit.min(8192));
+        let mut truncated = false;
+        let mut chunk = [0u8; 8192];
+
+        loop {
+            let read = reader.read(&mut chunk).await?;
+            if read == 0 {
+                break;
+            }
+
+            if buf.len() < limit {
+                let remaining = limit - buf.len();
+                let take = remaining.min(read);
+                buf.extend_from_slice(&chunk[..take]);
+                if take < read {
+                    truncated = true;
+                }
+            } else {
+                truncated = true;
+            }
+        }
+
+        Ok((buf, truncated))
     }
 
     fn confirm_theme_picker(&mut self) -> anyhow::Result<Vec<Effect>> {
