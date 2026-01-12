@@ -70,7 +70,7 @@ pub use session_import_picker::{AgentFilter, SessionImportPicker, SessionImportP
 pub use sidebar::{Sidebar, SidebarState, SIDEBAR_HEADER_ROWS};
 pub use spinner::Spinner;
 pub use status_bar::StatusBar;
-pub use tab_bar::TabBar;
+pub use tab_bar::{TabBar, TabBarHitTarget};
 pub use text_input::TextInputState;
 pub use theme_picker::{ThemePicker, ThemePickerItem, ThemePickerState};
 // Theme system - new dynamic API (use these for new code)

@@ -49,7 +49,7 @@ use crate::ui::components::{
     ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
     MessageRole, MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
     RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
-    SidebarData, TabBar, ThemePicker, SIDEBAR_HEADER_ROWS,
+    SidebarData, TabBar, TabBarHitTarget, ThemePicker, SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -4948,6 +4948,14 @@ Acknowledge that you have received this context by replying ONLY with the single
                     && self.state.theme_picker_state.is_visible()
                 {
                     self.state.theme_picker_state.select_prev();
+                } else if let Some(tab_bar_area) = self.state.tab_bar_area {
+                    if Self::point_in_rect(x, y, tab_bar_area) {
+                        let tabs_focused =
+                            self.state.input_mode != InputMode::SidebarNavigation;
+                        if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, true) {
+                            return Ok(Vec::new());
+                        }
+                    }
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         if session.raw_events_view.is_detail_visible() {
@@ -4979,6 +4987,14 @@ Acknowledge that you have received this context by replying ONLY with the single
                     && self.state.theme_picker_state.is_visible()
                 {
                     self.state.theme_picker_state.select_next();
+                } else if let Some(tab_bar_area) = self.state.tab_bar_area {
+                    if Self::point_in_rect(x, y, tab_bar_area) {
+                        let tabs_focused =
+                            self.state.input_mode != InputMode::SidebarNavigation;
+                        if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, false) {
+                            return Ok(Vec::new());
+                        }
+                    }
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     let list_height = self.raw_events_list_visible_height();
                     let detail_height = self.raw_events_detail_visible_height();
@@ -5636,42 +5652,88 @@ Acknowledge that you have received this context by replying ONLY with the single
         None
     }
 
+    fn build_tab_bar(&self, focused: bool) -> TabBar {
+        let pr_numbers: Vec<Option<u32>> = self
+            .state
+            .tab_manager
+            .sessions()
+            .iter()
+            .map(|s| s.pr_number)
+            .collect();
+        let processing_flags: Vec<bool> = self
+            .state
+            .tab_manager
+            .sessions()
+            .iter()
+            .map(|s| s.is_processing)
+            .collect();
+        let attention_flags: Vec<bool> = self
+            .state
+            .tab_manager
+            .sessions()
+            .iter()
+            .map(|s| s.needs_attention)
+            .collect();
+
+        TabBar::new(
+            self.state.tab_manager.tab_names(),
+            self.state.tab_manager.active_index(),
+        )
+        .focused(focused)
+        .with_tab_states(pr_numbers, processing_flags, attention_flags)
+        .with_spinner_frame(self.state.spinner_frame)
+        .with_scroll_offset(self.state.tab_bar_scroll)
+    }
+
+    fn ensure_tab_bar_scroll(&mut self, area_width: u16, focused: bool) {
+        let tab_bar = self.build_tab_bar(focused);
+        let max_scroll = tab_bar.max_scroll(area_width);
+        if self.state.tab_bar_scroll > max_scroll {
+            self.state.tab_bar_scroll = max_scroll;
+        }
+
+        let active = self.state.tab_manager.active_index();
+        if self.state.tab_bar_last_active != Some(active) {
+            self.state.tab_bar_scroll = tab_bar.adjust_scroll_to_active(area_width);
+            self.state.tab_bar_last_active = Some(active);
+        }
+    }
+
+    fn scroll_tab_bar(&mut self, area_width: u16, focused: bool, scroll_left: bool) -> bool {
+        let tab_bar = self.build_tab_bar(focused);
+        let new_offset = if scroll_left {
+            tab_bar.scroll_left(area_width)
+        } else {
+            tab_bar.scroll_right(area_width)
+        };
+
+        if new_offset != self.state.tab_bar_scroll {
+            self.state.tab_bar_scroll = new_offset;
+            return true;
+        }
+
+        false
+    }
+
     /// Handle click in tab bar area
     fn handle_tab_bar_click(&mut self, x: u16, _y: u16, tab_bar_area: Rect) {
-        let relative_x = x.saturating_sub(tab_bar_area.x) as usize;
+        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+        let tab_bar = self.build_tab_bar(tabs_focused);
 
-        // Calculate tab positions (must match rendering in tab_bar.rs)
-        let mut current_x: usize = 0;
-        let active_index = self.state.tab_manager.active_index();
-        let sessions = self.state.tab_manager.sessions();
-
-        for (i, session) in sessions.iter().enumerate() {
-            let name = session.tab_name();
-            let is_active = i == active_index;
-
-            // Base: indicator(3) + "[N] name"(4 + name.len) + trailing(2)
-            let mut tab_width = 3 + 4 + name.len() + 2;
-
-            // Spinner or attention indicator (+2)
-            if session.is_processing || session.needs_attention {
-                tab_width += 2;
-            }
-
-            // PR badge on active tab: " PR #N " + trailing space
-            if is_active {
-                if let Some(pr) = session.pr_number {
-                    tab_width += format!(" PR #{} ", pr).len() + 1;
-                }
-            }
-
-            if relative_x < current_x + tab_width {
-                // Clicked on this tab
-                self.state.tab_manager.switch_to(i);
+        match tab_bar.hit_test(tab_bar_area, x) {
+            TabBarHitTarget::Tab(index) => {
+                self.state.tab_manager.switch_to(index);
+                self.ensure_tab_bar_scroll(tab_bar_area.width, tabs_focused);
                 self.sync_sidebar_to_active_tab();
                 self.sync_footer_spinner();
-                return;
             }
-            current_x += tab_width;
+            TabBarHitTarget::ScrollLeft => {
+                self.scroll_tab_bar(tab_bar_area.width, tabs_focused, true);
+            }
+            TabBarHitTarget::ScrollRight => {
+                self.scroll_tab_bar(tab_bar_area.width, tabs_focused, false);
+            }
+            TabBarHitTarget::None => {}
         }
     }
 
@@ -8484,12 +8546,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                     // Render tab bar
                     let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                    let tab_bar = TabBar::new(
-                        self.state.tab_manager.tab_names(),
-                        self.state.tab_manager.active_index(),
-                    )
-                    .focused(tabs_focused)
-                    .with_spinner_frame(self.state.spinner_frame);
+                    self.ensure_tab_bar_scroll(chunks[0].width, tabs_focused);
+                    let tab_bar = self.build_tab_bar(tabs_focused);
                     tab_bar.render(chunks[0], f.buffer_mut());
 
                     // Empty state message - different for first-time users vs returning users
@@ -8741,37 +8799,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 // Draw tab bar (unfocused when sidebar is focused)
                 let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-
-                // Collect tab states for PR indicators
-                let pr_numbers: Vec<Option<u32>> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.pr_number)
-                    .collect();
-                let processing_flags: Vec<bool> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.is_processing)
-                    .collect();
-                let attention_flags: Vec<bool> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.needs_attention)
-                    .collect();
-
-                let tab_bar = TabBar::new(
-                    self.state.tab_manager.tab_names(),
-                    self.state.tab_manager.active_index(),
-                )
-                .focused(tabs_focused)
-                .with_tab_states(pr_numbers, processing_flags, attention_flags)
-                .with_spinner_frame(self.state.spinner_frame);
+                self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
+                let tab_bar = self.build_tab_bar(tabs_focused);
                 tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
                 // Draw session header (below tab bar)
@@ -8879,35 +8908,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                 // Draw tab bar (unfocused when sidebar is focused)
                 let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                // Collect tab states for PR indicators
-                let pr_numbers: Vec<Option<u32>> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.pr_number)
-                    .collect();
-                let processing_flags: Vec<bool> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.is_processing)
-                    .collect();
-                let attention_flags: Vec<bool> = self
-                    .state
-                    .tab_manager
-                    .sessions()
-                    .iter()
-                    .map(|s| s.needs_attention)
-                    .collect();
-                let tab_bar = TabBar::new(
-                    self.state.tab_manager.tab_names(),
-                    self.state.tab_manager.active_index(),
-                )
-                .focused(tabs_focused)
-                .with_tab_states(pr_numbers, processing_flags, attention_flags)
-                .with_spinner_frame(self.state.spinner_frame);
+                self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
+                let tab_bar = self.build_tab_bar(tabs_focused);
                 tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
                 // Draw session header (below tab bar) - consistent with Chat view
