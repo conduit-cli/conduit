@@ -434,7 +434,7 @@ impl App {
             if let Some((workspace_id, status)) = sidebar_pr_update {
                 self.state
                     .sidebar_data
-                    .update_workspace_pr_status(workspace_id, status);
+                    .update_workspace_pr_status(workspace_id, Some(status));
             }
 
             // Track workspace after session is added
@@ -3943,18 +3943,18 @@ impl App {
     fn apply_pr_status_to_session(
         session: &mut AgentSession,
         status: PrStatus,
-    ) -> Option<(Uuid, Option<PrStatus>)> {
+    ) -> Option<(Uuid, PrStatus)> {
         if status.number.is_some() {
             session.pr_number = status.number;
         }
         session.status_bar.set_pr_status(Some(status.clone()));
-        session.workspace_id.map(|id| (id, Some(status)))
+        session.workspace_id.map(|id| (id, status))
     }
 
     fn apply_pr_number_to_session(
         session: &mut AgentSession,
         pr_num: u32,
-    ) -> Option<(Uuid, Option<PrStatus>)> {
+    ) -> Option<(Uuid, PrStatus)> {
         let status = Self::synthesize_pr_status(pr_num);
         Self::apply_pr_status_to_session(session, status)
     }
@@ -6428,7 +6428,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Track whether we need to stop footer spinner (done after session borrow ends)
         let mut should_stop_footer_spinner = false;
-        let mut pending_sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
+        let mut pending_sidebar_pr_update: Option<(Uuid, PrStatus)> = None;
 
         {
             let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
@@ -6684,7 +6684,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         if let Some((workspace_id, status)) = pending_sidebar_pr_update {
             self.state
                 .sidebar_data
-                .update_workspace_pr_status(workspace_id, status);
+                .update_workspace_pr_status(workspace_id, Some(status));
         }
 
         // Stop footer spinner after session borrow is released
@@ -7634,13 +7634,34 @@ Acknowledge that you have received this context by replying ONLY with the single
         preflight: crate::git::PrPreflightResult,
     ) -> Vec<Effect> {
         let effects = Vec::new();
-        let mut sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
+        let mut sidebar_pr_update: Option<(Uuid, PrStatus)> = None;
         let mut sidebar_pr_clear: Option<Uuid> = None;
+        // Tab indices may shift while preflight runs; only trust tab_index if it still matches.
         let preflight_workspace_id = self
             .state
             .tab_manager
             .session(tab_index)
-            .and_then(|session| session.workspace_id);
+            .and_then(|session| {
+                let still_same_dir = session
+                    .working_dir
+                    .as_ref()
+                    .is_some_and(|dir| dir == &working_dir);
+                still_same_dir.then_some(session.workspace_id).flatten()
+            })
+            // Fallback: resolve by working_dir (more stable than tab index).
+            .or_else(|| {
+                self.state
+                    .tab_manager
+                    .sessions()
+                    .iter()
+                    .find(|session| {
+                        session
+                            .working_dir
+                            .as_ref()
+                            .is_some_and(|dir| dir == &working_dir)
+                    })
+                    .and_then(|session| session.workspace_id)
+            });
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
@@ -7700,7 +7721,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                             Self::apply_pr_status_to_session(session, status.clone());
                         }
                     }
-                    sidebar_pr_update = Some((workspace_id, Some(status)));
+                    sidebar_pr_update = Some((workspace_id, status));
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
@@ -7723,7 +7744,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 if let Some((workspace_id, status)) = sidebar_pr_update {
                     self.state
                         .sidebar_data
-                        .update_workspace_pr_status(workspace_id, status);
+                        .update_workspace_pr_status(workspace_id, Some(status));
                 }
                 // Already in Confirming mode
                 return effects;
