@@ -2207,10 +2207,18 @@ impl App {
                                     self.state.input_mode = InputMode::SidebarNavigation;
                                     return Ok(effects);
                                 }
-                                ConfirmationContext::CreatePullRequest { preflight, .. } => {
+                                ConfirmationContext::CreatePullRequest {
+                                    tab_index,
+                                    working_dir,
+                                    preflight,
+                                } => {
                                     self.state.confirmation_dialog_state.hide();
                                     self.state.input_mode = InputMode::Normal;
-                                    effects.extend(self.submit_pr_workflow(preflight)?);
+                                    effects.extend(self.submit_pr_workflow(
+                                        tab_index,
+                                        working_dir,
+                                        preflight,
+                                    )?);
                                     return Ok(effects);
                                 }
                                 ConfirmationContext::OpenExistingPr { working_dir, .. } => {
@@ -2553,10 +2561,18 @@ impl App {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::SidebarNavigation;
                             }
-                            ConfirmationContext::CreatePullRequest { preflight, .. } => {
+                            ConfirmationContext::CreatePullRequest {
+                                tab_index,
+                                working_dir,
+                                preflight,
+                            } => {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
-                                effects.extend(self.submit_pr_workflow(preflight)?);
+                                effects.extend(self.submit_pr_workflow(
+                                    tab_index,
+                                    working_dir,
+                                    preflight,
+                                )?);
                             }
                             ConfirmationContext::OpenExistingPr { working_dir, .. } => {
                                 self.state.confirmation_dialog_state.hide();
@@ -3943,11 +3959,11 @@ impl App {
     /// Apply PR status to a session and return the workspace_id for sidebar updates.
     fn apply_pr_status_to_session(
         session: &mut AgentSession,
-        status: PrStatus,
+        mut status: PrStatus,
     ) -> Option<(Uuid, PrStatus)> {
-        if status.number.is_some() {
-            session.pr_number = status.number;
-        }
+        let effective_number = status.number.or(session.pr_number);
+        status.number = effective_number;
+        session.pr_number = effective_number;
         session.status_bar.set_pr_status(Some(status.clone()));
         session.workspace_id.map(|id| (id, status))
     }
@@ -7812,13 +7828,46 @@ Acknowledge that you have received this context by replying ONLY with the single
     /// Submit the PR workflow prompt to the current chat
     fn submit_pr_workflow(
         &mut self,
+        tab_index: usize,
+        working_dir: std::path::PathBuf,
         preflight: crate::git::PrPreflightResult,
     ) -> anyhow::Result<Vec<Effect>> {
+        let target_tab_index = self
+            .state
+            .tab_manager
+            .session(tab_index)
+            .and_then(|session| {
+                let matches_dir = session
+                    .working_dir
+                    .as_ref()
+                    .is_some_and(|dir| dir == &working_dir);
+                matches_dir.then_some(tab_index)
+            })
+            .or_else(|| {
+                self.state
+                    .tab_manager
+                    .sessions()
+                    .iter()
+                    .position(|session| {
+                        session
+                            .working_dir
+                            .as_ref()
+                            .is_some_and(|dir| dir == &working_dir)
+                    })
+            });
         // Generate prompt for PR creation
         let prompt = PrManager::generate_pr_prompt(&preflight);
 
-        // Submit to current chat session
-        self.submit_prompt(prompt, Vec::new(), Vec::new())
+        let Some(target_tab_index) = target_tab_index else {
+            self.show_error(
+                "Cannot Create PR",
+                "No session found for the PR preflight workspace.",
+            );
+            return Ok(Vec::new());
+        };
+
+        // Submit to the intended chat session
+        self.submit_prompt_for_tab(target_tab_index, prompt, Vec::new(), Vec::new(), false)
     }
 
     fn build_queue_lines(
