@@ -7071,34 +7071,54 @@ Acknowledge that you have received this context by replying ONLY with the single
                     // Check for special interactive tools that use inline prompts
                     let is_inline_prompt_tool = if tool.tool_name == "AskUserQuestion" {
                         // Parse the questions from the tool arguments
-                        if let Ok(wrapper) =
-                            serde_json::from_value::<AskUserQuestionWrapper>(tool.arguments.clone())
-                        {
-                            session.inline_prompt = Some(InlinePromptState::new_ask_user(
-                                tool.tool_id.clone(),
-                                wrapper.questions,
-                            ));
-                            // Scroll to bottom so prompt is visible
-                            session.chat_view.scroll_to_bottom();
-                            // Don't push to chat - the inline prompt will be rendered as extra lines
-                            session.tools_in_flight = session.tools_in_flight.saturating_add(1);
-                            // Stop footer spinner since we're now awaiting user response
-                            should_stop_footer_spinner = true;
-                            true
-                        } else {
-                            false
+                        match serde_json::from_value::<AskUserQuestionWrapper>(
+                            tool.arguments.clone(),
+                        ) {
+                            Ok(wrapper) => {
+                                session.inline_prompt = Some(InlinePromptState::new_ask_user(
+                                    tool.tool_id.clone(),
+                                    wrapper.questions,
+                                ));
+                                // Scroll to bottom so prompt is visible
+                                session.chat_view.scroll_to_bottom();
+                                // Don't push to chat - the inline prompt will be rendered as extra lines
+                                session.tools_in_flight = session.tools_in_flight.saturating_add(1);
+                                // Stop footer spinner since we're now awaiting user response
+                                should_stop_footer_spinner = true;
+                                true
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    tool_id = %tool.tool_id,
+                                    tool_name = %tool.tool_name,
+                                    arguments = %serde_json::to_string(&tool.arguments).unwrap_or_default(),
+                                    error = %e,
+                                    "Failed to deserialize AskUserQuestion arguments"
+                                );
+                                false
+                            }
                         }
                     } else if tool.tool_name == "ExitPlanMode" {
                         // Use plan content from tool arguments when available
-                        let (plan_content, plan_path) = if let Ok(wrapper) =
-                            serde_json::from_value::<ExitPlanModeWrapper>(tool.arguments.clone())
-                        {
-                            let plan_path = Self::read_plan_file_path_for_session(session)
-                                .unwrap_or_else(|| ".claude/plans/plan.md".to_string());
-                            (wrapper.plan, plan_path)
-                        } else {
-                            Self::read_plan_file_for_session(session)
-                        };
+                        let (plan_content, plan_path) =
+                            match serde_json::from_value::<ExitPlanModeWrapper>(
+                                tool.arguments.clone(),
+                            ) {
+                                Ok(wrapper) => {
+                                    let plan_path = Self::read_plan_file_path_for_session(session)
+                                        .unwrap_or_else(|| ".claude/plans/plan.md".to_string());
+                                    (wrapper.plan, plan_path)
+                                }
+                                Err(e) => {
+                                    // Fall back to reading plan from file
+                                    tracing::debug!(
+                                        tool_id = %tool.tool_id,
+                                        error = %e,
+                                        "ExitPlanMode arguments missing plan, falling back to file"
+                                    );
+                                    Self::read_plan_file_for_session(session)
+                                }
+                            };
 
                         session.inline_prompt = Some(InlinePromptState::new_exit_plan(
                             tool.tool_id.clone(),
@@ -7449,10 +7469,28 @@ Acknowledge that you have received this context by replying ONLY with the single
                 }
 
                 tracing::warn!("Unable to send control response: missing Claude input channel");
+                // Surface error to user and clean up state
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session.stop_processing();
+                    let display = MessageDisplay::Error {
+                        content: "Cannot reply to prompt: missing streaming input channel. Try restarting the session.".to_string(),
+                    };
+                    session.chat_view.push(display.to_chat_message());
+                }
+                self.state.stop_footer_spinner();
                 Vec::new()
             }
             Err(e) => {
                 tracing::error!("Failed to build control response payload: {}", e);
+                // Surface error to user
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    session.stop_processing();
+                    let display = MessageDisplay::Error {
+                        content: format!("Failed to send response: {}", e),
+                    };
+                    session.chat_view.push(display.to_chat_message());
+                }
+                self.state.stop_footer_spinner();
                 Vec::new()
             }
         }

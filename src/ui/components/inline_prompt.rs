@@ -1315,7 +1315,7 @@ impl Widget for InlinePrompt<'_> {
                         },
                         buf,
                         questions,
-                        show_tab_bar,
+                        self.state.has_submit_tab(),
                     );
                     y += 2; // Tab bar + blank line
                 } else {
