@@ -108,6 +108,8 @@ extern "C" {
 
 /// Timeout for double-press detection (ms)
 const DOUBLE_PRESS_TIMEOUT_MS: u64 = 500;
+/// Timeout for shell command execution.
+const SHELL_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Wrapper for AskUserQuestion tool arguments
 #[derive(serde::Deserialize)]
@@ -868,7 +870,7 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         guard: &mut TerminalGuard,
     ) -> anyhow::Result<Vec<Effect>> {
-        let result = match input {
+        match input {
             Event::Key(key) => self.handle_key_event(key, terminal, guard).await,
             Event::Mouse(mouse) => self.handle_mouse_event(mouse, terminal, guard).await,
             Event::Paste(text) => {
@@ -876,10 +878,7 @@ impl App {
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
-        };
-
-        self.sync_shell_mode_indicator();
-        result
+        }
     }
 
     fn handle_tick(&mut self) {
@@ -1587,6 +1586,7 @@ impl App {
                 if session.input_box.is_shell_mode() {
                     session.input_box.set_shell_mode(false);
                     session.update_status();
+                    self.state.last_esc_press = None;
                     return Ok(Vec::new());
                 }
             }
@@ -3318,15 +3318,28 @@ impl App {
                     working_dir,
                 } => {
                     let event_tx = self.event_tx.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let result = (|| {
-                            let mut cmd = Command::new("sh");
-                            cmd.arg("-lc").arg(&command);
+                    tokio::spawn(async move {
+                        let result = (|| async {
+                            let (shell, flag) = if cfg!(windows) {
+                                ("cmd", "/C")
+                            } else {
+                                ("sh", "-lc")
+                            };
+                            let mut cmd = tokio::process::Command::new(shell);
+                            cmd.arg(flag).arg(&command);
+                            cmd.kill_on_drop(true);
                             if let Some(dir) = working_dir.as_ref() {
                                 cmd.current_dir(dir);
                             }
-                            let output = cmd
-                                .output()
+
+                            let output = tokio::time::timeout(SHELL_COMMAND_TIMEOUT, cmd.output())
+                                .await
+                                .map_err(|_| {
+                                    format!(
+                                        "Shell command timed out after {}s",
+                                        SHELL_COMMAND_TIMEOUT.as_secs()
+                                    )
+                                })?
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?;
                             let stdout = String::from_utf8_lossy(&output.stdout);
                             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3344,7 +3357,8 @@ impl App {
                                 output: combined,
                                 exit_code: output.status.code(),
                             })
-                        })();
+                        })()
+                        .await;
 
                         send_app_event(
                             &event_tx,
@@ -4015,7 +4029,9 @@ impl App {
                     {
                         session.input_box.set_shell_mode(true);
                         session.update_status();
-                        sanitized = sanitized[1..].to_string();
+                        if let Some(stripped) = sanitized.strip_prefix('!') {
+                            sanitized = stripped.to_string();
+                        }
                         if sanitized.is_empty() {
                             return;
                         }
@@ -4078,13 +4094,6 @@ impl App {
                 self.state.model_selector_state.insert_str(&sanitized);
             }
             _ => {}
-        }
-    }
-
-    fn sync_shell_mode_indicator(&mut self) {
-        if let Some(session) = self.state.tab_manager.active_session_mut() {
-            let shell_mode = session.input_box.is_shell_mode();
-            session.status_bar.set_shell_mode(shell_mode);
         }
     }
 
