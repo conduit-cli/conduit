@@ -47,6 +47,8 @@ pub struct Config {
     pub queue: QueueConfig,
     /// Steering configuration
     pub steer: SteerConfig,
+    /// Selection and clipboard configuration
+    pub selection: SelectionConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -102,6 +104,18 @@ pub struct TomlSteerConfig {
     pub fallback: Option<SteerFallback>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SelectionConfig {
+    pub auto_copy_selection: bool,
+    pub clear_selection_after_copy: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlSelectionConfig {
+    pub auto_copy_selection: Option<bool>,
+    pub clear_selection_after_copy: Option<bool>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -132,6 +146,10 @@ impl Default for Config {
             steer: SteerConfig {
                 behavior: SteerBehavior::Hard,
                 fallback: SteerFallback::Queue,
+            },
+            selection: SelectionConfig {
+                auto_copy_selection: true,
+                clear_selection_after_copy: true,
             },
         }
     }
@@ -197,6 +215,8 @@ pub struct TomlConfig {
     pub queue: Option<TomlQueueConfig>,
     /// Steering configuration
     pub steer: Option<TomlSteerConfig>,
+    /// Selection configuration
+    pub selection: Option<TomlSelectionConfig>,
 }
 
 impl TomlKeybindings {
@@ -531,6 +551,18 @@ impl Config {
                         }
                         if let Some(fallback) = steer.fallback {
                             config.steer.fallback = fallback;
+                        }
+                    }
+
+                    // Load selection configuration
+                    if let Some(selection) = toml_config.selection {
+                        if let Some(auto_copy_selection) = selection.auto_copy_selection {
+                            config.selection.auto_copy_selection = auto_copy_selection;
+                        }
+                        if let Some(clear_selection_after_copy) =
+                            selection.clear_selection_after_copy
+                        {
+                            config.selection.clear_selection_after_copy = clear_selection_after_copy;
                         }
                     }
                 }

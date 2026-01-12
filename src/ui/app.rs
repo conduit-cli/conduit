@@ -112,7 +112,6 @@ fn send_app_event(
 }
 
 impl App {
-    const AUTO_COPY_SELECTION: bool = false;
     // When true, selection drag auto-scrolls as soon as the cursor hits the first/last row.
     // When false, auto-scroll only starts after the cursor leaves the chat area.
     const AUTO_SCROLL_ON_EDGE_INCLUSIVE: bool = true;
@@ -1288,10 +1287,34 @@ impl App {
                 }
             }
             Action::CopySelection => {
-                let copied_text = self.current_selection_text();
+                let mut copied = false;
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    if session.input_box.has_selection() {
+                        if let Some(text) = session.input_box.selected_text() {
+                            copied = true;
+                            effects.push(Effect::CopyToClipboard(text));
+                            if self.config.selection.clear_selection_after_copy {
+                                Self::clear_selection_for_target(
+                                    session,
+                                    SelectionDragTarget::Input,
+                                );
+                            }
+                        }
+                    } else if session.chat_view.has_selection() {
+                        if let Some(text) = session.chat_view.copy_selection() {
+                            copied = true;
+                            effects.push(Effect::CopyToClipboard(text));
+                            if self.config.selection.clear_selection_after_copy {
+                                Self::clear_selection_for_target(
+                                    session,
+                                    SelectionDragTarget::Chat,
+                                );
+                            }
+                        }
+                    }
+                }
 
-                if let Some(text) = copied_text {
-                    effects.push(Effect::CopyToClipboard(text));
+                if copied {
                     self.state.set_timed_footer_message(
                         "Copied selection".to_string(),
                         Duration::from_secs(5),
@@ -4627,14 +4650,20 @@ Acknowledge that you have received this context by replying ONLY with the single
     fn handle_selection_end(&mut self) -> Option<Vec<Effect>> {
         let target = self.state.selection_drag.take()?;
         let mut copied_text = None;
+        let mut should_clear_selection = false;
         if let Some(session) = self.state.tab_manager.active_session_mut() {
             let has_selection = match target {
                 SelectionDragTarget::Input => session.input_box.finalize_selection(),
                 SelectionDragTarget::Chat => session.chat_view.finalize_selection(),
             };
 
-            if has_selection && Self::AUTO_COPY_SELECTION {
+            if has_selection && self.config.selection.auto_copy_selection {
                 copied_text = Self::selection_text_for_target(session, target);
+                should_clear_selection = copied_text.is_some()
+                    && self.config.selection.clear_selection_after_copy;
+            }
+            if should_clear_selection {
+                Self::clear_selection_for_target(session, target);
             }
         }
 
@@ -4658,15 +4687,11 @@ Acknowledge that you have received this context by replying ONLY with the single
         }
     }
 
-    fn current_selection_text(&mut self) -> Option<String> {
-        let session = self.state.tab_manager.active_session_mut()?;
-        if session.input_box.has_selection() {
-            return Self::selection_text_for_target(session, SelectionDragTarget::Input);
+    fn clear_selection_for_target(session: &mut AgentSession, target: SelectionDragTarget) {
+        match target {
+            SelectionDragTarget::Input => session.input_box.clear_selection(),
+            SelectionDragTarget::Chat => session.chat_view.clear_selection(),
         }
-        if session.chat_view.has_selection() {
-            return Self::selection_text_for_target(session, SelectionDragTarget::Chat);
-        }
-        None
     }
 
     fn scrollbar_target_at(&mut self, x: u16, y: u16) -> Option<ScrollDragTarget> {

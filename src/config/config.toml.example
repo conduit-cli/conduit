@@ -51,6 +51,17 @@
 # # fallback = "interrupt"    # interrupt current run and start new message immediately
 # # fallback = "prompt"       # prompt before interrupting (recommended if using interrupt)
 #
+# ============================================================================
+# Selection & Clipboard
+# ============================================================================
+# Configure how selections are copied and whether they are cleared afterward.
+#
+# [selection]
+# # Copy immediately when mouse selection ends
+# auto_copy_selection = true
+# # Clear the selection after copying
+# clear_selection_after_copy = true
+#
 # Configure paths to external tools if they are not in your PATH or if
 # you want to use a specific version. All paths are optional - by default,
 # tools are auto-detected from your PATH.

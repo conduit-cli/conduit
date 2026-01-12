@@ -46,6 +46,16 @@ claude = "/opt/homebrew/bin/claude"
 codex = "/usr/local/bin/codex"
 ```
 
+## Selection & Clipboard
+
+```toml
+[selection]
+# Copy immediately when mouse selection ends
+auto_copy_selection = true
+# Clear the selection after copying
+clear_selection_after_copy = true
+```
+
 ## Keybindings
 
 See [Keybindings](./keybindings.md) for customization.
