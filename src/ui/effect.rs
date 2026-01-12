@@ -47,4 +47,11 @@ pub enum Effect {
         workspace_id: Option<Uuid>,
         current_branch: String,
     },
+    /// Run a local shell command
+    RunShellCommand {
+        session_id: Uuid,
+        message_index: usize,
+        command: String,
+        working_dir: Option<PathBuf>,
+    },
 }

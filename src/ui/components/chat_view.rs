@@ -390,38 +390,56 @@ impl ChatView {
     /// Update the last tool message with new content and exit code.
     /// Returns true if update was successful, false if no matching tool message was found.
     pub fn update_last_tool(&mut self, content: String, exit_code: Option<i32>) -> bool {
-        // Find the last tool message
         if let Some(idx) = self
             .messages
             .iter()
             .rposition(|m| m.role == MessageRole::Tool)
         {
-            self.messages[idx].content = content;
-            self.messages[idx].exit_code = exit_code;
+            return self.update_tool_at(idx, content, exit_code);
+        }
 
-            // For Read tool on images, cache file size now (while file still exists)
-            if self.messages[idx].file_size.is_none() {
-                if let Some(ref tool_name) = self.messages[idx].tool_name {
-                    if tool_name == "Read" {
-                        if let Some(ref tool_args) = self.messages[idx].tool_args {
-                            if Self::is_image_file(tool_args) {
-                                self.messages[idx].file_size =
-                                    Self::get_file_size_from_args_as_u64(tool_args);
-                            }
+        false
+    }
+
+    /// Update a tool message at a specific index.
+    /// Returns true if update was successful, false if no matching tool message was found.
+    pub fn update_tool_at(
+        &mut self,
+        index: usize,
+        content: String,
+        exit_code: Option<i32>,
+    ) -> bool {
+        let Some(msg) = self.messages.get_mut(index) else {
+            return false;
+        };
+
+        if msg.role != MessageRole::Tool {
+            return false;
+        }
+
+        msg.content = content;
+        msg.exit_code = exit_code;
+
+        // For Read tool on images, cache file size now (while file still exists)
+        if msg.file_size.is_none() {
+            if let Some(ref tool_name) = msg.tool_name {
+                if tool_name == "Read" {
+                    if let Some(ref tool_args) = msg.tool_args {
+                        if Self::is_image_file(tool_args) {
+                            msg.file_size = Self::get_file_size_from_args_as_u64(tool_args);
                         }
                     }
                 }
             }
-
-            // Invalidate cache for this message
-            if self.cache_width.is_some() {
-                self.invalidate_cache_entry(idx);
-                self.update_cache_entry(idx, self.cache_width.unwrap());
-            }
-            true
-        } else {
-            false
         }
+
+        // Invalidate cache for this message
+        if let Some(width) = self.cache_width {
+            self.invalidate_cache_entry(index);
+            self.update_cache_entry(index, width);
+        }
+
+        true
     }
 
     /// Start or append to streaming message

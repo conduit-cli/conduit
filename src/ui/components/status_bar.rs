@@ -12,8 +12,9 @@ use crate::agent::{
 };
 use crate::git::{CheckState, GitDiffStats, MergeReadiness, MergeableStatus, PrState, PrStatus};
 use crate::ui::components::{
-    accent_error, accent_primary, accent_success, accent_warning, pr_closed_bg, pr_draft_bg,
-    pr_merged_bg, pr_open_bg, pr_unknown_bg, status_bar_bg, text_bright, text_faint, text_muted,
+    accent_error, accent_primary, accent_secondary, accent_success, accent_warning, pr_closed_bg,
+    pr_draft_bg, pr_merged_bg, pr_open_bg, pr_unknown_bg, status_bar_bg, text_bright, text_faint,
+    text_muted,
 };
 use ratatui::style::Color;
 
@@ -22,6 +23,7 @@ pub struct StatusBar {
     agent_type: AgentType,
     agent_mode: AgentMode,
     model: Option<String>,
+    shell_mode: bool,
     session_id: Option<SessionId>,
     token_usage: TokenUsage,
     estimated_cost: f64,
@@ -67,6 +69,7 @@ impl StatusBar {
             agent_type,
             agent_mode: AgentMode::default(),
             model: None,
+            shell_mode: false,
             session_id: None,
             token_usage: TokenUsage::default(),
             estimated_cost: 0.0,
@@ -104,6 +107,10 @@ impl StatusBar {
 
     pub fn set_model(&mut self, model: Option<String>) {
         self.model = model;
+    }
+
+    pub fn set_shell_mode(&mut self, shell_mode: bool) {
+        self.shell_mode = shell_mode;
     }
 
     pub fn set_token_usage(&mut self, usage: TokenUsage) {
@@ -209,43 +216,50 @@ impl StatusBar {
         // Leading spaces
         spans.push(Span::raw("  "));
 
-        // Mode indicator - only when plan mode is supported
-        if self.supports_plan_mode {
+        if self.shell_mode {
             spans.push(Span::styled(
-                self.agent_mode.display_name(),
-                Style::default().fg(accent_primary()),
+                "Shell",
+                Style::default().fg(accent_secondary()),
             ));
-            // Two spaces separator between mode and model
-            spans.push(Span::raw("  "));
-        }
+        } else {
+            // Mode indicator - only when plan mode is supported
+            if self.supports_plan_mode {
+                spans.push(Span::styled(
+                    self.agent_mode.display_name(),
+                    Style::default().fg(accent_primary()),
+                ));
+                // Two spaces separator between mode and model
+                spans.push(Span::raw("  "));
+            }
 
-        // Model name first - bright/primary color
-        let model_id = self
-            .model
-            .clone()
-            .unwrap_or_else(|| ModelRegistry::default_model(self.agent_type));
-        let model_display = ModelRegistry::find_model(self.agent_type, &model_id)
-            .map(|m| m.display_name)
-            .unwrap_or(model_id);
+            // Model name first - bright/primary color
+            let model_id = self
+                .model
+                .clone()
+                .unwrap_or_else(|| ModelRegistry::default_model(self.agent_type));
+            let model_display = ModelRegistry::find_model(self.agent_type, &model_id)
+                .map(|m| m.display_name)
+                .unwrap_or(model_id);
 
-        spans.push(Span::styled(
-            model_display,
-            Style::default().fg(text_bright()),
-        ));
-
-        if self.queue_count > 0 {
-            spans.push(Span::raw("  "));
             spans.push(Span::styled(
-                format!("{} queued", self.queue_count),
+                model_display,
+                Style::default().fg(text_bright()),
+            ));
+
+            if self.queue_count > 0 {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    format!("{} queued", self.queue_count),
+                    Style::default().fg(text_muted()),
+                ));
+            }
+
+            // Agent name - muted color
+            spans.push(Span::styled(
+                format!(" {}", self.agent_type.display_name()),
                 Style::default().fg(text_muted()),
             ));
         }
-
-        // Agent name - muted color
-        spans.push(Span::styled(
-            format!(" {}", self.agent_type.display_name()),
-            Style::default().fg(text_muted()),
-        ));
 
         // Context usage indicator - hidden for now until we decide on presentation
         // if let Some(ref ctx) = self.context_state {

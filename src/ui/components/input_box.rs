@@ -63,6 +63,8 @@ pub struct InputBox {
     selection_anchor: Option<usize>,
     /// Selection head (byte offset)
     selection_head: Option<usize>,
+    /// Whether shell input mode is active (triggered by leading '!')
+    shell_mode: bool,
 }
 
 impl InputBox {
@@ -81,12 +83,22 @@ impl InputBox {
             attached_images: Vec::new(),
             selection_anchor: None,
             selection_head: None,
+            shell_mode: false,
         }
     }
 
     /// Get current input text
     pub fn input(&self) -> &str {
         &self.input
+    }
+
+    /// Check whether the input is in shell mode (starts with '!').
+    pub fn is_shell_mode(&self) -> bool {
+        self.shell_mode
+    }
+
+    pub fn set_shell_mode(&mut self, shell_mode: bool) {
+        self.shell_mode = shell_mode;
     }
 
     /// Get expanded input with large paste placeholders resolved.

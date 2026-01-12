@@ -128,6 +128,13 @@ pub enum AppEvent {
         session_id: Uuid,
         result: Result<TitleGeneratedResult, String>,
     },
+
+    /// Shell command execution completed
+    ShellCommandCompleted {
+        session_id: Uuid,
+        message_index: usize,
+        result: Result<ShellCommandResult, String>,
+    },
 }
 
 /// Result of successful title/branch generation
@@ -143,6 +150,12 @@ pub struct TitleGeneratedResult {
     pub tool_used: Option<String>,
     /// Whether the generation fell back to a secondary tool
     pub used_fallback: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellCommandResult {
+    pub output: String,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone)]

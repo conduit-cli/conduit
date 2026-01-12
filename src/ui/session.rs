@@ -204,6 +204,8 @@ impl AgentSession {
         self.status_bar.set_agent_mode(self.agent_mode);
         self.status_bar.set_model(self.model.clone());
         self.status_bar
+            .set_shell_mode(self.input_box.is_shell_mode());
+        self.status_bar
             .set_session_id(self.agent_session_id.clone());
         self.status_bar.set_token_usage(self.total_usage.clone());
         self.status_bar

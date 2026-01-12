@@ -868,7 +868,7 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         guard: &mut TerminalGuard,
     ) -> anyhow::Result<Vec<Effect>> {
-        match input {
+        let result = match input {
             Event::Key(key) => self.handle_key_event(key, terminal, guard).await,
             Event::Mouse(mouse) => self.handle_mouse_event(mouse, terminal, guard).await,
             Event::Paste(text) => {
@@ -876,7 +876,10 @@ impl App {
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
-        }
+        };
+
+        self.sync_shell_mode_indicator();
+        result
     }
 
     fn handle_tick(&mut self) {
@@ -1575,6 +1578,20 @@ impl App {
             }
         }
 
+        // Esc exits shell mode back to normal input
+        if key.code == KeyCode::Esc
+            && !self.has_active_dialog()
+            && self.state.input_mode == InputMode::Normal
+        {
+            if let Some(session) = self.state.tab_manager.active_session_mut() {
+                if session.input_box.is_shell_mode() {
+                    session.input_box.set_shell_mode(false);
+                    session.update_status();
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
         // Handle Esc with double-press detection (only when no dialog active and in normal mode)
         if key.code == KeyCode::Esc
             && !self.has_active_dialog()
@@ -1701,15 +1718,15 @@ impl App {
                     | InputMode::SelectingTheme
             )
         {
-            // Only enter command mode if the input box is empty
-            let input_is_empty = self
+            // Only enter command mode if the input box is empty and not in shell mode
+            let (input_is_empty, shell_mode) = self
                 .state
                 .tab_manager
                 .active_session()
-                .map(|s| s.input_box.input().is_empty())
-                .unwrap_or(true);
+                .map(|s| (s.input_box.input().is_empty(), s.input_box.is_shell_mode()))
+                .unwrap_or((true, false));
 
-            if input_is_empty {
+            if input_is_empty && !shell_mode {
                 self.state.command_buffer.clear();
                 self.state.input_mode = InputMode::Command;
                 return Ok(Vec::new());
@@ -3294,6 +3311,52 @@ impl App {
                         "debug_dumped",
                     );
                 }
+                Effect::RunShellCommand {
+                    session_id,
+                    message_index,
+                    command,
+                    working_dir,
+                } => {
+                    let event_tx = self.event_tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let result = (|| {
+                            let mut cmd = Command::new("sh");
+                            cmd.arg("-lc").arg(&command);
+                            if let Some(dir) = working_dir.as_ref() {
+                                cmd.current_dir(dir);
+                            }
+                            let output = cmd
+                                .output()
+                                .map_err(|e| format!("Failed to run shell command: {e}"))?;
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let mut combined = String::new();
+                            if !stdout.is_empty() {
+                                combined.push_str(&stdout);
+                            }
+                            if !stderr.is_empty() {
+                                if !combined.is_empty() && !combined.ends_with('\n') {
+                                    combined.push('\n');
+                                }
+                                combined.push_str(&stderr);
+                            }
+                            Ok(crate::ui::events::ShellCommandResult {
+                                output: combined,
+                                exit_code: output.status.code(),
+                            })
+                        })();
+
+                        send_app_event(
+                            &event_tx,
+                            AppEvent::ShellCommandCompleted {
+                                session_id,
+                                message_index,
+                                result,
+                            },
+                            "shell_command_completed",
+                        );
+                    });
+                }
                 Effect::CreateWorkspace { repo_id } => {
                     let repo_dao = self.repo_dao.clone();
                     let workspace_dao = self.workspace_dao.clone();
@@ -3879,19 +3942,29 @@ impl App {
 
         match self.state.input_mode {
             InputMode::Normal => {
-                // Note: ':' is handled globally in handle_key_event
-                // Check for help trigger (? on empty input)
-                if c == '?' {
-                    if let Some(session) = self.state.tab_manager.active_session() {
-                        if session.input_box.input().is_empty() {
-                            self.state.close_overlays();
-                            self.state.help_dialog_state.show(&self.config.keybindings);
-                            self.state.input_mode = InputMode::ShowingHelp;
-                            return;
-                        }
-                    }
-                }
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    // Note: ':' is handled globally in handle_key_event
+                    // Trigger shell mode with leading '!'
+                    if c == '!'
+                        && session.input_box.input().is_empty()
+                        && !session.input_box.is_shell_mode()
+                    {
+                        session.input_box.set_shell_mode(true);
+                        session.update_status();
+                        return;
+                    }
+
+                    // Check for help trigger (? on empty input)
+                    if c == '?'
+                        && session.input_box.input().is_empty()
+                        && !session.input_box.is_shell_mode()
+                    {
+                        self.state.close_overlays();
+                        self.state.help_dialog_state.show(&self.config.keybindings);
+                        self.state.input_mode = InputMode::ShowingHelp;
+                        return;
+                    }
+
                     session.input_box.insert_char(c);
                 }
             }
@@ -3935,7 +4008,19 @@ impl App {
         match self.state.input_mode {
             InputMode::Normal => {
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.handle_paste(pasted);
+                    let mut sanitized = pasted;
+                    if session.input_box.input().is_empty()
+                        && !session.input_box.is_shell_mode()
+                        && sanitized.starts_with('!')
+                    {
+                        session.input_box.set_shell_mode(true);
+                        session.update_status();
+                        sanitized = sanitized[1..].to_string();
+                        if sanitized.is_empty() {
+                            return;
+                        }
+                    }
+                    session.input_box.handle_paste(sanitized);
                 }
             }
             InputMode::Command => {
@@ -3993,6 +4078,13 @@ impl App {
                 self.state.model_selector_state.insert_str(&sanitized);
             }
             _ => {}
+        }
+    }
+
+    fn sync_shell_mode_indicator(&mut self) {
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            let shell_mode = session.input_box.is_shell_mode();
+            session.status_bar.set_shell_mode(shell_mode);
         }
     }
 
@@ -6133,7 +6225,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         let relative_x = x.saturating_sub(status_bar_area.x) as usize;
 
         // Extract info from session in a limited scope
-        let (is_claude, mode_width, model_width, agent_width, model) = {
+        let (is_claude, mode_width, model_width, agent_width, model, shell_mode) = {
             let session = self.state.tab_manager.active_session()?;
 
             let is_claude = session.agent_type == AgentType::Claude;
@@ -6144,22 +6236,36 @@ Acknowledge that you have received this context by replying ONLY with the single
             };
 
             // Calculate model display name
-            let model_id = session
-                .model
-                .clone()
-                .unwrap_or_else(|| crate::agent::ModelRegistry::default_model(session.agent_type));
-            let model_display =
+            let shell_mode = session.input_box.is_shell_mode();
+            let model_display = if shell_mode {
+                "Shell".to_string()
+            } else {
+                let model_id = session.model.clone().unwrap_or_else(|| {
+                    crate::agent::ModelRegistry::default_model(session.agent_type)
+                });
                 crate::agent::ModelRegistry::find_model(session.agent_type, &model_id)
                     .map(|m| m.display_name.to_string())
-                    .unwrap_or(model_id);
+                    .unwrap_or(model_id)
+            };
             let model_width = model_display.len();
 
             let agent_display = session.agent_type.display_name();
             let agent_width = agent_display.len();
             let model = session.model.clone();
 
-            (is_claude, mode_width, model_width, agent_width, model)
+            (
+                is_claude,
+                mode_width,
+                model_width,
+                agent_width,
+                model,
+                shell_mode,
+            )
         };
+
+        if shell_mode {
+            return self.check_pr_badge_click(x, status_bar_area);
+        }
 
         // Calculate positions with 1 char padding on each side
         // Leading spaces: 2 chars
@@ -6184,10 +6290,12 @@ Acknowledge that you have received this context by replying ONLY with the single
                 }
             } else if relative_x >= model_start && relative_x < model_end {
                 // Click on model/agent area - open model selector
-                self.state.close_overlays();
-                let defaults = self.model_selector_defaults();
-                self.state.model_selector_state.show(model, defaults);
-                self.state.input_mode = InputMode::SelectingModel;
+                if !shell_mode {
+                    self.state.close_overlays();
+                    let defaults = self.model_selector_defaults();
+                    self.state.model_selector_state.show(model, defaults);
+                    self.state.input_mode = InputMode::SelectingModel;
+                }
             }
         } else {
             // Codex: no mode area, just model/agent
@@ -6195,10 +6303,12 @@ Acknowledge that you have received this context by replying ONLY with the single
             let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
 
             if relative_x >= model_start && relative_x < model_end {
-                self.state.close_overlays();
-                let defaults = self.model_selector_defaults();
-                self.state.model_selector_state.show(model, defaults);
-                self.state.input_mode = InputMode::SelectingModel;
+                if !shell_mode {
+                    self.state.close_overlays();
+                    let defaults = self.model_selector_defaults();
+                    self.state.model_selector_state.show(model, defaults);
+                    self.state.input_mode = InputMode::SelectingModel;
+                }
             }
         }
 
@@ -6775,6 +6885,35 @@ Acknowledge that you have received this context by replying ONLY with the single
             }
             AppEvent::GitTracker(update) => {
                 self.handle_git_tracker_update(update);
+            }
+            AppEvent::ShellCommandCompleted {
+                session_id,
+                message_index,
+                result,
+            } => {
+                let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) else {
+                    tracing::debug!(
+                        %session_id,
+                        "ShellCommandCompleted for unknown session; ignoring"
+                    );
+                    return Ok(effects);
+                };
+
+                let (output, exit_code) = match result {
+                    Ok(output) => (output.output, output.exit_code),
+                    Err(err) => (format!("Error: {}", err), Some(1)),
+                };
+
+                if !session
+                    .chat_view
+                    .update_tool_at(message_index, output, exit_code)
+                {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        message_index,
+                        "ShellCommandCompleted: no matching tool message found to update"
+                    );
+                }
             }
             AppEvent::TitleGenerated { session_id, result } => {
                 // Single lookup - session must exist to proceed
@@ -8005,6 +8144,8 @@ Acknowledge that you have received this context by replying ONLY with the single
         let mut interrupt_before_submit = false;
         let mut prompt_fallback_id: Option<Uuid> = None;
         let mut footer_message: Option<String> = None;
+        let mut shell_command: Option<(Uuid, usize, String, Option<PathBuf>)> = None;
+        let mut shell_error: Option<String> = None;
         let mut queued_handled = false;
 
         {
@@ -8026,70 +8167,117 @@ Acknowledge that you have received this context by replying ONLY with the single
             let submission_image_paths = submission.image_paths;
             let submission_image_placeholders = submission.image_placeholders;
 
-            let effective_mode = if mode == QueuedMessageMode::Steer
-                && self.config.steer.behavior == crate::config::SteerBehavior::Soft
-            {
-                QueuedMessageMode::FollowUp
-            } else {
-                mode
-            };
-
-            if session.is_processing {
-                let images = submission_image_paths
-                    .iter()
-                    .cloned()
-                    .zip(submission_image_placeholders.iter().cloned())
-                    .map(|(path, placeholder)| QueuedImageAttachment { path, placeholder })
-                    .collect::<Vec<_>>();
-                let queued = QueuedMessage {
-                    id: Uuid::new_v4(),
-                    mode: effective_mode,
-                    text: submission_text.clone(),
-                    images,
-                    created_at: Utc::now(),
-                };
-
-                if mode == QueuedMessageMode::Steer && effective_mode == QueuedMessageMode::Steer {
-                    match self.config.steer.fallback {
-                        crate::config::SteerFallback::Interrupt => {
-                            let (text, image_paths, image_placeholders) =
-                                queued_to_submission(&queued);
-                            immediate_submit = Some((text, image_paths, image_placeholders));
-                            interrupt_before_submit = true;
-                            queued_handled = true;
-                        }
-                        crate::config::SteerFallback::Prompt => {
-                            session.queue_message(queued.clone());
-                            prompt_fallback_id = Some(queued.id);
-                            footer_message = Some(
-                                "Steering queued · press Enter to confirm interrupt".to_string(),
-                            );
-                            queued_handled = true;
-                        }
-                        crate::config::SteerFallback::Queue => {
-                            session.queue_message(queued);
-                            footer_message = Some("Steering queued".to_string());
-                            queued_handled = true;
-                        }
-                    }
+            let handled_by_shell = session.input_box.is_shell_mode();
+            if handled_by_shell {
+                let command = submission_text.trim().to_string();
+                if command.is_empty() {
+                    shell_error = Some("Shell command is empty".to_string());
                 } else {
-                    session.queue_message(queued);
-                    footer_message = Some(if mode == QueuedMessageMode::Steer {
-                        "Steering queued (soft mode)".to_string()
-                    } else {
-                        "Message queued".to_string()
-                    });
-                    queued_handled = true;
+                    let args = serde_json::json!({ "command": command }).to_string();
+                    session.chat_view.push(ChatMessage::tool_with_exit(
+                        "Bash",
+                        args,
+                        "Running...".to_string(),
+                        None,
+                    ));
+                    let message_index = session.chat_view.len().saturating_sub(1);
+                    session.input_box.set_shell_mode(false);
+                    session.update_status();
+                    shell_command = Some((
+                        session.id,
+                        message_index,
+                        command,
+                        session.working_dir.clone(),
+                    ));
                 }
+                queued_handled = true;
             }
 
             if !queued_handled {
-                immediate_submit = Some((
-                    submission_text,
-                    submission_image_paths,
-                    submission_image_placeholders,
-                ));
+                let effective_mode = if mode == QueuedMessageMode::Steer
+                    && self.config.steer.behavior == crate::config::SteerBehavior::Soft
+                {
+                    QueuedMessageMode::FollowUp
+                } else {
+                    mode
+                };
+
+                if session.is_processing {
+                    let images = submission_image_paths
+                        .iter()
+                        .cloned()
+                        .zip(submission_image_placeholders.iter().cloned())
+                        .map(|(path, placeholder)| QueuedImageAttachment { path, placeholder })
+                        .collect::<Vec<_>>();
+                    let queued = QueuedMessage {
+                        id: Uuid::new_v4(),
+                        mode: effective_mode,
+                        text: submission_text.clone(),
+                        images,
+                        created_at: Utc::now(),
+                    };
+
+                    if mode == QueuedMessageMode::Steer
+                        && effective_mode == QueuedMessageMode::Steer
+                    {
+                        match self.config.steer.fallback {
+                            crate::config::SteerFallback::Interrupt => {
+                                let (text, image_paths, image_placeholders) =
+                                    queued_to_submission(&queued);
+                                immediate_submit = Some((text, image_paths, image_placeholders));
+                                interrupt_before_submit = true;
+                                queued_handled = true;
+                            }
+                            crate::config::SteerFallback::Prompt => {
+                                session.queue_message(queued.clone());
+                                prompt_fallback_id = Some(queued.id);
+                                footer_message = Some(
+                                    "Steering queued · press Enter to confirm interrupt"
+                                        .to_string(),
+                                );
+                                queued_handled = true;
+                            }
+                            crate::config::SteerFallback::Queue => {
+                                session.queue_message(queued);
+                                footer_message = Some("Steering queued".to_string());
+                                queued_handled = true;
+                            }
+                        }
+                    } else {
+                        session.queue_message(queued);
+                        footer_message = Some(if mode == QueuedMessageMode::Steer {
+                            "Steering queued (soft mode)".to_string()
+                        } else {
+                            "Message queued".to_string()
+                        });
+                        queued_handled = true;
+                    }
+                }
+
+                if !queued_handled {
+                    immediate_submit = Some((
+                        submission_text,
+                        submission_image_paths,
+                        submission_image_placeholders,
+                    ));
+                }
             }
+        }
+
+        if let Some(message) = shell_error {
+            self.state
+                .set_timed_footer_message(message, Duration::from_secs(3));
+            return Ok(effects);
+        }
+
+        if let Some((session_id, message_index, command, working_dir)) = shell_command {
+            effects.push(Effect::RunShellCommand {
+                session_id,
+                message_index,
+                command,
+                working_dir,
+            });
+            return Ok(effects);
         }
 
         if let Some(message) = footer_message {
@@ -10573,10 +10761,12 @@ mod tests {
         key_modifiers: KeyModifiers,
         input_mode: InputMode,
         input_box_content: &str,
+        shell_mode: bool,
     ) -> bool {
         key_code == KeyCode::Char(':')
             && key_modifiers.is_empty()
             && input_box_content.is_empty() // Only trigger when input is empty
+            && !shell_mode
             && !matches!(
                 input_mode,
                 InputMode::Command
@@ -10601,6 +10791,7 @@ mod tests {
             KeyModifiers::NONE,
             InputMode::Normal,
             "", // empty input
+            false,
         );
         assert!(result, "Colon should trigger command mode on empty input");
     }
@@ -10613,6 +10804,7 @@ mod tests {
             KeyModifiers::SHIFT,
             InputMode::Normal,
             "",
+            false,
         );
         assert!(
             !result,
@@ -10632,6 +10824,7 @@ mod tests {
             KeyModifiers::NONE,
             InputMode::Normal,
             "hello", // input already has content
+            false,
         );
 
         assert!(
@@ -10650,6 +10843,7 @@ mod tests {
             KeyModifiers::NONE,
             InputMode::Normal,
             "localhost", // input has content from paste
+            false,
         );
 
         assert!(
