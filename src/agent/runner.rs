@@ -111,6 +111,10 @@ pub struct AgentStartConfig {
     pub images: Vec<PathBuf>,
     /// Agent mode (Build vs Plan) - only used by Claude
     pub agent_mode: AgentMode,
+    /// Optional input format override (e.g. "stream-json" for Claude)
+    pub input_format: Option<String>,
+    /// Optional stdin payload for structured input (e.g. JSONL)
+    pub stdin_payload: Option<String>,
 }
 
 impl AgentStartConfig {
@@ -125,6 +129,8 @@ impl AgentStartConfig {
             model: None,
             images: Vec::new(),
             agent_mode: AgentMode::default(),
+            input_format: None,
+            stdin_payload: None,
         }
     }
 
@@ -157,6 +163,16 @@ impl AgentStartConfig {
         self.agent_mode = mode;
         self
     }
+
+    pub fn with_input_format(mut self, format: impl Into<String>) -> Self {
+        self.input_format = Some(format.into());
+        self
+    }
+
+    pub fn with_stdin_payload(mut self, payload: impl Into<String>) -> Self {
+        self.stdin_payload = Some(payload.into());
+        self
+    }
 }
 
 /// Handle to a running agent process
@@ -167,19 +183,30 @@ pub struct AgentHandle {
     pub session_id: Option<SessionId>,
     /// Process ID for monitoring
     pub pid: u32,
+    /// Optional input channel for streaming stdin payloads
+    pub input_tx: Option<mpsc::Sender<String>>,
 }
 
 impl AgentHandle {
-    pub fn new(events: mpsc::Receiver<AgentEvent>, pid: u32) -> Self {
+    pub fn new(
+        events: mpsc::Receiver<AgentEvent>,
+        pid: u32,
+        input_tx: Option<mpsc::Sender<String>>,
+    ) -> Self {
         Self {
             events,
             session_id: None,
             pid,
+            input_tx,
         }
     }
 
     pub fn set_session_id(&mut self, session_id: SessionId) {
         self.session_id = Some(session_id);
+    }
+
+    pub fn take_input_sender(&mut self) -> Option<mpsc::Sender<String>> {
+        self.input_tx.take()
     }
 }
 

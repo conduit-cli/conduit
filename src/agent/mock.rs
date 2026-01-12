@@ -213,7 +213,7 @@ impl AgentRunner for MockAgentRunner {
             }
         });
 
-        Ok(AgentHandle::new(rx, 99999)) // Fake PID
+        Ok(AgentHandle::new(rx, 99999, None)) // Fake PID
     }
 
     async fn send_input(&self, _handle: &AgentHandle, input: &str) -> Result<(), AgentError> {

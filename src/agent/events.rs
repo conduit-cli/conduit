@@ -30,6 +30,9 @@ pub enum AgentEvent {
     /// Tool use completed
     ToolCompleted(ToolCompletedEvent),
 
+    /// Control request (permission prompt) from agent runtime
+    ControlRequest(ControlRequestEvent),
+
     /// File operation
     FileChanged(FileChangedEvent),
 
@@ -61,6 +64,7 @@ impl AgentEvent {
             AgentEvent::AssistantReasoning(_) => "AssistantReasoning",
             AgentEvent::ToolStarted(_) => "ToolStarted",
             AgentEvent::ToolCompleted(_) => "ToolCompleted",
+            AgentEvent::ControlRequest(_) => "ControlRequest",
             AgentEvent::FileChanged(_) => "FileChanged",
             AgentEvent::CommandOutput(_) => "CommandOutput",
             AgentEvent::TokenUsage(_) => "TokenUsage",
@@ -114,6 +118,14 @@ pub struct ToolCompletedEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlRequestEvent {
+    pub request_id: String,
+    pub tool_name: String,
+    pub tool_use_id: Option<String>,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChangedEvent {
     pub path: String,
     pub operation: FileOperation,
@@ -161,6 +173,49 @@ pub struct ContextCompactionEvent {
 pub struct ErrorEvent {
     pub message: String,
     pub is_fatal: bool,
+}
+
+// ============================================================================
+// AskUserQuestion and ExitPlanMode data structures
+// ============================================================================
+
+/// A single question in an AskUserQuestion tool call
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserQuestion {
+    /// Short label for the question (max 12 chars), used in tab bar
+    #[serde(default)]
+    pub header: String,
+    /// The full question text
+    pub question: String,
+    /// Available options to choose from
+    pub options: Vec<QuestionOption>,
+    /// Whether multiple options can be selected
+    #[serde(default, rename = "multiSelect")]
+    pub multi_select: bool,
+}
+
+/// An option within a UserQuestion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOption {
+    /// The display label for this option
+    pub label: String,
+    /// Description explaining what this option means
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Parsed data from AskUserQuestion tool call
+#[derive(Debug, Clone)]
+pub struct AskUserQuestionData {
+    pub tool_id: String,
+    pub questions: Vec<UserQuestion>,
+}
+
+/// Parsed data from ExitPlanMode tool call
+#[derive(Debug, Clone)]
+pub struct ExitPlanModeData {
+    pub tool_id: String,
+    pub plan_file_path: Option<String>,
 }
 
 /// Warning levels for context window usage

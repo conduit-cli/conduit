@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde_json::Value;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agent::{
@@ -12,8 +14,8 @@ use crate::data::{QueuedMessage, QueuedMessageMode};
 use crate::git::PrManager;
 use crate::ui::capabilities::AgentCapabilities;
 use crate::ui::components::{
-    ChatView, EventDirection, InputBox, ProcessingState, RawEventsView, StatusBar,
-    ThinkingIndicator, TurnSummary,
+    ChatView, EventDirection, InlinePromptState, InputBox, ProcessingState, RawEventsView,
+    StatusBar, ThinkingIndicator, TurnSummary,
 };
 
 /// Represents a single agent session (one tab)
@@ -66,6 +68,8 @@ pub struct AgentSession {
     pub agent_pid: Option<u32>,
     /// Best-effort PID start time to reduce kill reuse risk (platform-dependent)
     pub agent_pid_start_time: Option<u64>,
+    /// Optional input channel for streaming stdin payloads
+    pub agent_input_tx: Option<mpsc::Sender<String>>,
     /// Pending user message that hasn't been confirmed by agent yet
     pub pending_user_message: Option<String>,
     /// Queued messages waiting to be delivered
@@ -94,6 +98,12 @@ pub struct AgentSession {
     pub pending_turn_summary: Option<TurnSummary>,
     /// Number of tools currently in flight for this turn
     pub tools_in_flight: usize,
+    /// Active inline prompt (AskUserQuestion or ExitPlanMode)
+    pub inline_prompt: Option<InlinePromptState>,
+    /// Pending permission prompt requests keyed by tool use ID
+    pub pending_tool_permissions: HashMap<String, String>,
+    /// Pending control responses waiting for a permission request
+    pub pending_tool_permission_responses: HashMap<String, serde_json::Value>,
 }
 
 /// Context warning notification
@@ -131,6 +141,7 @@ impl AgentSession {
             needs_attention: false,
             agent_pid: None,
             agent_pid_start_time: None,
+            agent_input_tx: None,
             pending_user_message: None,
             context_state: ContextWindowState::new(default_context),
             pending_context_warning: None,
@@ -145,6 +156,9 @@ impl AgentSession {
             title_generation_pending: false,
             pending_turn_summary: None,
             tools_in_flight: 0,
+            inline_prompt: None,
+            pending_tool_permissions: HashMap::new(),
+            pending_tool_permission_responses: HashMap::new(),
         };
         session.update_status();
         session

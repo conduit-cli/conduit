@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::agent::{AgentEvent, AgentType};
 use crate::git::PrPreflightResult;
 use crate::ui::git_tracker::GitTrackerUpdate;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// Application-level events
@@ -18,7 +19,11 @@ pub enum AppEvent {
     AgentStreamEnded { session_id: Uuid },
 
     /// Agent subprocess started with given PID
-    AgentStarted { session_id: Uuid, pid: u32 },
+    AgentStarted {
+        session_id: Uuid,
+        pid: u32,
+        input_tx: Option<mpsc::Sender<String>>,
+    },
     /// Agent failed to start for a specific session
     AgentStartFailed { session_id: Uuid, error: String },
     /// Agent termination result (used for async termination feedback)

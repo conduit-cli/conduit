@@ -27,6 +27,7 @@ use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
+use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
     AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
@@ -47,10 +48,10 @@ use crate::ui::components::{
     bg_highlight, scrollbar_offset_from_point, text_muted, text_primary, AddRepoDialog,
     AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
     ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog, EventDirection,
-    GlobalFooter, HelpDialog, MessageRole, MissingToolDialog, ModelSelector, ProcessingState,
-    ProjectPicker, RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader,
-    SessionImportPicker, Sidebar, SidebarData, TabBar, TabBarHitTarget, ThemePicker,
-    SIDEBAR_HEADER_ROWS,
+    GlobalFooter, HelpDialog, InlinePrompt, InlinePromptState, InlinePromptType, MessageRole,
+    MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, PromptAnswer, RawEventsClick,
+    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
+    SidebarData, TabBar, TabBarHitTarget, ThemePicker, SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -107,6 +108,18 @@ extern "C" {
 
 /// Timeout for double-press detection (ms)
 const DOUBLE_PRESS_TIMEOUT_MS: u64 = 500;
+
+/// Wrapper for AskUserQuestion tool arguments
+#[derive(serde::Deserialize)]
+struct AskUserQuestionWrapper {
+    questions: Vec<UserQuestion>,
+}
+
+/// Wrapper for ExitPlanMode tool arguments
+#[derive(serde::Deserialize)]
+struct ExitPlanModeWrapper {
+    plan: String,
+}
 // 20s allows slow CLI agents to shut down on congested machines without UI hangs.
 const AGENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(20);
 // 500ms grace keeps UI responsive while giving SIGTERM a brief chance to exit.
@@ -962,6 +975,7 @@ impl App {
             session_id = Some(session.id);
             pid = session.agent_pid.take();
             pid_start_time = session.agent_pid_start_time.take();
+            session.agent_input_tx = None;
             if session.is_processing {
                 was_processing = true;
                 session.stop_processing();
@@ -1383,6 +1397,178 @@ impl App {
             tracing::debug!("Ctrl+C detected, calling handle_ctrl_c_press");
             let effects = self.handle_ctrl_c_press();
             return Ok(effects);
+        }
+
+        // Handle inline prompt input (AskUserQuestion, ExitPlanMode)
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            if let Some(ref mut prompt) = session.inline_prompt {
+                use crate::ui::components::{PromptAction, PromptResponse};
+
+                match prompt.handle_key(key) {
+                    PromptAction::Submit(response) => {
+                        let tool_id = prompt.tool_id.clone();
+                        let response_clone = response.clone();
+                        let prompt_snapshot = prompt.clone();
+                        let pending_request_id = session.pending_tool_permissions.remove(&tool_id);
+                        let agent_type = session.agent_type;
+
+                        // Clear the inline prompt
+                        session.inline_prompt = None;
+
+                        // Handle the response - format as natural language for the model
+                        let effects = if agent_type == AgentType::Claude
+                            && session.agent_input_tx.is_some()
+                            && pending_request_id.is_some()
+                        {
+                            let request_id = pending_request_id.unwrap();
+                            match response_clone {
+                                PromptResponse::AskUserAnswers { answers } => {
+                                    let updated_input = Self::build_ask_user_updated_input(
+                                        &prompt_snapshot,
+                                        &answers,
+                                    );
+                                    let response_payload = Self::build_permission_allow_response(
+                                        updated_input,
+                                        Some(&tool_id),
+                                    );
+                                    self.send_control_response(&request_id, response_payload)
+                                }
+                                PromptResponse::ExitPlanApprove => {
+                                    // Switch to Build mode
+                                    session.agent_mode = AgentMode::Build;
+                                    session.update_status();
+                                    let updated_input =
+                                        Self::build_exit_plan_updated_input(&prompt_snapshot);
+                                    let response_payload = Self::build_permission_allow_response(
+                                        updated_input,
+                                        Some(&tool_id),
+                                    );
+                                    self.send_control_response(&request_id, response_payload)
+                                }
+                                PromptResponse::ExitPlanFeedback(feedback) => {
+                                    let response_payload = Self::build_permission_deny_response(
+                                        format!("User feedback on plan: {}", feedback),
+                                        Some(&tool_id),
+                                    );
+                                    self.send_control_response(&request_id, response_payload)
+                                }
+                            }
+                        } else if agent_type == AgentType::Claude
+                            && session.agent_input_tx.is_some()
+                        {
+                            let response_payload = match response_clone {
+                                PromptResponse::AskUserAnswers { answers } => {
+                                    let updated_input = Self::build_ask_user_updated_input(
+                                        &prompt_snapshot,
+                                        &answers,
+                                    );
+                                    Self::build_permission_allow_response(
+                                        updated_input,
+                                        Some(&tool_id),
+                                    )
+                                }
+                                PromptResponse::ExitPlanApprove => {
+                                    // Switch to Build mode
+                                    session.agent_mode = AgentMode::Build;
+                                    session.update_status();
+                                    let updated_input =
+                                        Self::build_exit_plan_updated_input(&prompt_snapshot);
+                                    Self::build_permission_allow_response(
+                                        updated_input,
+                                        Some(&tool_id),
+                                    )
+                                }
+                                PromptResponse::ExitPlanFeedback(feedback) => {
+                                    Self::build_permission_deny_response(
+                                        format!("User feedback on plan: {}", feedback),
+                                        Some(&tool_id),
+                                    )
+                                }
+                            };
+                            session
+                                .pending_tool_permission_responses
+                                .insert(tool_id.clone(), response_payload);
+                            Vec::new()
+                        } else {
+                            match response_clone {
+                                PromptResponse::AskUserAnswers { answers } => {
+                                    let (content, tool_use_result) =
+                                        Self::build_ask_user_tool_result(
+                                            &prompt_snapshot,
+                                            &answers,
+                                        );
+                                    self.send_tool_result(&tool_id, content, tool_use_result)
+                                }
+                                PromptResponse::ExitPlanApprove => {
+                                    // Switch to Build mode
+                                    session.agent_mode = AgentMode::Build;
+                                    session.update_status();
+                                    let (content, tool_use_result) =
+                                        Self::build_exit_plan_tool_result(
+                                            &prompt_snapshot,
+                                            true,
+                                            None,
+                                        );
+                                    self.send_tool_result(&tool_id, content, tool_use_result)
+                                }
+                                PromptResponse::ExitPlanFeedback(feedback) => {
+                                    let (content, tool_use_result) =
+                                        Self::build_exit_plan_tool_result(
+                                            &prompt_snapshot,
+                                            false,
+                                            Some(feedback),
+                                        );
+                                    self.send_tool_result(&tool_id, content, tool_use_result)
+                                }
+                            }
+                        };
+                        return Ok(effects);
+                    }
+                    PromptAction::Cancel => {
+                        let tool_id = prompt.tool_id.clone();
+                        let pending_request_id = session.pending_tool_permissions.remove(&tool_id);
+                        let agent_type = session.agent_type;
+                        session.inline_prompt = None;
+                        // Send cancellation as clear message
+                        let effects = if agent_type == AgentType::Claude
+                            && session.agent_input_tx.is_some()
+                            && pending_request_id.is_some()
+                        {
+                            let request_id = pending_request_id.unwrap();
+                            let response_payload = Self::build_permission_deny_response(
+                                "User cancelled the prompt.".to_string(),
+                                Some(&tool_id),
+                            );
+                            self.send_control_response(&request_id, response_payload)
+                        } else if agent_type == AgentType::Claude
+                            && session.agent_input_tx.is_some()
+                        {
+                            let response_payload = Self::build_permission_deny_response(
+                                "User cancelled the prompt.".to_string(),
+                                Some(&tool_id),
+                            );
+                            session
+                                .pending_tool_permission_responses
+                                .insert(tool_id.clone(), response_payload);
+                            Vec::new()
+                        } else {
+                            self.send_tool_result(
+                                &tool_id,
+                                "User cancelled the prompt.".to_string(),
+                                None,
+                            )
+                        };
+                        return Ok(effects);
+                    }
+                    PromptAction::Consumed => {
+                        // Key was handled but no action yet
+                        return Ok(Vec::new());
+                    }
+                    PromptAction::NotHandled => {
+                        // Fall through to normal handling
+                    }
+                }
+            }
         }
 
         // Handle Esc with double-press detection (only when no dialog active and in normal mode)
@@ -2958,11 +3144,16 @@ impl App {
                     tokio::spawn(async move {
                         match runner.start(config).await {
                             Ok(mut handle) => {
-                                // Send PID to main app for interrupt support
+                                // Send PID (and input channel when available) to main app for interrupt support
                                 let pid = handle.pid;
+                                let input_tx = handle.take_input_sender();
                                 send_app_event(
                                     &event_tx,
-                                    AppEvent::AgentStarted { session_id, pid },
+                                    AppEvent::AgentStarted {
+                                        session_id,
+                                        pid,
+                                        input_tx,
+                                    },
                                     "agent_started",
                                 );
 
@@ -6418,7 +6609,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.input_mode = InputMode::Normal;
                 }
             }
-            AppEvent::AgentStarted { session_id, pid } => {
+            AppEvent::AgentStarted {
+                session_id,
+                pid,
+                input_tx,
+            } => {
                 // Store the PID for interrupt support
                 let Some(tab_index) = self.state.tab_manager.session_index_by_id(session_id) else {
                     tracing::debug!(
@@ -6430,6 +6625,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                 if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                     session.agent_pid = Some(pid);
                     session.agent_pid_start_time = Self::pid_start_time(pid);
+                    session.agent_input_tx = input_tx;
                     tracing::debug!(
                         session_id = %session_id,
                         "Agent started with PID {} for tab {}",
@@ -6463,6 +6659,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     session.chat_view.finalize_streaming();
                     session.tools_in_flight = 0;
                     session.set_processing_state(ProcessingState::Thinking);
+                    session.agent_input_tx = None;
                     let display = MessageDisplay::Error { content: error };
                     session.chat_view.push(display.to_chat_message());
                 }
@@ -6508,6 +6705,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                         // Clear PID since process has exited
                         session.agent_pid = None;
                         session.agent_pid_start_time = None;
+                        session.agent_input_tx = None;
                         // Safety: don't let fork-seed suppression leak into future runs
                         session.suppress_next_assistant_reply = false;
                         session.suppress_next_turn_summary = false;
@@ -6759,6 +6957,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Track whether we need to stop footer spinner (done after session borrow ends)
         let mut should_stop_footer_spinner = false;
+        let mut should_start_footer_spinner = false;
         let mut pending_sidebar_pr_update: Option<(Uuid, PrStatus)> = None;
 
         {
@@ -6793,6 +6992,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                 AgentEvent::TurnCompleted(completed) => {
                     session.add_usage(completed.usage);
                     session.stop_processing();
+                    if session.inline_prompt.is_none() {
+                        session.agent_input_tx = None;
+                    }
                     // Safety net: avoid suppressing a future real assistant message
                     // (in case the final assistant message event never arrived)
                     session.suppress_next_assistant_reply = false;
@@ -6820,6 +7022,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     session.chat_view.finalize_streaming();
                     session.tools_in_flight = 0;
                     session.set_processing_state(ProcessingState::Thinking);
+                    session.agent_input_tx = None;
                     // Only stop footer spinner if this is the active tab
                     if is_active_tab {
                         should_stop_footer_spinner = true;
@@ -6857,6 +7060,42 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                 }
                 AgentEvent::ToolStarted(tool) => {
+                    // Check for special interactive tools
+                    if tool.tool_name == "AskUserQuestion" {
+                        // Parse the questions from the tool arguments
+                        if let Ok(wrapper) =
+                            serde_json::from_value::<AskUserQuestionWrapper>(tool.arguments.clone())
+                        {
+                            session.inline_prompt = Some(InlinePromptState::new_ask_user(
+                                tool.tool_id.clone(),
+                                wrapper.questions,
+                            ));
+                            // Don't push to chat - the inline prompt will be rendered separately
+                            session.tools_in_flight = session.tools_in_flight.saturating_add(1);
+                            return Ok(());
+                        }
+                    } else if tool.tool_name == "ExitPlanMode" {
+                        // Use plan content from tool arguments when available
+                        let (plan_content, plan_path) = if let Ok(wrapper) =
+                            serde_json::from_value::<ExitPlanModeWrapper>(tool.arguments.clone())
+                        {
+                            let plan_path = Self::read_plan_file_path_for_session(session)
+                                .unwrap_or_else(|| ".claude/plans/plan.md".to_string());
+                            (wrapper.plan, plan_path)
+                        } else {
+                            Self::read_plan_file_for_session(session)
+                        };
+
+                        session.inline_prompt = Some(InlinePromptState::new_exit_plan(
+                            tool.tool_id.clone(),
+                            plan_content,
+                            plan_path,
+                        ));
+                        // Don't push to chat - the inline prompt will be rendered separately
+                        session.tools_in_flight = session.tools_in_flight.saturating_add(1);
+                        return Ok(());
+                    }
+
                     // Update processing state to show tool name
                     session.set_processing_state(ProcessingState::ToolUse(tool.tool_name.clone()));
                     // ToolStarted pairs with ToolCompleted for non-shell tools or CommandOutput
@@ -6877,6 +7116,46 @@ Acknowledge that you have received this context by replying ONLY with the single
                         file_size: None, // Only set for Read tool on images via update_last_tool
                     };
                     session.chat_view.push(display.to_chat_message());
+                }
+                AgentEvent::ControlRequest(request) => {
+                    if let Some(tool_use_id) = request.tool_use_id.clone() {
+                        session
+                            .pending_tool_permissions
+                            .insert(tool_use_id.clone(), request.request_id.clone());
+
+                        if let Some(response_payload) = session
+                            .pending_tool_permission_responses
+                            .remove(&tool_use_id)
+                        {
+                            if let Ok(jsonl) = Self::build_control_response_jsonl(
+                                &request.request_id,
+                                response_payload,
+                            ) {
+                                if let Some(ref input_tx) = session.agent_input_tx {
+                                    let input_tx = input_tx.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(err) = input_tx.send(jsonl).await {
+                                            tracing::warn!(
+                                                "Failed to send deferred control response: {}",
+                                                err
+                                            );
+                                        }
+                                    });
+                                    session.start_processing();
+                                    session.set_processing_state(ProcessingState::Thinking);
+                                    if is_active_tab {
+                                        should_start_footer_spinner = true;
+                                    }
+                                }
+                            }
+                            session.pending_tool_permissions.remove(&tool_use_id);
+                        }
+                    } else {
+                        tracing::warn!(
+                            tool_name = request.tool_name,
+                            "Control request missing tool_use_id"
+                        );
+                    }
                 }
                 AgentEvent::ToolCompleted(tool) => {
                     tracing::info!(
@@ -6962,6 +7241,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                         session.chat_view.finalize_streaming();
                         session.tools_in_flight = 0;
                         session.set_processing_state(ProcessingState::Thinking);
+                        session.agent_input_tx = None;
                         // Only stop footer spinner if this is the active tab
                         if is_active_tab {
                             should_stop_footer_spinner = true;
@@ -7022,6 +7302,9 @@ Acknowledge that you have received this context by replying ONLY with the single
         if should_stop_footer_spinner {
             self.state.stop_footer_spinner();
         }
+        if should_start_footer_spinner {
+            self.state.start_footer_spinner(None);
+        }
 
         Ok(())
     }
@@ -7033,7 +7316,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         image_placeholders: Vec<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let tab_index = self.state.tab_manager.active_index();
-        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, false)
+        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, false, None)
     }
 
     fn submit_prompt_hidden(
@@ -7043,7 +7326,320 @@ Acknowledge that you have received this context by replying ONLY with the single
         image_placeholders: Vec<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let tab_index = self.state.tab_manager.active_index();
-        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, true)
+        self.submit_prompt_for_tab(tab_index, prompt, images, image_placeholders, true, None)
+    }
+
+    fn submit_prompt_hidden_jsonl(&mut self, payload: String) -> anyhow::Result<Vec<Effect>> {
+        let tab_index = self.state.tab_manager.active_index();
+        self.submit_prompt_for_tab(
+            tab_index,
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            true,
+            Some(payload),
+        )
+    }
+
+    /// Send a tool result back to the agent by resuming the session with a hidden prompt.
+    ///
+    /// Claude Code CLI in headless mode accepts structured stdin input, so we resume the
+    /// session with a tool_result payload over stream-json.
+    ///
+    /// For AskUserQuestion: The result contains the user's answers
+    /// For ExitPlanMode: The result indicates approval or feedback
+    fn send_tool_result(
+        &mut self,
+        tool_id: &str,
+        content: String,
+        tool_use_result: Option<serde_json::Value>,
+    ) -> Vec<Effect> {
+        let payload = Self::build_tool_result_jsonl(tool_id, &content, tool_use_result);
+        match payload {
+            Ok(jsonl) => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    if session.agent_type == AgentType::Claude {
+                        if let Some(ref input_tx) = session.agent_input_tx {
+                            let input_tx = input_tx.clone();
+                            let jsonl_to_send = jsonl.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                    tracing::warn!(
+                                        "Failed to send tool result via streaming input: {}",
+                                        err
+                                    );
+                                }
+                            });
+                            let pending_tools = session.tools_in_flight;
+                            session.start_processing();
+                            session.tools_in_flight = pending_tools.saturating_sub(1);
+                            session.set_processing_state(ProcessingState::Thinking);
+                            self.state.start_footer_spinner(None);
+                            return Vec::new();
+                        }
+                    }
+                }
+
+                match self.submit_prompt_hidden_jsonl(jsonl) {
+                    Ok(effects) => effects,
+                    Err(e) => {
+                        tracing::error!("Failed to send tool result: {}", e);
+                        Vec::new()
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to build tool result payload: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    fn send_control_response(
+        &mut self,
+        request_id: &str,
+        response_payload: serde_json::Value,
+    ) -> Vec<Effect> {
+        let payload = Self::build_control_response_jsonl(request_id, response_payload);
+        match payload {
+            Ok(jsonl) => {
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    if session.agent_type == AgentType::Claude {
+                        if let Some(ref input_tx) = session.agent_input_tx {
+                            let input_tx = input_tx.clone();
+                            let jsonl_to_send = jsonl.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                    tracing::warn!(
+                                        "Failed to send control response via streaming input: {}",
+                                        err
+                                    );
+                                }
+                            });
+                            session.start_processing();
+                            session.set_processing_state(ProcessingState::Thinking);
+                            self.state.start_footer_spinner(None);
+                            return Vec::new();
+                        }
+                    }
+                }
+
+                tracing::warn!("Unable to send control response: missing Claude input channel");
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::error!("Failed to build control response payload: {}", e);
+                Vec::new()
+            }
+        }
+    }
+
+    fn build_tool_result_jsonl(
+        tool_id: &str,
+        content: &str,
+        tool_use_result: Option<serde_json::Value>,
+    ) -> anyhow::Result<String> {
+        let mut payload = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": content,
+                    "is_error": false,
+                }]
+            }
+        });
+
+        if let Some(value) = tool_use_result {
+            if let serde_json::Value::Object(obj) = &mut payload {
+                obj.insert("toolUseResult".to_string(), value);
+            }
+        }
+
+        let json = serde_json::to_string(&payload)?;
+        Ok(format!("{json}\n"))
+    }
+
+    fn build_control_response_jsonl(
+        request_id: &str,
+        response_payload: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        let payload = serde_json::json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response_payload,
+            }
+        });
+        let json = serde_json::to_string(&payload)?;
+        Ok(format!("{json}\n"))
+    }
+
+    fn build_user_prompt_jsonl(prompt: &str) -> anyhow::Result<String> {
+        let payload = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    }
+                ],
+            }
+        });
+        let json = serde_json::to_string(&payload)?;
+        Ok(format!("{json}\n"))
+    }
+
+    fn build_permission_allow_response(
+        updated_input: serde_json::Value,
+        tool_use_id: Option<&str>,
+    ) -> serde_json::Value {
+        let mut response = serde_json::Map::new();
+        response.insert(
+            "behavior".to_string(),
+            serde_json::Value::String("allow".to_string()),
+        );
+        response.insert("updatedInput".to_string(), updated_input);
+        if let Some(tool_use_id) = tool_use_id {
+            response.insert(
+                "toolUseID".to_string(),
+                serde_json::Value::String(tool_use_id.to_string()),
+            );
+        }
+        serde_json::Value::Object(response)
+    }
+
+    fn build_permission_deny_response(
+        message: String,
+        tool_use_id: Option<&str>,
+    ) -> serde_json::Value {
+        let mut response = serde_json::Map::new();
+        response.insert(
+            "behavior".to_string(),
+            serde_json::Value::String("deny".to_string()),
+        );
+        response.insert("message".to_string(), serde_json::Value::String(message));
+        if let Some(tool_use_id) = tool_use_id {
+            response.insert(
+                "toolUseID".to_string(),
+                serde_json::Value::String(tool_use_id.to_string()),
+            );
+        }
+        serde_json::Value::Object(response)
+    }
+
+    fn build_ask_user_updated_input(
+        prompt: &InlinePromptState,
+        answers: &std::collections::HashMap<String, PromptAnswer>,
+    ) -> serde_json::Value {
+        let questions = match &prompt.prompt_type {
+            InlinePromptType::AskUserQuestion { questions } => questions.clone(),
+            _ => Vec::new(),
+        };
+
+        let mut answers_map = serde_json::Map::new();
+        for (question, answer) in answers {
+            let formatted = Self::format_prompt_answer(answer);
+            answers_map.insert(question.clone(), serde_json::Value::String(formatted));
+        }
+
+        serde_json::json!({
+            "questions": questions,
+            "answers": serde_json::Value::Object(answers_map),
+        })
+    }
+
+    fn build_exit_plan_updated_input(prompt: &InlinePromptState) -> serde_json::Value {
+        match &prompt.prompt_type {
+            InlinePromptType::ExitPlanMode { plan_content, .. } => {
+                serde_json::json!({ "plan": plan_content })
+            }
+            _ => serde_json::Value::Null,
+        }
+    }
+
+    fn build_ask_user_tool_result(
+        prompt: &InlinePromptState,
+        answers: &std::collections::HashMap<String, PromptAnswer>,
+    ) -> (String, Option<serde_json::Value>) {
+        let mut parts = Vec::new();
+        for (question, answer) in answers {
+            let formatted = Self::format_prompt_answer(answer);
+            parts.push(format!("\"{}\"=\"{}\"", question, formatted));
+        }
+
+        let content = if parts.is_empty() {
+            "User has answered your questions. You can now continue with the user's answers in mind."
+                .to_string()
+        } else {
+            format!(
+                "User has answered your questions: {}. You can now continue with the user's answers in mind.",
+                parts.join(", ")
+            )
+        };
+
+        let tool_use_result = match &prompt.prompt_type {
+            InlinePromptType::AskUserQuestion { questions } => {
+                let mut answers_map = serde_json::Map::new();
+                for (question, answer) in answers {
+                    let formatted = Self::format_prompt_answer(answer);
+                    answers_map.insert(question.clone(), serde_json::Value::String(formatted));
+                }
+                Some(serde_json::json!({
+                    "questions": questions,
+                    "answers": serde_json::Value::Object(answers_map),
+                }))
+            }
+            _ => None,
+        };
+
+        (content, tool_use_result)
+    }
+
+    fn build_exit_plan_tool_result(
+        prompt: &InlinePromptState,
+        approved: bool,
+        feedback: Option<String>,
+    ) -> (String, Option<serde_json::Value>) {
+        let (plan_content, plan_file_path) = match &prompt.prompt_type {
+            InlinePromptType::ExitPlanMode {
+                plan_content,
+                plan_file_path,
+            } => (plan_content.clone(), plan_file_path.clone()),
+            _ => (String::new(), ".claude/plans/plan.md".to_string()),
+        };
+
+        let tool_use_result = Some(serde_json::json!({
+            "plan": plan_content.clone(),
+            "isAgent": false,
+            "filePath": plan_file_path.clone(),
+        }));
+
+        let content = if approved {
+            format!(
+                "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\nYour plan has been saved to: {}\nYou can refer back to it if needed during implementation.\n\n## Approved Plan:\n{}",
+                plan_file_path,
+                plan_content
+            )
+        } else if let Some(feedback) = feedback {
+            format!("User feedback on plan: {}", feedback)
+        } else {
+            "User feedback on plan.".to_string()
+        };
+
+        (content, tool_use_result)
+    }
+
+    fn format_prompt_answer(answer: &PromptAnswer) -> String {
+        match answer {
+            PromptAnswer::Single(text) => text.clone(),
+            PromptAnswer::Multiple(items) => items.join(", "),
+        }
     }
 
     fn submit_prompt_for_tab(
@@ -7053,6 +7649,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         mut images: Vec<PathBuf>,
         image_placeholders: Vec<String>,
         hidden: bool,
+        stdin_payload: Option<String>,
     ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
 
@@ -7114,6 +7711,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         };
 
         let mut prompt = prompt;
+        let mut stdin_payload = stdin_payload;
 
         // Validate working directory exists before showing user message
         if !working_dir.exists() {
@@ -7162,7 +7760,7 @@ Acknowledge that you have received this context by replying ONLY with the single
             images.clear();
         }
 
-        if prompt.trim().is_empty() && images.is_empty() {
+        if prompt.trim().is_empty() && images.is_empty() && stdin_payload.is_none() {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 session.stop_processing();
                 let display = MessageDisplay::Error {
@@ -7186,6 +7784,11 @@ Acknowledge that you have received this context by replying ONLY with the single
             debug_payload["prompt_len"] = serde_json::json!(prompt.len());
             debug_payload["prompt_hash"] =
                 serde_json::json!(Self::compute_seed_prompt_hash(&prompt));
+            if let Some(ref payload) = stdin_payload {
+                debug_payload["stdin_payload_len"] = serde_json::json!(payload.len());
+                debug_payload["stdin_payload_hash"] =
+                    serde_json::json!(Self::compute_seed_prompt_hash(payload));
+            }
         } else {
             debug_payload["prompt"] = serde_json::json!(&prompt);
         }
@@ -7200,7 +7803,44 @@ Acknowledge that you have received this context by replying ONLY with the single
             session.record_raw_event(EventDirection::Sent, "UserPrompt", debug_payload);
         }
 
-        let mut config = AgentStartConfig::new(prompt, working_dir)
+        let mut use_stream_json = false;
+        if agent_type == AgentType::Claude {
+            use_stream_json = true;
+            if stdin_payload.is_none() {
+                stdin_payload = Some(Self::build_user_prompt_jsonl(&prompt)?);
+            }
+        }
+
+        if agent_type == AgentType::Claude {
+            let is_active_tab = self.state.tab_manager.active_index() == tab_index;
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                if let Some(ref input_tx) = session.agent_input_tx {
+                    if let Some(payload) = stdin_payload.clone() {
+                        let input_tx = input_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(err) = input_tx.send(payload).await {
+                                tracing::warn!("Failed to send streaming prompt: {}", err);
+                            }
+                        });
+
+                        session.start_processing();
+                        session.set_processing_state(ProcessingState::Thinking);
+                        if is_active_tab {
+                            self.state.start_footer_spinner(None);
+                        }
+                        return Ok(Vec::new());
+                    }
+                }
+            }
+        }
+
+        let prompt_for_agent = if agent_type == AgentType::Claude {
+            String::new()
+        } else {
+            prompt.clone()
+        };
+
+        let mut config = AgentStartConfig::new(prompt_for_agent, working_dir)
             .with_tools(self.config.claude_allowed_tools.clone())
             .with_images(images)
             .with_agent_mode(agent_mode);
@@ -7208,6 +7848,15 @@ Acknowledge that you have received this context by replying ONLY with the single
         // Add model if specified
         if let Some(model_id) = model {
             config = config.with_model(model_id);
+        }
+
+        // Structured stdin payload (used for tool results / stream-json input)
+        if let Some(payload) = stdin_payload {
+            config = config
+                .with_input_format("stream-json")
+                .with_stdin_payload(payload);
+        } else if use_stream_json {
+            config = config.with_input_format("stream-json");
         }
 
         // Add session ID to continue existing conversation
@@ -8327,7 +8976,14 @@ Acknowledge that you have received this context by replying ONLY with the single
         };
 
         // Submit to the intended chat session
-        self.submit_prompt_for_tab(target_tab_index, prompt, Vec::new(), Vec::new(), false)
+        self.submit_prompt_for_tab(
+            target_tab_index,
+            prompt,
+            Vec::new(),
+            Vec::new(),
+            false,
+            None,
+        )
     }
 
     fn build_queue_lines(
@@ -8555,6 +9211,7 @@ Acknowledge that you have received this context by replying ONLY with the single
             images,
             placeholders,
             false,
+            None,
         )?);
 
         Ok(effects)
@@ -8913,25 +9570,63 @@ Acknowledge that you have received this context by replying ONLY with the single
                 // Draw active session components
                 let is_command_mode = self.state.input_mode == InputMode::Command;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    // Render chat with thinking indicator if processing
-                    let thinking_line = if session.is_processing {
+                    let inline_prompt_state = session.inline_prompt.as_ref();
+
+                    let mut chat_area = chat_chunk;
+                    let mut prompt_area: Option<Rect> = None;
+                    if let Some(inline_prompt_state) = inline_prompt_state {
+                        let prompt_height =
+                            inline_prompt_state.required_height().min(chat_chunk.height);
+                        if prompt_height > 0 {
+                            chat_area.height = chat_area.height.saturating_sub(prompt_height);
+                            let prompt_container = Rect {
+                                x: chat_chunk.x,
+                                y: chat_chunk.y + chat_area.height,
+                                width: chat_chunk.width,
+                                height: prompt_height,
+                            };
+                            prompt_area =
+                                crate::ui::components::ChatView::content_area_for(prompt_container)
+                                    .or(Some(prompt_container));
+                        }
+                    }
+
+                    self.state.chat_area = if chat_area.height == 0 {
+                        None
+                    } else {
+                        Some(chat_area)
+                    };
+
+                    // Render chat with thinking indicator if processing (but not during inline prompt)
+                    let thinking_line = if session.is_processing && session.inline_prompt.is_none()
+                    {
                         Some(session.thinking_indicator.render())
                     } else {
                         None
                     };
                     let input_mode = self.state.input_mode;
-                    let queue_lines =
-                        Self::build_queue_lines(session, chat_chunk.width, input_mode);
+                    let queue_lines = Self::build_queue_lines(session, chat_area.width, input_mode);
                     session.chat_view.render_with_indicator(
-                        chat_chunk,
+                        chat_area,
                         f.buffer_mut(),
                         thinking_line,
                         queue_lines,
                     );
 
-                    // Render input box (not in command mode)
-                    if !is_command_mode {
+                    // Check if inline prompt is active
+                    let has_inline_prompt = inline_prompt_state.is_some();
+
+                    // Render input box (not in command mode, not when inline prompt active)
+                    if !is_command_mode && !has_inline_prompt {
                         session.input_box.render(input_area_inner, f.buffer_mut());
+                    }
+
+                    // Render inline prompt if active (within chat area)
+                    if let Some(inline_prompt_state) = inline_prompt_state {
+                        if let Some(prompt_area) = prompt_area {
+                            InlinePrompt::new(inline_prompt_state)
+                                .render(prompt_area, f.buffer_mut());
+                        }
                     }
                     // Update status bar with performance metrics
                     session.status_bar.set_metrics(
@@ -8951,11 +9646,28 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                     // Set cursor position (accounting for scroll)
                     if self.state.input_mode == InputMode::Normal {
-                        let scroll_offset = session.input_box.scroll_offset();
-                        let (cx, cy) = session
-                            .input_box
-                            .cursor_position(input_area_inner, scroll_offset);
-                        f.set_cursor_position((cx, cy));
+                        // If inline prompt is in input mode, position cursor there
+                        if let Some(inline_prompt_state) = inline_prompt_state {
+                            if inline_prompt_state.input_mode {
+                                if let Some(prompt_area) = prompt_area {
+                                    // Position cursor in the inline prompt's text input
+                                    // Input is after: separator (1) + question (2) + blank (1) = 4 lines
+                                    // Plus account for multi-question tab bar
+                                    let input_y = prompt_area.y + 4;
+                                    // Cursor position: "> " prefix (2) + cursor position in text
+                                    let cx = prompt_area.x
+                                        + 2
+                                        + inline_prompt_state.text_input.cursor as u16;
+                                    f.set_cursor_position((cx, input_y));
+                                }
+                            }
+                        } else {
+                            let scroll_offset = session.input_box.scroll_offset();
+                            let (cx, cy) = session
+                                .input_box
+                                .cursor_position(input_area_inner, scroll_offset);
+                            f.set_cursor_position((cx, cy));
+                        }
                     }
                 }
 
@@ -9235,6 +9947,57 @@ Acknowledge that you have received this context by replying ONLY with the single
             },
             buf,
         );
+    }
+
+    fn find_latest_plan_file(session: &AgentSession) -> Option<std::path::PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(home_dir) = dirs::home_dir() {
+            candidates.push(home_dir.join(".claude").join("plans"));
+        }
+        if let Some(ref working_dir) = session.working_dir {
+            candidates.push(working_dir.join(".claude").join("plans"));
+        }
+
+        let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
+        for plans_dir in candidates {
+            if !plans_dir.exists() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&plans_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|e| e == "md") {
+                        if let Ok(metadata) = path.metadata() {
+                            if let Ok(modified) = metadata.modified() {
+                                if newest.as_ref().is_none_or(|(_, t)| modified > *t) {
+                                    newest = Some((path, modified));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        newest.map(|(path, _)| path)
+    }
+
+    /// Find the most recent plan file path for the session (for ExitPlanMode display)
+    fn read_plan_file_path_for_session(session: &AgentSession) -> Option<String> {
+        Self::find_latest_plan_file(session).map(|path| path.display().to_string())
+    }
+
+    /// Read the plan file for the current session (for ExitPlanMode display)
+    fn read_plan_file_for_session(session: &AgentSession) -> (String, String) {
+        if let Some(path) = Self::find_latest_plan_file(session) {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return (content, path.display().to_string());
+            }
+        }
+        // Fallback if no plan file found
+        (
+            "(Plan content not found)".to_string(),
+            ".claude/plans/plan.md".to_string(),
+        )
     }
 
     /// Extract a filename from tool result text

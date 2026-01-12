@@ -9,6 +9,7 @@ mod dialog;
 mod error_dialog;
 mod global_footer;
 mod help_dialog;
+mod inline_prompt;
 mod input_box;
 mod key_hints;
 mod knight_rider_spinner;
@@ -48,6 +49,9 @@ pub use dialog::{DialogFrame, InstructionBar, StatusLine};
 pub use error_dialog::{ErrorDialog, ErrorDialogState};
 pub use global_footer::{FooterContext, GlobalFooter};
 pub use help_dialog::{HelpCategory, HelpDialog, HelpDialogState, KeybindingEntry};
+pub use inline_prompt::{
+    InlinePrompt, InlinePromptState, InlinePromptType, PromptAction, PromptAnswer, PromptResponse,
+};
 pub use input_box::InputBox;
 pub use key_hints::{render_key_hints, render_key_hints_responsive, KeyHintBarStyle};
 pub use knight_rider_spinner::KnightRiderSpinner;

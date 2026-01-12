@@ -588,7 +588,7 @@ impl AgentRunner for CodexCliRunner {
             }
         });
 
-        Ok(AgentHandle::new(rx, pid))
+        Ok(AgentHandle::new(rx, pid, None))
     }
 
     async fn send_input(&self, _handle: &AgentHandle, _input: &str) -> Result<(), AgentError> {

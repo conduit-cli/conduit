@@ -66,6 +66,10 @@ pub enum ClaudeRawEvent {
     #[serde(rename = "user")]
     User(ClaudeUserEvent),
 
+    /// Control requests (permission checks, hooks) from Claude Code CLI
+    #[serde(rename = "control_request")]
+    ControlRequest(ClaudeControlRequestEvent),
+
     #[serde(rename = "result")]
     Result(ClaudeResultEvent),
 
@@ -191,6 +195,27 @@ pub struct ClaudeToolResultEvent {
 pub struct ClaudeUserEvent {
     pub message: Option<ClaudeUserMessage>,
     pub tool_use_result: Option<ClaudeToolUseResultData>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeControlRequestEvent {
+    pub request_id: String,
+    pub request: ClaudeControlRequestType,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "subtype", rename_all = "snake_case")]
+pub enum ClaudeControlRequestType {
+    CanUseTool {
+        tool_name: String,
+        input: serde_json::Value,
+        #[serde(default)]
+        tool_use_id: Option<String>,
+    },
+    HookCallback {
+        callback_id: String,
+        input: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]

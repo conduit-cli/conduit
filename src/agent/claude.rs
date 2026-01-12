@@ -2,13 +2,14 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
+use serde_json::json;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use crate::agent::error::AgentError;
 use crate::agent::events::{
-    AgentEvent, AssistantMessageEvent, ErrorEvent, SessionInitEvent, TokenUsage,
-    ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent,
+    AgentEvent, AssistantMessageEvent, ControlRequestEvent, ErrorEvent, SessionInitEvent,
+    TokenUsage, ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent,
 };
 use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
@@ -37,13 +38,23 @@ impl ClaudeCodeRunner {
     fn build_command(&self, config: &AgentStartConfig) -> Command {
         let mut cmd = Command::new(&self.binary_path);
 
+        let use_stream_input = config
+            .input_format
+            .as_deref()
+            .is_some_and(|format| format == "stream-json");
+
         // Core headless mode flags
-        cmd.arg("-p"); // Print mode (standalone flag, prompt is positional)
+        if !use_stream_input {
+            cmd.arg("-p"); // Print mode (standalone flag, prompt is positional)
+        }
         cmd.arg("--output-format").arg("stream-json");
         cmd.arg("--verbose"); // verbose is now required
                               // Claude process failed (exit status: 1): Error: When
                               // using --print,--output-format=stream-json requires
                               // --verbose
+        if use_stream_input {
+            cmd.arg("--permission-prompt-tool").arg("stdio");
+        }
 
         // Permission mode (Build vs Plan)
         cmd.arg("--permission-mode")
@@ -68,6 +79,11 @@ impl ClaudeCodeRunner {
         // Working directory
         cmd.current_dir(&config.working_dir);
 
+        // Input format override (e.g. stream-json for structured input)
+        if let Some(format) = &config.input_format {
+            cmd.arg("--input-format").arg(format);
+        }
+
         // Additional args
         for arg in &config.additional_args {
             cmd.arg(arg);
@@ -75,12 +91,21 @@ impl ClaudeCodeRunner {
 
         // Use "--" to signal end of flags, so prompts starting with "-" (like "- [ ] task")
         // are not interpreted as CLI arguments
-        if !config.prompt.is_empty() {
+        if !use_stream_input && !config.prompt.is_empty() {
             cmd.arg("--").arg(&config.prompt);
         }
 
-        // Stdio setup for JSONL capture
-        cmd.stdin(Stdio::null());
+        // Stdio setup for JSONL capture / streaming input
+        let needs_stdin = config
+            .input_format
+            .as_deref()
+            .is_some_and(|format| format == "stream-json")
+            || config.stdin_payload.is_some();
+        if needs_stdin {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdin(Stdio::null());
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
@@ -218,8 +243,41 @@ impl ClaudeCodeRunner {
                 }
                 events
             }
+            ClaudeRawEvent::ControlRequest(_) => vec![],
             ClaudeRawEvent::Unknown => vec![],
         }
+    }
+
+    fn build_control_initialize_jsonl() -> String {
+        let payload = json!({
+            "type": "control_request",
+            "request_id": uuid::Uuid::new_v4().to_string(),
+            "request": {
+                "subtype": "initialize",
+                "hooks": serde_json::Value::Null,
+            }
+        });
+        format!("{}\n", payload)
+    }
+
+    fn build_control_response_jsonl(
+        request_id: &str,
+        response_payload: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        let payload = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response_payload,
+            }
+        });
+        let json = serde_json::to_string(&payload)?;
+        Ok(format!("{json}\n"))
+    }
+
+    fn is_interactive_tool(tool_name: &str) -> bool {
+        matches!(tool_name, "AskUserQuestion" | "ExitPlanMode")
     }
 }
 
@@ -239,12 +297,69 @@ impl AgentRunner for ClaudeCodeRunner {
         let mut cmd = self.build_command(&config);
         let mut child = cmd.spawn()?;
 
+        let use_stream_input = config
+            .input_format
+            .as_deref()
+            .is_some_and(|format| format == "stream-json");
+        let stdin_payload = config.stdin_payload.clone();
+        let mut input_tx: Option<mpsc::Sender<String>> = None;
+
+        if let Some(stdin) = child.stdin.take() {
+            if use_stream_input {
+                let (tx, mut rx) = mpsc::channel::<String>(32);
+                input_tx = Some(tx);
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let mut stdin = stdin;
+                    let init_payload = Self::build_control_initialize_jsonl();
+                    if let Err(err) = stdin.write_all(init_payload.as_bytes()).await {
+                        tracing::error!(
+                            "Failed to write control initialize to Claude stdin: {}",
+                            err
+                        );
+                        return;
+                    }
+                    if let Some(payload) = stdin_payload {
+                        if let Err(err) = stdin.write_all(payload.as_bytes()).await {
+                            tracing::error!(
+                                "Failed to write initial payload to Claude stdin: {}",
+                                err
+                            );
+                            return;
+                        }
+                    }
+                    while let Some(line) = rx.recv().await {
+                        if let Err(err) = stdin.write_all(line.as_bytes()).await {
+                            tracing::error!("Failed to write to Claude stdin: {}", err);
+                            break;
+                        }
+                    }
+                    if let Err(err) = stdin.shutdown().await {
+                        tracing::warn!("Failed to close Claude stdin: {}", err);
+                    }
+                });
+            } else if let Some(payload) = stdin_payload {
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let mut stdin = stdin;
+                    if let Err(err) = stdin.write_all(payload.as_bytes()).await {
+                        tracing::error!("Failed to write to Claude stdin: {}", err);
+                        return;
+                    }
+                    if let Err(err) = stdin.shutdown().await {
+                        tracing::warn!("Failed to close Claude stdin: {}", err);
+                    }
+                });
+            }
+        }
+
         let pid = child.id().ok_or(AgentError::ProcessSpawnFailed)?;
         let stdout = child.stdout.take().ok_or(AgentError::StdoutCaptureFailed)?;
         let stderr = child.stderr.take();
 
         let (tx, rx) = mpsc::channel::<AgentEvent>(256);
         let tx_for_monitor = tx.clone();
+        let control_tx = input_tx.clone();
 
         // Spawn JSONL parser task
         tokio::spawn(async move {
@@ -271,6 +386,69 @@ impl AgentRunner for ClaudeCodeRunner {
 
             // Convert and forward events
             'outer: while let Some(raw_event) = raw_rx.recv().await {
+                if let ClaudeRawEvent::ControlRequest(request) = &raw_event {
+                    match &request.request {
+                        crate::agent::stream::ClaudeControlRequestType::CanUseTool {
+                            tool_name,
+                            input,
+                            tool_use_id,
+                        } => {
+                            if Self::is_interactive_tool(tool_name) {
+                                let event = AgentEvent::ControlRequest(ControlRequestEvent {
+                                    request_id: request.request_id.clone(),
+                                    tool_name: tool_name.clone(),
+                                    tool_use_id: tool_use_id.clone(),
+                                    input: input.clone(),
+                                });
+                                if tx.send(event).await.is_err() {
+                                    break 'outer;
+                                }
+                                if control_tx.is_none() {
+                                    tracing::warn!(
+                                        tool_name = tool_name,
+                                        "Control request for interactive tool received without stdin channel"
+                                    );
+                                }
+                            } else if let Some(ref tx) = control_tx {
+                                let mut response_payload = serde_json::Map::new();
+                                response_payload.insert("behavior".to_string(), json!("allow"));
+                                response_payload.insert("updatedInput".to_string(), input.clone());
+                                if let Some(tool_use_id) = tool_use_id.as_ref() {
+                                    response_payload
+                                        .insert("toolUseID".to_string(), json!(tool_use_id));
+                                }
+                                if let Ok(response) = Self::build_control_response_jsonl(
+                                    &request.request_id,
+                                    serde_json::Value::Object(response_payload),
+                                ) {
+                                    if let Err(err) = tx.send(response).await {
+                                        tracing::warn!(
+                                            "Failed to respond to control request: {}",
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        crate::agent::stream::ClaudeControlRequestType::HookCallback { .. } => {
+                            if let Some(ref tx) = control_tx {
+                                if let Ok(response) = Self::build_control_response_jsonl(
+                                    &request.request_id,
+                                    json!({ "decision": "allow" }),
+                                ) {
+                                    if let Err(err) = tx.send(response).await {
+                                        tracing::warn!(
+                                            "Failed to respond to hook callback: {}",
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continue 'outer;
+                }
+
                 for event in Self::convert_event(raw_event) {
                     if tx.send(event).await.is_err() {
                         break 'outer;
@@ -343,11 +521,12 @@ impl AgentRunner for ClaudeCodeRunner {
             }
         });
 
-        Ok(AgentHandle::new(rx, pid))
+        Ok(AgentHandle::new(rx, pid, input_tx))
     }
 
     async fn send_input(&self, _handle: &AgentHandle, _input: &str) -> Result<(), AgentError> {
-        // Claude Code headless mode doesn't support interactive input
+        // Claude Code headless mode doesn't support interactive input via stdin
+        // Tool results must be sent by resuming the session with a new prompt
         Err(AgentError::NotSupported(
             "Claude headless mode doesn't support interactive input".into(),
         ))
