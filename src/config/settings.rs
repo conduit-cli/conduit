@@ -562,7 +562,8 @@ impl Config {
                         if let Some(clear_selection_after_copy) =
                             selection.clear_selection_after_copy
                         {
-                            config.selection.clear_selection_after_copy = clear_selection_after_copy;
+                            config.selection.clear_selection_after_copy =
+                                clear_selection_after_copy;
                         }
                     }
                 }

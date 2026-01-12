@@ -4659,8 +4659,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
             if has_selection && self.config.selection.auto_copy_selection {
                 copied_text = Self::selection_text_for_target(session, target);
-                should_clear_selection = copied_text.is_some()
-                    && self.config.selection.clear_selection_after_copy;
+                should_clear_selection =
+                    copied_text.is_some() && self.config.selection.clear_selection_after_copy;
             }
             if should_clear_selection {
                 Self::clear_selection_for_target(session, target);
