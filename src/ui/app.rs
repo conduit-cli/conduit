@@ -9351,8 +9351,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Render sidebar if visible
         if self.state.sidebar_state.visible {
-            let sidebar = Sidebar::new(&self.state.sidebar_data)
-                .with_spinner_frame(self.state.spinner_frame);
+            let sidebar =
+                Sidebar::new(&self.state.sidebar_data).with_spinner_frame(self.state.spinner_frame);
             ratatui::widgets::StatefulWidget::render(
                 sidebar,
                 sidebar_area,
