@@ -56,7 +56,9 @@ pub use markdown::MarkdownRenderer;
 pub use missing_tool_dialog::{
     MissingToolDialog, MissingToolDialogState, MissingToolResult, StartupToolDialog,
 };
-pub use model_selector::{ModelSelector, ModelSelectorItem, ModelSelectorState};
+pub use model_selector::{
+    DefaultModelSelection, ModelSelector, ModelSelectorItem, ModelSelectorState,
+};
 pub use path_input::PathInputState;
 pub use project_picker::{ProjectEntry, ProjectPicker, ProjectPickerState};
 pub use raw_events_types::{

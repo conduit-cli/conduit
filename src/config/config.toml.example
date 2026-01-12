@@ -32,6 +32,15 @@
 # # path = "/path/to/my-theme-color-theme.json"
 
 # ============================================================================
+# Default Model
+# ============================================================================
+# Configure the single default agent + model used for new sessions.
+#
+# [model]
+# agent = "claude"
+# model = "opus"
+
+# ============================================================================
 # Tool Paths
 # ============================================================================
 # Queue + Steering Configuration
@@ -190,6 +199,7 @@
 # select_next = "j"
 # confirm = "<Enter>"
 # cancel = "<Esc>"
+# set_default_model = "M-d"
 
 [keys.raw_events]
 # Raw events view keybindings
@@ -233,7 +243,7 @@
 #
 # Navigation:
 #   select_next, select_prev, select_page_down, select_page_up,
-#   confirm, cancel, expand_or_select, collapse,
+#   confirm, cancel, set_default_model, expand_or_select, collapse,
 #   add_repository, open_settings, archive_or_remove
 #
 # Sidebar:

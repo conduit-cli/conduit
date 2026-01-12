@@ -46,10 +46,11 @@ use crate::ui::clipboard_paste::paste_image_to_temp_png;
 use crate::ui::components::{
     bg_highlight, scrollbar_offset_from_point, text_muted, text_primary, AddRepoDialog,
     AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
-    ConfirmationDialog, ConfirmationType, ErrorDialog, EventDirection, GlobalFooter, HelpDialog,
-    MessageRole, MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, RawEventsClick,
-    RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader, SessionImportPicker, Sidebar,
-    SidebarData, TabBar, TabBarHitTarget, ThemePicker, SIDEBAR_HEADER_ROWS,
+    ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog, EventDirection,
+    GlobalFooter, HelpDialog, MessageRole, MissingToolDialog, ModelSelector, ProcessingState,
+    ProjectPicker, RawEventsClick, RawEventsScrollbarMetrics, ScrollbarMetrics, SessionHeader,
+    SessionImportPicker, Sidebar, SidebarData, TabBar, TabBarHitTarget, ThemePicker,
+    SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -1677,7 +1678,8 @@ impl App {
                 if let Some(session) = self.state.tab_manager.active_session() {
                     let model = session.model.clone();
                     self.state.close_overlays();
-                    self.state.model_selector_state.show(model);
+                    let defaults = self.model_selector_defaults();
+                    self.state.model_selector_state.show(model, defaults);
                     self.state.input_mode = InputMode::SelectingModel;
                 }
             }
@@ -2024,17 +2026,20 @@ impl App {
                     InputMode::SettingBaseDir => {
                         self.state.base_dir_dialog_state.delete_char();
                     }
-                    InputMode::MissingTool => {
-                        self.state.missing_tool_dialog_state.backspace();
+                InputMode::MissingTool => {
+                    self.state.missing_tool_dialog_state.backspace();
+                }
+                InputMode::SelectingTheme => {
+                    self.state.theme_picker_state.backspace();
+                }
+                InputMode::SelectingModel => {
+                    self.state.model_selector_state.delete_char();
+                }
+                _ => {
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        session.input_box.backspace();
                     }
-                    InputMode::SelectingTheme => {
-                        self.state.theme_picker_state.backspace();
-                    }
-                    _ => {
-                        if let Some(session) = self.state.tab_manager.active_session_mut() {
-                            session.input_box.backspace();
-                        }
-                    }
+                }
                 }
             }
             Action::Delete => {
@@ -2042,6 +2047,8 @@ impl App {
                     self.state.missing_tool_dialog_state.delete();
                 } else if self.state.input_mode == InputMode::SelectingTheme {
                     self.state.theme_picker_state.delete();
+                } else if self.state.input_mode == InputMode::SelectingModel {
+                    self.state.model_selector_state.delete_forward();
                 } else if self.state.input_mode == InputMode::SettingBaseDir {
                     self.state.base_dir_dialog_state.delete_forward();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -2069,6 +2076,8 @@ impl App {
             Action::MoveCursorLeft => {
                 if self.state.input_mode == InputMode::SelectingTheme {
                     self.state.theme_picker_state.move_left();
+                } else if self.state.input_mode == InputMode::SelectingModel {
+                    self.state.model_selector_state.move_cursor_left();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_left();
                 }
@@ -2076,6 +2085,8 @@ impl App {
             Action::MoveCursorRight => {
                 if self.state.input_mode == InputMode::SelectingTheme {
                     self.state.theme_picker_state.move_right();
+                } else if self.state.input_mode == InputMode::SelectingModel {
+                    self.state.model_selector_state.move_cursor_right();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_right();
                 }
@@ -2083,6 +2094,8 @@ impl App {
             Action::MoveCursorStart => {
                 if self.state.input_mode == InputMode::SelectingTheme {
                     self.state.theme_picker_state.move_to_start();
+                } else if self.state.input_mode == InputMode::SelectingModel {
+                    self.state.model_selector_state.move_cursor_start();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_start();
                 }
@@ -2090,6 +2103,8 @@ impl App {
             Action::MoveCursorEnd => {
                 if self.state.input_mode == InputMode::SelectingTheme {
                     self.state.theme_picker_state.move_to_end();
+                } else if self.state.input_mode == InputMode::SelectingModel {
+                    self.state.model_selector_state.move_cursor_end();
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
                     session.input_box.move_end();
                 }
@@ -2514,6 +2529,31 @@ impl App {
                 }
                 _ => {}
             },
+            Action::SetDefaultModel => {
+                if self.state.input_mode == InputMode::SelectingModel {
+                    if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
+                        let model_id = model.id.clone();
+                        let agent_type = model.agent_type;
+                        self.state
+                            .model_selector_state
+                            .set_default_model(agent_type, model_id.clone());
+                        self.config.set_default_model(agent_type, model_id.clone());
+
+                        if let Err(err) = crate::config::save_default_model(agent_type, &model_id) {
+                            tracing::warn!(error = %err, "Failed to save default model");
+                            self.state.set_timed_footer_message(
+                                format!("Failed to save default model: {err}"),
+                                Duration::from_secs(5),
+                            );
+                        } else {
+                            self.state.set_timed_footer_message(
+                                format!("Default model set to: {}", model.display_name),
+                                Duration::from_secs(5),
+                            );
+                        }
+                    }
+                }
+            }
             Action::Cancel => match self.state.input_mode {
                 InputMode::SidebarNavigation => {
                     self.state.input_mode = InputMode::Normal;
@@ -3624,6 +3664,7 @@ impl App {
                 | KeyContext::SessionImport
                 | KeyContext::CommandPalette
                 | KeyContext::ThemePicker
+                | KeyContext::ModelSelector
         )
     }
 
@@ -3677,6 +3718,9 @@ impl App {
             }
             InputMode::SelectingTheme => {
                 self.state.theme_picker_state.insert_char(c);
+            }
+            InputMode::SelectingModel => {
+                self.state.model_selector_state.insert_char(c);
             }
             _ => {}
         }
@@ -3740,6 +3784,10 @@ impl App {
             InputMode::SelectingTheme => {
                 let sanitized = pasted.replace('\n', " ");
                 self.state.theme_picker_state.insert_str(&sanitized);
+            }
+            InputMode::SelectingModel => {
+                let sanitized = pasted.replace('\n', " ");
+                self.state.model_selector_state.insert_str(&sanitized);
             }
             _ => {}
         }
@@ -4073,6 +4121,10 @@ impl App {
                 if session.fork_seed_id.is_some() && !session.chat_view.messages().is_empty() {
                     session.fork_welcome_shown = true;
                 }
+            } else {
+                let model_id = self.config.default_model_for(tab_agent_type);
+                session.model = Some(model_id);
+                session.init_context_for_model();
             }
 
             session.update_status();
@@ -4109,6 +4161,14 @@ impl App {
         match agent_type {
             AgentType::Claude => crate::util::Tool::Claude,
             AgentType::Codex => crate::util::Tool::Codex,
+        }
+    }
+
+    fn model_selector_defaults(&self) -> DefaultModelSelection {
+        let agent_type = self.config.default_agent;
+        DefaultModelSelection {
+            agent_type: Some(agent_type),
+            model_id: Some(self.config.default_model_for(agent_type)),
         }
     }
 
@@ -4796,6 +4856,12 @@ Acknowledge that you have received this context by replying ONLY with the single
     /// Create a new tab with the selected agent type
     fn create_tab_with_agent(&mut self, agent_type: AgentType) {
         self.state.tab_manager.new_tab(agent_type);
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            let model_id = self.config.default_model_for(agent_type);
+            session.model = Some(model_id);
+            session.init_context_for_model();
+            session.update_status();
+        }
         self.state.input_mode = InputMode::Normal;
     }
 
@@ -4883,6 +4949,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                 && self.state.command_palette_state.is_visible())
             && !(self.state.input_mode == InputMode::SelectingTheme
                 && self.state.theme_picker_state.is_visible())
+            && !(self.state.input_mode == InputMode::SelectingModel
+                && self.state.model_selector_state.is_visible())
     }
 
     fn raw_events_list_visible_height(&self) -> usize {
@@ -5894,7 +5962,8 @@ Acknowledge that you have received this context by replying ONLY with the single
             } else if relative_x >= model_start && relative_x < model_end {
                 // Click on model/agent area - open model selector
                 self.state.close_overlays();
-                self.state.model_selector_state.show(model);
+                let defaults = self.model_selector_defaults();
+                self.state.model_selector_state.show(model, defaults);
                 self.state.input_mode = InputMode::SelectingModel;
             }
         } else {
@@ -5904,7 +5973,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
             if relative_x >= model_start && relative_x < model_end {
                 self.state.close_overlays();
-                self.state.model_selector_state.show(model);
+                let defaults = self.model_selector_defaults();
+                self.state.model_selector_state.show(model, defaults);
                 self.state.input_mode = InputMode::SelectingModel;
             }
         }
@@ -5973,106 +6043,53 @@ Acknowledge that you have received this context by replying ONLY with the single
 
     /// Handle click in model selector dialog
     fn handle_model_selector_click(&mut self, x: u16, y: u16) -> Option<Effect> {
-        use crate::ui::components::ModelSelectorItem;
+        const DIALOG_WIDTH: u16 = 60;
+        const DIALOG_HEIGHT: u16 = 18;
 
-        // Calculate dialog dimensions (must match model_selector.rs render logic)
         let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
-        let screen_width = terminal_size.0;
-        let screen_height = terminal_size.1;
+        let screen = Rect::new(0, 0, terminal_size.0, terminal_size.1);
 
-        let content_height = self.state.model_selector_state.items.len() as u16 + 4;
-        let dialog_height = content_height.min(screen_height.saturating_sub(4));
-        let dialog_width: u16 = 40;
+        let dialog_width = DIALOG_WIDTH.min(screen.width.saturating_sub(4));
+        let dialog_height = DIALOG_HEIGHT.min(screen.height.saturating_sub(2));
+        let dialog_x = (screen.width.saturating_sub(dialog_width)) / 2;
+        let dialog_y = (screen.height.saturating_sub(dialog_height)) / 2;
 
-        // Calculate dialog position (aligned with status bar)
-        let (dialog_x, dialog_y) = if let Some(sb_area) = self.state.status_bar_area {
-            let dx = sb_area.x;
-            let dy = sb_area.y.saturating_sub(dialog_height);
-            (dx, dy)
-        } else {
-            let dx = (screen_width.saturating_sub(dialog_width)) / 2;
-            let dy = (screen_height.saturating_sub(dialog_height)) / 2;
-            (dx, dy)
+        let dialog_area = Rect {
+            x: dialog_x,
+            y: dialog_y,
+            width: dialog_width,
+            height: dialog_height,
         };
 
-        // Ensure dialog stays within screen bounds
-        let dialog_x = dialog_x.min(screen_width.saturating_sub(dialog_width));
-
-        // Check if click is outside dialog - close it
-        if x < dialog_x
-            || x >= dialog_x + dialog_width
-            || y < dialog_y
-            || y >= dialog_y + dialog_height
+        if x < dialog_area.x
+            || x >= dialog_area.x + dialog_area.width
+            || y < dialog_area.y
+            || y >= dialog_area.y + dialog_area.height
         {
             self.state.model_selector_state.hide();
             self.state.input_mode = InputMode::Normal;
             return None;
         }
 
-        // Inner area (accounting for border and padding)
-        let inner_x = dialog_x + 2; // border + padding
-        let inner_y = dialog_y + 1; // border
-        let inner_height = dialog_height.saturating_sub(2);
+        let inner = Rect {
+            x: dialog_area.x + 2,
+            y: dialog_area.y + 1,
+            width: dialog_area.width.saturating_sub(4),
+            height: dialog_area.height.saturating_sub(2),
+        };
 
-        // Check if click is in the content area
-        if x < inner_x || y < inner_y || y >= inner_y + inner_height {
+        if inner.height < 4 {
             return None;
         }
 
-        // Map y position to item index
-        // The items render with section headers and spacing
-        let relative_y = (y - inner_y) as usize;
+        // Layout: search, separator, list, instructions
+        let list_y = inner.y + 2;
+        let list_height = inner.height.saturating_sub(3);
 
-        // Walk through items to find which one was clicked
-        let mut current_row: usize = 0;
-        let mut clicked_selectable_idx: Option<usize> = None;
-
-        for (item_idx, item) in self.state.model_selector_state.items.iter().enumerate() {
-            match item {
-                ModelSelectorItem::SectionHeader(_) => {
-                    // Section headers have spacing before them (except first)
-                    if item_idx > 0 {
-                        current_row += 1; // spacing line
-                    }
-                    if current_row == relative_y {
-                        // Clicked on section header - do nothing
-                        return None;
-                    }
-                    current_row += 1; // header line
-                }
-                ModelSelectorItem::Model(_) => {
-                    if current_row == relative_y {
-                        // Find which selectable index this corresponds to
-                        for (sel_idx, &sel_item_idx) in self
-                            .state
-                            .model_selector_state
-                            .selectable_indices
-                            .iter()
-                            .enumerate()
-                        {
-                            if sel_item_idx == item_idx {
-                                clicked_selectable_idx = Some(sel_idx);
-                                break;
-                            }
-                        }
-                        break;
-                    }
-                    current_row += 1;
-                }
-            }
-
-            if current_row > relative_y {
-                break;
-            }
-        }
-
-        // If a model was clicked, select it and apply
-        if let Some(sel_idx) = clicked_selectable_idx {
-            self.state.model_selector_state.selected = sel_idx;
-
-            // Apply the selection (same logic as Enter key)
-            if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
+        if y >= list_y && y < list_y + list_height {
+            let clicked_row = (y - list_y) as usize;
+            if self.state.model_selector_state.select_at_row(clicked_row) {
+                if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
                     let required_tool = Self::required_tool(model.agent_type);
                     if !self.tools.is_available(required_tool) {
                         self.show_missing_tool(
@@ -6084,24 +6101,26 @@ Acknowledge that you have received this context by replying ONLY with the single
                         );
                         return None;
                     }
-                    let agent_changed =
-                        session.set_agent_and_model(model.agent_type, Some(model.id.clone()));
 
-                    // Add system message about the change
-                    let msg = if agent_changed {
-                        format!(
-                            "Switched to {} with model: {}",
-                            model.agent_type, model.display_name
-                        )
-                    } else {
-                        format!("Model changed to: {}", model.display_name)
-                    };
-                    let display = MessageDisplay::System { content: msg };
-                    session.chat_view.push(display.to_chat_message());
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        let agent_changed =
+                            session.set_agent_and_model(model.agent_type, Some(model.id.clone()));
+
+                        let msg = if agent_changed {
+                            format!(
+                                "Switched to {} with model: {}",
+                                model.agent_type, model.display_name
+                            )
+                        } else {
+                            format!("Model changed to: {}", model.display_name)
+                        };
+                        let display = MessageDisplay::System { content: msg };
+                        session.chat_view.push(display.to_chat_message());
+                    }
                 }
+                self.state.model_selector_state.hide();
+                self.state.input_mode = InputMode::Normal;
             }
-            self.state.model_selector_state.hide();
-            self.state.input_mode = InputMode::Normal;
         }
 
         None
@@ -8687,13 +8706,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                         let picker = SessionImportPicker::new();
                         picker.render(size, f.buffer_mut(), &self.state.session_import_state);
                     } else if self.state.model_selector_state.is_visible() {
+                        self.state.model_selector_state.update_viewport(size);
                         let selector = ModelSelector::new();
-                        selector.render(
-                            size,
-                            f.buffer_mut(),
-                            &self.state.model_selector_state,
-                            None,
-                        );
+                        selector.render(size, f.buffer_mut(), &self.state.model_selector_state);
                     } else if self.state.theme_picker_state.is_visible() {
                         self.render_theme_picker(size, f.buffer_mut());
                     }
@@ -9025,13 +9040,9 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Draw model selector dialog if open
         if self.state.model_selector_state.is_visible() {
+            self.state.model_selector_state.update_viewport(size);
             let model_selector = ModelSelector::new();
-            model_selector.render(
-                size,
-                f.buffer_mut(),
-                &self.state.model_selector_state,
-                self.state.status_bar_area,
-            );
+            model_selector.render(size, f.buffer_mut(), &self.state.model_selector_state);
         }
 
         // Draw theme picker dialog if open

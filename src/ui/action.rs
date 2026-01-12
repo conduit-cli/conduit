@@ -136,6 +136,8 @@ pub enum Action {
     Confirm,
     /// Cancel current dialog/mode
     Cancel,
+    /// Set selected model as default (model selector)
+    SetDefaultModel,
     /// Expand node or select (for tree views)
     ExpandOrSelect,
     /// Collapse current node (for tree views)
@@ -290,6 +292,7 @@ impl Action {
             Action::SelectPageUp => "Page up",
             Action::Confirm => "Confirm",
             Action::Cancel => "Cancel",
+            Action::SetDefaultModel => "Set default model",
             Action::ExpandOrSelect => "Expand/select",
             Action::Collapse => "Collapse",
             Action::AddRepository => "Add repository",

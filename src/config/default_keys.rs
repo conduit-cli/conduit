@@ -391,6 +391,14 @@ pub fn default_keybindings() -> KeybindingConfig {
     let model = config.context.entry(KeyContext::ModelSelector).or_default();
 
     model.insert(
+        KeyCombo::new(KeyCode::Backspace, KeyModifiers::NONE),
+        Action::Backspace,
+    );
+    model.insert(
+        KeyCombo::new(KeyCode::Delete, KeyModifiers::NONE),
+        Action::Delete,
+    );
+    model.insert(
         KeyCombo::new(KeyCode::Up, KeyModifiers::NONE),
         Action::SelectPrev,
     );
@@ -398,8 +406,25 @@ pub fn default_keybindings() -> KeybindingConfig {
         KeyCombo::new(KeyCode::Down, KeyModifiers::NONE),
         Action::SelectNext,
     );
+    model.insert(
+        KeyCombo::new(KeyCode::Left, KeyModifiers::NONE),
+        Action::MoveCursorLeft,
+    );
+    model.insert(
+        KeyCombo::new(KeyCode::Right, KeyModifiers::NONE),
+        Action::MoveCursorRight,
+    );
+    model.insert(
+        KeyCombo::new(KeyCode::Home, KeyModifiers::NONE),
+        Action::MoveCursorStart,
+    );
+    model.insert(
+        KeyCombo::new(KeyCode::End, KeyModifiers::NONE),
+        Action::MoveCursorEnd,
+    );
     bind(model, "k", Action::SelectPrev);
     bind(model, "j", Action::SelectNext);
+    bind(model, "M-d", Action::SetDefaultModel);
     model.insert(
         KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),
         Action::Confirm,

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::agent::AgentType;
+use crate::agent::{AgentType, ModelRegistry};
 use crate::ui::action::Action;
 use crate::util::paths::config_path;
 use crate::util::tools::{Tool, ToolPaths};
@@ -21,6 +21,8 @@ pub const EXAMPLE_CONFIG: &str = include_str!("config.toml.example");
 pub struct Config {
     /// Default agent type for new sessions
     pub default_agent: AgentType,
+    /// Default model ID for the default agent
+    pub default_model: Option<String>,
     /// Working directory for agent operations
     pub working_dir: PathBuf,
     /// Maximum number of tabs allowed
@@ -116,10 +118,18 @@ pub struct TomlSelectionConfig {
     pub clear_selection_after_copy: Option<bool>,
 }
 
+/// TOML representation of default model
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlDefaultModelConfig {
+    pub agent: Option<String>,
+    pub model: Option<String>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             default_agent: AgentType::Claude,
+            default_model: None,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             max_tabs: 10,
             show_token_usage: true,
@@ -205,6 +215,8 @@ pub struct TomlThemeConfig {
 /// TOML representation of the config file
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlConfig {
+    /// Default model configuration
+    pub model: Option<TomlDefaultModelConfig>,
     /// Keybinding configuration
     pub keys: Option<TomlKeybindings>,
     /// Tool path configuration
@@ -369,6 +381,7 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "select_page_up" => Some(Action::SelectPageUp),
         "confirm" => Some(Action::Confirm),
         "cancel" => Some(Action::Cancel),
+        "set_default_model" => Some(Action::SetDefaultModel),
         "expand_or_select" => Some(Action::ExpandOrSelect),
         "collapse" => Some(Action::Collapse),
         "add_repository" => Some(Action::AddRepository),
@@ -474,6 +487,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "select_page_up",
     "confirm",
     "cancel",
+    "set_default_model",
     "expand_or_select",
     "collapse",
     "add_repository",
@@ -525,6 +539,19 @@ impl Config {
         if config_file.exists() {
             if let Ok(contents) = fs::read_to_string(&config_file) {
                 if let Ok(toml_config) = toml::from_str::<TomlConfig>(&contents) {
+                    // Load default model (agent + model pair)
+                    if let Some(model_cfg) = toml_config.model {
+                        if let (Some(agent), Some(model_id)) =
+                            (model_cfg.agent.as_deref(), model_cfg.model.as_deref())
+                        {
+                            let agent_type = AgentType::parse(agent);
+                            if let Some(model) = ModelRegistry::find_model(agent_type, model_id) {
+                                config.default_agent = agent_type;
+                                config.default_model = Some(model.id);
+                            }
+                        }
+                    }
+
                     // Merge user keybindings on top of defaults
                     if let Some(keys) = toml_config.keys {
                         let user_bindings = keys.to_keybinding_config();
@@ -607,6 +634,25 @@ impl Config {
     pub fn with_default_agent(mut self, agent: AgentType) -> Self {
         self.default_agent = agent;
         self
+    }
+
+    /// Get the default model ID for an agent (config override with fallback)
+    pub fn default_model_for(&self, agent_type: AgentType) -> String {
+        if agent_type == self.default_agent {
+            if let Some(id) = self.default_model.as_deref() {
+                if let Some(model) = ModelRegistry::find_model(agent_type, id) {
+                    return model.id;
+                }
+            }
+        }
+
+        ModelRegistry::default_model(agent_type)
+    }
+
+    /// Update the default model for an agent in memory
+    pub fn set_default_model(&mut self, agent_type: AgentType, model_id: String) {
+        self.default_agent = agent_type;
+        self.default_model = Some(model_id);
     }
 
     /// Calculate cost for given token usage
@@ -701,6 +747,44 @@ pub fn save_theme_config(name: Option<&str>, path: Option<&Path>) -> std::io::Re
             }
         }
     }
+
+    // Ensure parent directory exists
+    if let Some(parent) = config_file.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    fs::write(&config_file, doc.to_string())?;
+
+    Ok(())
+}
+
+/// Save the default model for an agent type to the config file.
+///
+/// This updates the [model] section, setting "agent" and "model".
+pub fn save_default_model(agent_type: AgentType, model_id: &str) -> std::io::Result<()> {
+    let config_file = config_path();
+
+    // Read existing config or start with empty document
+    let contents = if config_file.exists() {
+        fs::read_to_string(&config_file)?
+    } else {
+        String::new()
+    };
+
+    // Parse as TOML document
+    let mut doc: DocumentMut = contents
+        .parse()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    // Ensure [model] section exists
+    if !doc.contains_key("model") {
+        doc["model"] = Item::Table(Table::new());
+    }
+
+    doc["model"]["agent"] = toml_edit::value(agent_type.as_str());
+    doc["model"]["model"] = toml_edit::value(model_id);
 
     // Ensure parent directory exists
     if let Some(parent) = config_file.parent() {
