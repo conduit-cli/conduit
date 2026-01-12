@@ -424,6 +424,8 @@ pub fn default_keybindings() -> KeybindingConfig {
     );
     bind(model, "k", Action::SelectPrev);
     bind(model, "j", Action::SelectNext);
+    bind(model, "C-k", Action::SelectPrev);
+    bind(model, "C-j", Action::SelectNext);
     bind(model, "M-d", Action::SetDefaultModel);
     model.insert(
         KeyCombo::new(KeyCode::Enter, KeyModifiers::NONE),

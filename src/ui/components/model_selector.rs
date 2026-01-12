@@ -610,12 +610,8 @@ impl ModelSelector {
             }
 
             let icon = ModelRegistry::agent_icon(model.agent_type);
-            let default_marker = if is_default { "\u{2605}" } else { " " };
             let mut spans = vec![
-                Span::styled(
-                    format!(" {}{} ", default_marker, icon),
-                    Style::default().fg(text_primary()),
-                ),
+                Span::styled(format!("  {} ", icon), Style::default().fg(text_primary())),
                 Span::styled(
                     &model.display_name,
                     if is_selected {
@@ -628,13 +624,9 @@ impl ModelSelector {
                 ),
             ];
 
-            if model.is_new && model.display_name != "Opus 4.5" {
-                let badge_fg = ensure_contrast_fg(text_muted(), dialog_bg(), 4.5);
+            if is_default {
                 spans.push(Span::raw("  "));
-                spans.push(Span::styled(
-                    " NEW ",
-                    Style::default().fg(badge_fg).bg(dialog_bg()),
-                ));
+                spans.push(Span::styled("DEFAULT", Style::default().fg(text_muted())));
             }
 
             let content_len: usize = spans
