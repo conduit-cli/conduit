@@ -794,7 +794,10 @@ impl SidebarData {
         );
     }
 
-    /// Update PR status for a workspace by its ID
+    /// Update PR status for a workspace by its ID.
+    ///
+    /// If `status` is `None`, the existing status is preserved (no-op).
+    /// Use `clear_workspace_pr_status` to explicitly clear the status.
     pub fn update_workspace_pr_status(&mut self, workspace_id: Uuid, status: Option<PrStatus>) {
         tracing::debug!(
             workspace_id = %workspace_id,

@@ -6296,6 +6296,13 @@ Acknowledge that you have received this context by replying ONLY with the single
                     merge_readiness = ?status.as_ref().map(|s| s.merge_readiness),
                     "Received PR status update"
                 );
+                let is_stale_pr = status.as_ref().is_some_and(|s| {
+                    matches!(
+                        s.state,
+                        crate::git::PrState::Merged | crate::git::PrState::Closed
+                    )
+                });
+                let mut any_session_updated = false;
                 // Update all sessions with this workspace
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
@@ -6303,12 +6310,6 @@ Acknowledge that you have received this context by replying ONLY with the single
                         // If session has no PR yet, don't auto-associate merged/closed PRs.
                         // This prevents "ghost" PRs from reused branch names from being resurrected.
                         let is_new_association = session.pr_number.is_none();
-                        let is_stale_pr = status.as_ref().is_some_and(|s| {
-                            matches!(
-                                s.state,
-                                crate::git::PrState::Merged | crate::git::PrState::Closed
-                            )
-                        });
 
                         if is_new_association && is_stale_pr {
                             tracing::debug!(
@@ -6321,12 +6322,15 @@ Acknowledge that you have received this context by replying ONLY with the single
 
                         session.pr_number = status.as_ref().and_then(|s| s.number);
                         session.status_bar.set_pr_status(status.clone());
+                        any_session_updated = true;
                     }
                 }
-                // Update sidebar data as well
-                self.state
-                    .sidebar_data
-                    .update_workspace_pr_status(workspace_id, status);
+                // Update sidebar data when we have an accepted association or when not stale.
+                if !is_stale_pr || any_session_updated {
+                    self.state
+                        .sidebar_data
+                        .update_workspace_pr_status(workspace_id, status);
+                }
             }
             GitTrackerUpdate::GitStatsChanged {
                 workspace_id,
@@ -7619,6 +7623,11 @@ Acknowledge that you have received this context by replying ONLY with the single
         let effects = Vec::new();
         let mut sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
         let mut sidebar_pr_clear: Option<Uuid> = None;
+        let active_workspace_id = self
+            .state
+            .tab_manager
+            .active_session()
+            .and_then(|session| session.workspace_id);
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
@@ -7656,12 +7665,14 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // If no PR exists (or PR lookup failed), clear any stale PR UI state.
         if !preflight.existing_pr.as_ref().is_some_and(|pr| pr.exists) {
-            if let Some(session) = self.state.tab_manager.active_session_mut() {
-                session.pr_number = None;
-                session.status_bar.set_pr_status(None);
-                if let Some(workspace_id) = session.workspace_id {
-                    sidebar_pr_clear = Some(workspace_id);
+            if let Some(workspace_id) = active_workspace_id {
+                for session in self.state.tab_manager.sessions_mut() {
+                    if session.workspace_id == Some(workspace_id) {
+                        session.pr_number = None;
+                        session.status_bar.set_pr_status(None);
+                    }
                 }
+                sidebar_pr_clear = Some(workspace_id);
             }
         }
 
@@ -7669,12 +7680,14 @@ Acknowledge that you have received this context by replying ONLY with the single
         if let Some(ref pr) = preflight.existing_pr {
             if pr.exists {
                 // Update session's pr_number
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.pr_number = pr.number;
-                    session.status_bar.set_pr_status(Some(pr.clone()));
-                    if let Some(workspace_id) = session.workspace_id {
-                        sidebar_pr_update = Some((workspace_id, Some(pr.clone())));
+                if let Some(workspace_id) = active_workspace_id {
+                    for session in self.state.tab_manager.sessions_mut() {
+                        if session.workspace_id == Some(workspace_id) {
+                            session.pr_number = pr.number;
+                            session.status_bar.set_pr_status(Some(pr.clone()));
+                        }
                     }
+                    sidebar_pr_update = Some((workspace_id, Some(pr.clone())));
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
