@@ -755,21 +755,12 @@ impl App {
                             Event::Mouse(mouse) => {
                                 match mouse.kind {
                                     MouseEventKind::ScrollUp => {
-                                        if let Some(tab_bar_area) = self.state.tab_bar_area {
-                                            if Self::point_in_rect(
-                                                mouse.column,
-                                                mouse.row,
-                                                tab_bar_area,
-                                            ) {
-                                                let tabs_focused = self.state.input_mode
-                                                    != InputMode::SidebarNavigation;
-                                                self.scroll_tab_bar(
-                                                    tab_bar_area.width,
-                                                    tabs_focused,
-                                                    true,
-                                                );
-                                                continue;
-                                            }
+                                        if self.handle_tab_bar_wheel(
+                                            mouse.column,
+                                            mouse.row,
+                                            true,
+                                        ) {
+                                            continue;
                                         }
                                         if self.should_route_scroll_to_chat() {
                                             self.record_scroll(1);
@@ -777,21 +768,12 @@ impl App {
                                         pending_scroll_up = pending_scroll_up.saturating_add(1);
                                     }
                                     MouseEventKind::ScrollDown => {
-                                        if let Some(tab_bar_area) = self.state.tab_bar_area {
-                                            if Self::point_in_rect(
-                                                mouse.column,
-                                                mouse.row,
-                                                tab_bar_area,
-                                            ) {
-                                                let tabs_focused = self.state.input_mode
-                                                    != InputMode::SidebarNavigation;
-                                                self.scroll_tab_bar(
-                                                    tab_bar_area.width,
-                                                    tabs_focused,
-                                                    false,
-                                                );
-                                                continue;
-                                            }
+                                        if self.handle_tab_bar_wheel(
+                                            mouse.column,
+                                            mouse.row,
+                                            false,
+                                        ) {
+                                            continue;
                                         }
                                         if self.should_route_scroll_to_chat() {
                                             self.record_scroll(1);
@@ -4980,13 +4962,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     && self.state.theme_picker_state.is_visible()
                 {
                     self.state.theme_picker_state.select_prev();
-                } else if let Some(tab_bar_area) = self.state.tab_bar_area {
-                    if Self::point_in_rect(x, y, tab_bar_area) {
-                        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                        if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, true) {
-                            return Ok(Vec::new());
-                        }
-                    }
+                } else if self.handle_tab_bar_wheel(x, y, true) {
+                    return Ok(Vec::new());
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         if session.raw_events_view.is_detail_visible() {
@@ -5018,13 +4995,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     && self.state.theme_picker_state.is_visible()
                 {
                     self.state.theme_picker_state.select_next();
-                } else if let Some(tab_bar_area) = self.state.tab_bar_area {
-                    if Self::point_in_rect(x, y, tab_bar_area) {
-                        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                        if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, false) {
-                            return Ok(Vec::new());
-                        }
-                    }
+                } else if self.handle_tab_bar_wheel(x, y, false) {
+                    return Ok(Vec::new());
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     let list_height = self.raw_events_list_visible_height();
                     let detail_height = self.raw_events_detail_visible_height();
@@ -5683,27 +5655,15 @@ Acknowledge that you have received this context by replying ONLY with the single
     }
 
     fn build_tab_bar(&self, focused: bool) -> TabBar {
-        let pr_numbers: Vec<Option<u32>> = self
-            .state
-            .tab_manager
-            .sessions()
-            .iter()
-            .map(|s| s.pr_number)
-            .collect();
-        let processing_flags: Vec<bool> = self
-            .state
-            .tab_manager
-            .sessions()
-            .iter()
-            .map(|s| s.is_processing)
-            .collect();
-        let attention_flags: Vec<bool> = self
-            .state
-            .tab_manager
-            .sessions()
-            .iter()
-            .map(|s| s.needs_attention)
-            .collect();
+        let sessions = self.state.tab_manager.sessions();
+        let mut pr_numbers = Vec::with_capacity(sessions.len());
+        let mut processing_flags = Vec::with_capacity(sessions.len());
+        let mut attention_flags = Vec::with_capacity(sessions.len());
+        for session in sessions {
+            pr_numbers.push(session.pr_number);
+            processing_flags.push(session.is_processing);
+            attention_flags.push(session.needs_attention);
+        }
 
         TabBar::new(
             self.state.tab_manager.tab_names(),
@@ -5730,7 +5690,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         let active = self.state.tab_manager.active_index();
         if self.state.tab_bar_last_active != Some(active) {
-            self.state.tab_bar_scroll = tab_bar.adjust_scroll_to_active(area_width);
+            self.state.tab_bar_scroll = tab_bar.adjust_scroll_to_active(area_width).min(max_scroll);
             self.state.tab_bar_last_active = Some(active);
         }
     }
@@ -5749,6 +5709,18 @@ Acknowledge that you have received this context by replying ONLY with the single
         }
 
         false
+    }
+
+    fn handle_tab_bar_wheel(&mut self, x: u16, y: u16, scroll_left: bool) -> bool {
+        let Some(tab_bar_area) = self.state.tab_bar_area else {
+            return false;
+        };
+        if !Self::point_in_rect(x, y, tab_bar_area) {
+            return false;
+        }
+
+        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+        self.scroll_tab_bar(tab_bar_area.width, tabs_focused, scroll_left)
     }
 
     /// Handle click in tab bar area
