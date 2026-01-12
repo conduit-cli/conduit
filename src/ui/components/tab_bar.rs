@@ -11,8 +11,8 @@ use super::{
     accent_primary, accent_success, accent_warning, bg_elevated, tab_bar_bg, text_muted,
     text_primary, text_secondary,
 };
-/// Spinner animation frames
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/// Spinner animation frames (Braille Dots B)
+const SPINNER_FRAMES: &[&str] = &["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabBarHitTarget {

@@ -17,6 +17,9 @@ use crate::ui::components::{
 };
 use ratatui::style::Color;
 
+/// Spinner frames for checks pending (Ripple)
+const RIPPLE_FRAMES: &[&str] = &["·", "∙", "•", "●", "•", "∙"];
+
 /// Status bar component showing session info
 pub struct StatusBar {
     agent_type: AgentType,
@@ -59,6 +62,8 @@ pub struct StatusBar {
     queue_count: usize,
     /// Whether plan mode is supported for this agent
     supports_plan_mode: bool,
+    /// Spinner frame index (shared animation tick)
+    spinner_frame: usize,
 }
 
 impl StatusBar {
@@ -87,6 +92,7 @@ impl StatusBar {
             context_state: None,
             queue_count: 0,
             supports_plan_mode: false,
+            spinner_frame: 0,
         }
     }
 
@@ -121,6 +127,11 @@ impl StatusBar {
 
     pub fn set_supports_plan_mode(&mut self, supports: bool) {
         self.supports_plan_mode = supports;
+    }
+
+    /// Set current spinner frame (shared animation tick)
+    pub fn set_spinner_frame(&mut self, frame: usize) {
+        self.spinner_frame = frame;
     }
 
     /// Set PR status for display
@@ -354,6 +365,12 @@ impl StatusBar {
         self.render_split_line(area, buf, spans, right_spans);
     }
 
+    fn ripple_char(&self) -> &'static str {
+        // Target ~100ms per frame at ~50 FPS
+        let idx = (self.spinner_frame / 5) % RIPPLE_FRAMES.len();
+        RIPPLE_FRAMES[idx]
+    }
+
     /// Build project info spans for right side of status bar
     /// New format: PR #123 ✓ · +44 -10 · feature-branch (or without PR if none)
     fn build_project_info_spans(&self) -> Vec<Span<'static>> {
@@ -386,7 +403,7 @@ impl StatusBar {
                     let check_indicator = if matches!(pr.state, PrState::Open | PrState::Draft) {
                         match pr.checks.state() {
                             CheckState::Passing => Some("✓"),
-                            CheckState::Pending => Some("⋯"),
+                            CheckState::Pending => Some(self.ripple_char()),
                             CheckState::Failing => Some("✗"),
                             CheckState::None => None,
                         }

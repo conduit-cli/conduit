@@ -22,6 +22,9 @@ use super::{
 /// with fake PR/git data, but must remain `false` in committed code.
 const MOCK_SIDEBAR_PR_DISPLAY: bool = false;
 
+/// Spinner frames for checks pending (Ripple)
+const RIPPLE_FRAMES: &[&str] = &["·", "∙", "•", "●", "•", "∙"];
+
 // Layout constants for tree view rendering
 // Note: DEPTH_0 constant defined for documentation completeness but not currently used
 #[allow(dead_code)]
@@ -274,6 +277,8 @@ pub struct TreeView<'a> {
     expand_style: Style,
     /// Style for suffix (branch name)
     suffix_style: Style,
+    /// Spinner frame index (shared animation tick)
+    spinner_frame: usize,
 }
 
 impl<'a> TreeView<'a> {
@@ -287,6 +292,7 @@ impl<'a> TreeView<'a> {
                 .add_modifier(Modifier::BOLD),
             expand_style: Style::default().fg(Color::Yellow),
             suffix_style: Style::default().fg(text_muted()),
+            spinner_frame: 0,
         }
     }
 
@@ -307,6 +313,11 @@ impl<'a> TreeView<'a> {
 
     pub fn suffix_style(mut self, style: Style) -> Self {
         self.suffix_style = style;
+        self
+    }
+
+    pub fn with_spinner_frame(mut self, frame: usize) -> Self {
+        self.spinner_frame = frame;
         self
     }
 
@@ -489,7 +500,7 @@ impl StatefulWidget for TreeView<'_> {
                 let name_y = y + 1;
                 if name_y < inner.y + inner.height {
                     // Build right-side content: git stats + PR badge
-                    let right_spans = build_right_side_spans(node);
+                    let right_spans = build_right_side_spans(node, self.spinner_frame);
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
 
                     // Calculate available space for workspace name using shared helper
@@ -892,7 +903,7 @@ impl SidebarData {
                 if visual_row == name_line_row {
                     // Calculate name bounds using shared helper (same logic as render)
                     // Use display width for proper Unicode handling
-                    let right_spans = build_right_side_spans(node);
+                    let right_spans = build_right_side_spans(node, 0);
                     let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
                     let (_, name_start, name_width) = calculate_workspace_name_bounds(
                         inner_width,
@@ -1038,7 +1049,13 @@ fn calculate_workspace_name_bounds(
 }
 
 /// Build the right-side spans for a workspace line (git stats + PR badge)
-fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
+fn ripple_char(spinner_frame: usize) -> &'static str {
+    // Target ~100ms per frame at ~50 FPS
+    let idx = (spinner_frame / 5) % RIPPLE_FRAMES.len();
+    RIPPLE_FRAMES[idx]
+}
+
+fn build_right_side_spans(node: &TreeNode, spinner_frame: usize) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mock_status = if MOCK_SIDEBAR_PR_DISPLAY {
         Some(PrStatus {
@@ -1127,7 +1144,7 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
                 let check_indicator = if matches!(pr.state, PrState::Open | PrState::Draft) {
                     match pr.checks.state() {
                         CheckState::Passing => Some("✓"),
-                        CheckState::Pending => Some("⋯"),
+                        CheckState::Pending => Some(ripple_char(spinner_frame)),
                         CheckState::Failing => Some("✗"),
                         CheckState::None => None,
                     }
@@ -1257,7 +1274,7 @@ mod tests {
         // Calculate expected name bounds (same logic as workspace_at_name_line)
         // Calculate expected bounds using the shared helper
         // Use display width for proper Unicode handling
-        let right_spans = build_right_side_spans(ws_node);
+        let right_spans = build_right_side_spans(ws_node, 0);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
         let (_, name_start, name_width) =
             calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());
@@ -1332,7 +1349,7 @@ mod tests {
 
         // Calculate expected bounds using the shared helper
         // Use display width for proper Unicode handling
-        let right_spans = build_right_side_spans(ws_node);
+        let right_spans = build_right_side_spans(ws_node, 0);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
         let (available_for_name, name_start, name_width) =
             calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());
@@ -1391,7 +1408,7 @@ mod tests {
 
         // Calculate expected bounds using the shared helper
         // Use display width for proper Unicode handling
-        let right_spans = build_right_side_spans(ws_node);
+        let right_spans = build_right_side_spans(ws_node, 0);
         let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
         let (available_for_name, name_start, name_width) =
             calculate_workspace_name_bounds(inner_width, right_width, ws_node.label.width());

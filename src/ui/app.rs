@@ -9351,7 +9351,8 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // Render sidebar if visible
         if self.state.sidebar_state.visible {
-            let sidebar = Sidebar::new(&self.state.sidebar_data);
+            let sidebar = Sidebar::new(&self.state.sidebar_data)
+                .with_spinner_frame(self.state.spinner_frame);
             ratatui::widgets::StatefulWidget::render(
                 sidebar,
                 sidebar_area,
@@ -9732,6 +9733,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                             self.state.metrics.scroll_events_per_sec,
                             self.state.metrics.scroll_active,
                         );
+                        session.status_bar.set_spinner_frame(self.state.spinner_frame);
                         session
                             .status_bar
                             .render(status_bar_area_inner, f.buffer_mut());

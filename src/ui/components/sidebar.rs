@@ -29,6 +29,8 @@ pub struct Sidebar<'a> {
     width: u16,
     /// Title
     title: &'a str,
+    /// Spinner frame index (shared animation tick)
+    spinner_frame: usize,
 }
 
 impl<'a> Sidebar<'a> {
@@ -38,6 +40,7 @@ impl<'a> Sidebar<'a> {
             visible: true,
             width: 30,
             title: "⬒ Workspaces",
+            spinner_frame: 0,
         }
     }
 
@@ -53,6 +56,11 @@ impl<'a> Sidebar<'a> {
 
     pub fn title(mut self, title: &'a str) -> Self {
         self.title = title;
+        self
+    }
+
+    pub fn with_spinner_frame(mut self, frame: usize) -> Self {
+        self.spinner_frame = frame;
         self
     }
 
@@ -231,7 +239,8 @@ impl StatefulWidget for Sidebar<'_> {
                 .block(block)
                 .style(Style::default().fg(label_fg))
                 .suffix_style(Style::default().fg(suffix_fg))
-                .selected_style(selected_style);
+                .selected_style(selected_style)
+                .with_spinner_frame(self.spinner_frame);
 
             StatefulWidget::render(tree, content_area, buf, &mut state.tree_state);
         }
