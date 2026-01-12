@@ -18,6 +18,7 @@ These work in all modes unless overridden by context-specific bindings.
 | `Ctrl+Alt+P` | Open/create pull request |
 | `Alt+T` | Show theme picker |
 | `Alt+P` | Toggle metrics display |
+| `Alt+N` | New workspace (current project) |
 | `Alt+I` | Open session import |
 | `Alt+G` | Dump debug state |
 | `Alt+Tab` | Next tab |

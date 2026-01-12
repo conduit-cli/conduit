@@ -16,6 +16,8 @@ pub enum Action {
     ToggleSidebar,
     /// Open new project dialog
     NewProject,
+    /// Create a new workspace for the project under cursor
+    NewWorkspaceUnderCursor,
     /// Open/create pull request
     OpenPr,
     /// Fork current session into a new workspace and tab
@@ -220,6 +222,7 @@ impl Action {
             Action::Quit => "Quit application",
             Action::ToggleSidebar => "Toggle sidebar",
             Action::NewProject => "New project",
+            Action::NewWorkspaceUnderCursor => "New workspace (current project)",
             Action::OpenPr => "Open/create PR",
             Action::ForkSession => "Fork session",
             Action::InterruptAgent => "Interrupt agent",
@@ -357,6 +360,7 @@ impl Action {
             Action::Quit
                 | Action::ToggleSidebar
                 | Action::NewProject
+                | Action::NewWorkspaceUnderCursor
                 | Action::OpenPr
                 | Action::ForkSession
                 | Action::InterruptAgent

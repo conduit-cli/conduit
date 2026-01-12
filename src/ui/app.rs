@@ -1579,6 +1579,66 @@ impl App {
                     self.state.input_mode = InputMode::SettingBaseDir;
                 }
             }
+            Action::NewWorkspaceUnderCursor => {
+                use crate::ui::components::{ActionType, NodeType};
+
+                let sidebar_focused = self.state.sidebar_state.focused;
+                let repo_id_from_sidebar = if sidebar_focused {
+                    let selected = self.state.sidebar_state.tree_state.selected;
+                    self.state.sidebar_data.get_at(selected).and_then(|node| match node.node_type {
+                        NodeType::Repository => Some(node.id),
+                        NodeType::Workspace => node.parent_id,
+                        NodeType::Action(ActionType::NewWorkspace) => node.parent_id,
+                    })
+                } else {
+                    None
+                };
+
+                let repo_id_from_tab = if sidebar_focused {
+                    None
+                } else {
+                    let session = self.state.tab_manager.active_session();
+                    let workspace_id = session.and_then(|s| s.workspace_id);
+                    match (workspace_id, self.workspace_dao.as_ref()) {
+                        (Some(workspace_id), Some(workspace_dao)) => {
+                            match workspace_dao.get_by_id(workspace_id) {
+                                Ok(Some(workspace)) => Some(workspace.repository_id),
+                                Ok(None) => {
+                                    tracing::error!(
+                                        workspace_id = %workspace_id,
+                                        "Workspace not found for active tab"
+                                    );
+                                    None
+                                }
+                                Err(err) => {
+                                    tracing::error!(
+                                        workspace_id = %workspace_id,
+                                        error = %err,
+                                        "Failed to load workspace for active tab"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+
+                let repo_id = if sidebar_focused {
+                    repo_id_from_sidebar
+                } else {
+                    repo_id_from_tab
+                };
+
+                if let Some(repo_id) = repo_id {
+                    effects.push(self.start_workspace_creation(repo_id));
+                } else {
+                    self.state.set_timed_footer_message(
+                        "No project selected to create a workspace".to_string(),
+                        Duration::from_secs(5),
+                    );
+                }
+            }
             Action::OpenPr => {
                 if let Some(effect) = self.handle_pr_action() {
                     effects.push(effect);
@@ -5611,17 +5671,6 @@ Acknowledge that you have received this context by replying ONLY with the single
             current_x += tab_width;
         }
 
-        // Check for "+ New" button
-        if self.state.tab_manager.can_add_tab() {
-            // "+ New" button width is about 7 characters: "  [+]  "
-            let new_button_width = 7;
-            if relative_x >= current_x && relative_x < current_x + new_button_width {
-                // Show agent selector for new tab
-                self.state.close_overlays();
-                self.state.agent_selector_state.show();
-                self.state.input_mode = InputMode::SelectingAgent;
-            }
-        }
     }
 
     /// Handle click in input area
@@ -8431,12 +8480,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.status_bar_area = None;
                     self.state.footer_area = Some(chunks[2]);
 
-                    // Render tab bar (empty but shows "+ New" button)
+                    // Render tab bar
                     let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
                     let tab_bar = TabBar::new(
                         self.state.tab_manager.tab_names(),
                         self.state.tab_manager.active_index(),
-                        self.state.tab_manager.can_add_tab(),
                     )
                     .focused(tabs_focused)
                     .with_spinner_frame(self.state.spinner_frame);
@@ -8718,7 +8766,6 @@ Acknowledge that you have received this context by replying ONLY with the single
                 let tab_bar = TabBar::new(
                     self.state.tab_manager.tab_names(),
                     self.state.tab_manager.active_index(),
-                    self.state.tab_manager.can_add_tab(),
                 )
                 .focused(tabs_focused)
                 .with_tab_states(pr_numbers, processing_flags, attention_flags)
@@ -8855,7 +8902,6 @@ Acknowledge that you have received this context by replying ONLY with the single
                 let tab_bar = TabBar::new(
                     self.state.tab_manager.tab_names(),
                     self.state.tab_manager.active_index(),
-                    self.state.tab_manager.can_add_tab(),
                 )
                 .focused(tabs_focused)
                 .with_tab_states(pr_numbers, processing_flags, attention_flags)

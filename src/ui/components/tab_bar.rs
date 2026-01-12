@@ -17,7 +17,6 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 pub struct TabBar {
     tabs: Vec<String>,
     active: usize,
-    can_add: bool,
     focused: bool,
     /// PR numbers for each tab (None = no PR)
     /// TODO: Remove if sidebar PR display is not implemented, or use for future tab tooltip
@@ -32,12 +31,11 @@ pub struct TabBar {
 }
 
 impl TabBar {
-    pub fn new(tabs: Vec<String>, active: usize, can_add: bool) -> Self {
+    pub fn new(tabs: Vec<String>, active: usize) -> Self {
         let tab_count = tabs.len();
         Self {
             tabs,
             active,
-            can_add,
             focused: true,
             pr_numbers: vec![None; tab_count],
             processing_flags: vec![false; tab_count],
@@ -146,11 +144,6 @@ impl TabBar {
             _total_width += 2;
 
             // Note: PR badge moved to status bar
-        }
-
-        // Add new tab button - muted until hovered
-        if self.can_add {
-            spans.push(Span::styled(" [+] New ", Style::default().fg(text_muted())));
         }
 
         // Render the tab line on the first row

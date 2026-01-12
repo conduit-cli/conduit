@@ -74,6 +74,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-p", Action::ToggleMetrics);
     bind(&mut config.global, "M-g", Action::DumpDebugState);
     bind(&mut config.global, "M-t", Action::ShowThemePicker);
+    bind(&mut config.global, "M-n", Action::NewWorkspaceUnderCursor);
     bind(&mut config.global, "M-q", Action::OpenQueueEditor);
     bind(&mut config.global, "M-e", Action::EditPromptExternal);
 

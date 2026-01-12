@@ -167,10 +167,6 @@ impl TabManager {
     }
 
     /// Check if we can add more tabs
-    pub fn can_add_tab(&self) -> bool {
-        self.sessions.len() < self.max_tabs
-    }
-
     /// Add an existing session (used for session restoration)
     pub fn add_session(&mut self, session: AgentSession) -> Option<usize> {
         if self.sessions.len() >= self.max_tabs {

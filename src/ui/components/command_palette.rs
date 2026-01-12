@@ -107,6 +107,7 @@ impl CommandPaletteState {
             Action::Quit,
             Action::ToggleSidebar,
             Action::NewProject,
+            Action::NewWorkspaceUnderCursor,
             Action::OpenPr,
             Action::ForkSession,
             Action::InterruptAgent,
