@@ -755,12 +755,44 @@ impl App {
                             Event::Mouse(mouse) => {
                                 match mouse.kind {
                                     MouseEventKind::ScrollUp => {
+                                        if let Some(tab_bar_area) = self.state.tab_bar_area {
+                                            if Self::point_in_rect(
+                                                mouse.column,
+                                                mouse.row,
+                                                tab_bar_area,
+                                            ) {
+                                                let tabs_focused = self.state.input_mode
+                                                    != InputMode::SidebarNavigation;
+                                                self.scroll_tab_bar(
+                                                    tab_bar_area.width,
+                                                    tabs_focused,
+                                                    true,
+                                                );
+                                                continue;
+                                            }
+                                        }
                                         if self.should_route_scroll_to_chat() {
                                             self.record_scroll(1);
                                         }
                                         pending_scroll_up = pending_scroll_up.saturating_add(1);
                                     }
                                     MouseEventKind::ScrollDown => {
+                                        if let Some(tab_bar_area) = self.state.tab_bar_area {
+                                            if Self::point_in_rect(
+                                                mouse.column,
+                                                mouse.row,
+                                                tab_bar_area,
+                                            ) {
+                                                let tabs_focused = self.state.input_mode
+                                                    != InputMode::SidebarNavigation;
+                                                self.scroll_tab_bar(
+                                                    tab_bar_area.width,
+                                                    tabs_focused,
+                                                    false,
+                                                );
+                                                continue;
+                                            }
+                                        }
                                         if self.should_route_scroll_to_chat() {
                                             self.record_scroll(1);
                                         }
@@ -5684,6 +5716,12 @@ Acknowledge that you have received this context by replying ONLY with the single
     }
 
     fn ensure_tab_bar_scroll(&mut self, area_width: u16, focused: bool) {
+        if self.state.tab_manager.is_empty() {
+            self.state.tab_bar_scroll = 0;
+            self.state.tab_bar_last_active = None;
+            return;
+        }
+
         let tab_bar = self.build_tab_bar(focused);
         let max_scroll = tab_bar.max_scroll(area_width);
         if self.state.tab_bar_scroll > max_scroll {
@@ -5715,6 +5753,11 @@ Acknowledge that you have received this context by replying ONLY with the single
 
     /// Handle click in tab bar area
     fn handle_tab_bar_click(&mut self, x: u16, _y: u16, tab_bar_area: Rect) {
+        if self.state.input_mode == InputMode::SidebarNavigation {
+            self.state.input_mode = InputMode::Normal;
+            self.state.sidebar_state.set_focused(false);
+        }
+
         let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
         let tab_bar = self.build_tab_bar(tabs_focused);
 
