@@ -3943,14 +3943,21 @@ impl App {
         }
     }
 
+    fn apply_pr_status_to_session(
+        session: &mut AgentSession,
+        status: PrStatus,
+    ) -> Option<(Uuid, Option<PrStatus>)> {
+        session.pr_number = status.number;
+        session.status_bar.set_pr_status(Some(status.clone()));
+        session.workspace_id.map(|id| (id, Some(status)))
+    }
+
     fn apply_pr_number_to_session(
         session: &mut AgentSession,
         pr_num: u32,
     ) -> Option<(Uuid, Option<PrStatus>)> {
         let status = Self::synthesize_pr_status(pr_num);
-        session.pr_number = Some(pr_num);
-        session.status_bar.set_pr_status(Some(status.clone()));
-        session.workspace_id.map(|id| (id, Some(status)))
+        Self::apply_pr_status_to_session(session, status)
     }
 
     /// Estimate token usage for a prompt (rough heuristic)
@@ -7681,13 +7688,13 @@ Acknowledge that you have received this context by replying ONLY with the single
             if pr.exists {
                 // Update session's pr_number
                 if let Some(workspace_id) = active_workspace_id {
+                    let status = pr.clone();
                     for session in self.state.tab_manager.sessions_mut() {
                         if session.workspace_id == Some(workspace_id) {
-                            session.pr_number = pr.number;
-                            session.status_bar.set_pr_status(Some(pr.clone()));
+                            Self::apply_pr_status_to_session(session, status.clone());
                         }
                     }
-                    sidebar_pr_update = Some((workspace_id, Some(pr.clone())));
+                    sidebar_pr_update = Some((workspace_id, Some(status)));
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
