@@ -3345,10 +3345,7 @@ impl App {
                             AppEvent::TitleGenerated { session_id, result },
                             "title_generated",
                         ) {
-                            tracing::debug!(
-                                %session_id,
-                                "Failed to send TitleGenerated event"
-                            );
+                            tracing::debug!(%session_id, "Failed to send TitleGenerated event");
                         }
                     });
                 }
@@ -6345,6 +6342,10 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state
                         .sidebar_data
                         .update_workspace_pr_status(workspace_id, status);
+                } else {
+                    self.state
+                        .sidebar_data
+                        .clear_workspace_pr_status(workspace_id);
                 }
             }
             GitTrackerUpdate::GitStatsChanged {
@@ -7630,10 +7631,10 @@ Acknowledge that you have received this context by replying ONLY with the single
         let effects = Vec::new();
         let mut sidebar_pr_update: Option<(Uuid, Option<PrStatus>)> = None;
         let mut sidebar_pr_clear: Option<Uuid> = None;
-        let active_workspace_id = self
+        let preflight_workspace_id = self
             .state
             .tab_manager
-            .active_session()
+            .session(_tab_index)
             .and_then(|session| session.workspace_id);
         // Handle blocking errors
         if !preflight.gh_installed {
@@ -7672,7 +7673,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         // If no PR exists (or PR lookup failed), clear any stale PR UI state.
         if !preflight.existing_pr.as_ref().is_some_and(|pr| pr.exists) {
-            if let Some(workspace_id) = active_workspace_id {
+            if let Some(workspace_id) = preflight_workspace_id {
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
                         session.pr_number = None;
@@ -7687,7 +7688,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         if let Some(ref pr) = preflight.existing_pr {
             if pr.exists {
                 // Update session's pr_number
-                if let Some(workspace_id) = active_workspace_id {
+                if let Some(workspace_id) = preflight_workspace_id {
                     let status = pr.clone();
                     for session in self.state.tab_manager.sessions_mut() {
                         if session.workspace_id == Some(workspace_id) {

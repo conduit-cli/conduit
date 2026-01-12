@@ -1104,14 +1104,16 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
                     PrState::Merged => (pr_merged_bg(), Color::White),
                     PrState::Closed => (pr_closed_bg(), Color::White),
                     PrState::Unknown => (pr_unknown_bg(), Color::White),
-                    _ => match pr.merge_readiness {
+                    PrState::Open | PrState::Draft => match pr.merge_readiness {
                         MergeReadiness::Ready => (pr_open_bg(), Color::White),
                         MergeReadiness::HasConflicts => (pr_closed_bg(), Color::White),
                         MergeReadiness::Blocked => (pr_draft_bg(), Color::White),
                         MergeReadiness::Unknown => match pr.state {
                             PrState::Open => (pr_open_bg(), Color::White),
                             PrState::Draft => (pr_draft_bg(), Color::White),
-                            _ => (pr_unknown_bg(), Color::White),
+                            PrState::Merged | PrState::Closed | PrState::Unknown => {
+                                (pr_unknown_bg(), Color::White)
+                            }
                         },
                     },
                 };
