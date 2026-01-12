@@ -425,18 +425,16 @@ impl App {
 
             // Register workspace with git tracker if available
             let track_info = session.workspace_id.zip(session.working_dir.clone());
-            let sidebar_pr_status = session.pr_number.map(Self::synthesize_pr_status);
-            if let Some(ref status) = sidebar_pr_status {
-                session.status_bar.set_pr_status(Some(status.clone()));
-            }
-            let sidebar_workspace_id = session.workspace_id;
+            let sidebar_pr_update = session
+                .pr_number
+                .and_then(|pr_num| Self::apply_pr_number_to_session(&mut session, pr_num));
 
             self.state.tab_manager.add_session(session);
 
-            if let (Some(workspace_id), Some(status)) = (sidebar_workspace_id, sidebar_pr_status) {
+            if let Some((workspace_id, status)) = sidebar_pr_update {
                 self.state
                     .sidebar_data
-                    .update_workspace_pr_status(workspace_id, Some(status));
+                    .update_workspace_pr_status(workspace_id, status);
             }
 
             // Track workspace after session is added
@@ -3945,6 +3943,16 @@ impl App {
         }
     }
 
+    fn apply_pr_number_to_session(
+        session: &mut AgentSession,
+        pr_num: u32,
+    ) -> Option<(Uuid, Option<PrStatus>)> {
+        let status = Self::synthesize_pr_status(pr_num);
+        session.pr_number = Some(pr_num);
+        session.status_bar.set_pr_status(Some(status.clone()));
+        session.workspace_id.map(|id| (id, Some(status)))
+    }
+
     /// Estimate token usage for a prompt (rough heuristic)
     fn estimate_tokens(text: &str) -> i64 {
         let chars = text.chars().count().max(1);
@@ -6494,12 +6502,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     // Check for PR URL in the message and capture PR number
                     if session.pr_number.is_none() {
                         if let Some(pr_num) = Self::extract_pr_number_from_text(&msg.text) {
-                            session.pr_number = Some(pr_num);
-                            let status = Self::synthesize_pr_status(pr_num);
-                            session.status_bar.set_pr_status(Some(status.clone()));
-                            if let Some(workspace_id) = session.workspace_id {
-                                pending_sidebar_pr_update = Some((workspace_id, Some(status)));
-                            }
+                            pending_sidebar_pr_update =
+                                Self::apply_pr_number_to_session(session, pr_num);
                         }
                     }
 
@@ -6580,12 +6584,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     // Check for PR URL in command output (e.g., from gh pr create)
                     if session.pr_number.is_none() {
                         if let Some(pr_num) = Self::extract_pr_number_from_text(&cmd.output) {
-                            session.pr_number = Some(pr_num);
-                            let status = Self::synthesize_pr_status(pr_num);
-                            session.status_bar.set_pr_status(Some(status.clone()));
-                            if let Some(workspace_id) = session.workspace_id {
-                                pending_sidebar_pr_update = Some((workspace_id, Some(status)));
-                            }
+                            pending_sidebar_pr_update =
+                                Self::apply_pr_number_to_session(session, pr_num);
                         }
                     }
 
