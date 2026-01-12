@@ -1050,8 +1050,8 @@ fn calculate_workspace_name_bounds(
 
 /// Build the right-side spans for a workspace line (git stats + PR badge)
 fn ripple_char(spinner_frame: usize) -> &'static str {
-    // Target ~60ms per frame at ~50 FPS
-    let idx = (spinner_frame / 3) % RIPPLE_FRAMES.len();
+    // Target ~40ms per frame at ~50 FPS
+    let idx = (spinner_frame / 2) % RIPPLE_FRAMES.len();
     RIPPLE_FRAMES[idx]
 }
 
