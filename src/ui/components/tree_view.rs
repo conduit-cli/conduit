@@ -1040,11 +1040,8 @@ fn calculate_workspace_name_bounds(
 /// Build the right-side spans for a workspace line (git stats + PR badge)
 fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-
-    // Use mock data if enabled, otherwise use real data
-    let (additions, deletions, pr_status) = if MOCK_SIDEBAR_PR_DISPLAY {
-        // Mock: small realistic values
-        let status = PrStatus {
+    let mock_status = if MOCK_SIDEBAR_PR_DISPLAY {
+        Some(PrStatus {
             exists: true,
             number: Some(42),
             state: PrState::Open,
@@ -1055,20 +1052,28 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
             },
             merge_readiness: MergeReadiness::Ready,
             ..Default::default()
-        };
-        (1, 1, Some(status))
+        })
     } else {
-        // Real data from node
+        None
+    };
+
+    let (additions, deletions): (usize, usize) = if MOCK_SIDEBAR_PR_DISPLAY {
+        (1, 1)
+    } else {
         let stats = node.git_stats.as_ref();
-        let additions = stats.map(|s| s.additions).unwrap_or(0);
-        let deletions = stats.map(|s| s.deletions).unwrap_or(0);
-        (additions, deletions, node.pr_status.clone())
+        (
+            stats.map(|s| s.additions).unwrap_or(0),
+            stats.map(|s| s.deletions).unwrap_or(0),
+        )
+    };
+    let pr_status: Option<&PrStatus> = if MOCK_SIDEBAR_PR_DISPLAY {
+        mock_status.as_ref()
+    } else {
+        node.pr_status.as_ref()
     };
 
     let has_git_changes = additions > 0 || deletions > 0;
-    let has_pr = pr_status
-        .as_ref()
-        .is_some_and(|status| status.exists && status.number.is_some());
+    let has_pr = matches!(pr_status, Some(status) if status.exists && status.number.is_some());
 
     // Git stats: +N -N
     if has_git_changes {
@@ -1095,7 +1100,7 @@ fn build_right_side_spans(node: &TreeNode) -> Vec<Span<'static>> {
     }
 
     // PR badge: #123 with colored background + optional check indicator
-    if let Some(pr) = pr_status.as_ref() {
+    if let Some(pr) = pr_status {
         if pr.exists {
             if let Some(pr_num) = pr.number {
                 // For merged/closed PRs, use state-based coloring

@@ -3940,6 +3940,7 @@ impl App {
         }
     }
 
+    /// Apply PR status to a session and return the workspace_id for sidebar updates.
     fn apply_pr_status_to_session(
         session: &mut AgentSession,
         status: PrStatus,
@@ -7637,7 +7638,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         let mut sidebar_pr_update: Option<(Uuid, PrStatus)> = None;
         let mut sidebar_pr_clear: Option<Uuid> = None;
         // Tab indices may shift while preflight runs; only trust tab_index if it still matches.
-        let preflight_workspace_id = self
+        let mut initiating_session_id = self
             .state
             .tab_manager
             .session(tab_index)
@@ -7646,7 +7647,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     .working_dir
                     .as_ref()
                     .is_some_and(|dir| dir == &working_dir);
-                still_same_dir.then_some(session.workspace_id).flatten()
+                still_same_dir.then_some(session.id)
             })
             // Fallback: resolve by working_dir (more stable than tab index).
             .or_else(|| {
@@ -7660,8 +7661,16 @@ Acknowledge that you have received this context by replying ONLY with the single
                             .as_ref()
                             .is_some_and(|dir| dir == &working_dir)
                     })
-                    .and_then(|session| session.workspace_id)
+                    .map(|session| session.id)
             });
+        let preflight_workspace_id = initiating_session_id.and_then(|id| {
+            self.state
+                .tab_manager
+                .sessions()
+                .iter()
+                .find(|session| session.id == id)
+                .and_then(|session| session.workspace_id)
+        });
         // Handle blocking errors
         if !preflight.gh_installed {
             self.state.confirmation_dialog_state.hide();
@@ -7707,6 +7716,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                     }
                 }
                 sidebar_pr_clear = Some(workspace_id);
+            } else if let Some(session_id) = initiating_session_id.take() {
+                if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) {
+                    session.pr_number = None;
+                    session.status_bar.set_pr_status(None);
+                }
             }
         }
 
@@ -7722,6 +7736,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                         }
                     }
                     sidebar_pr_update = Some((workspace_id, status));
+                } else if let Some(session_id) = initiating_session_id.take() {
+                    if let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) {
+                        let status = pr.clone();
+                        Self::apply_pr_status_to_session(session, status);
+                    }
                 }
 
                 let pr_url = pr.url.clone().unwrap_or_else(|| "Unknown URL".to_string());
