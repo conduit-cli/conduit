@@ -4950,8 +4950,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.theme_picker_state.select_prev();
                 } else if let Some(tab_bar_area) = self.state.tab_bar_area {
                     if Self::point_in_rect(x, y, tab_bar_area) {
-                        let tabs_focused =
-                            self.state.input_mode != InputMode::SidebarNavigation;
+                        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
                         if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, true) {
                             return Ok(Vec::new());
                         }
@@ -4989,8 +4988,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     self.state.theme_picker_state.select_next();
                 } else if let Some(tab_bar_area) = self.state.tab_bar_area {
                     if Self::point_in_rect(x, y, tab_bar_area) {
-                        let tabs_focused =
-                            self.state.input_mode != InputMode::SidebarNavigation;
+                        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
                         if self.scroll_tab_bar(tab_bar_area.width, tabs_focused, false) {
                             return Ok(Vec::new());
                         }

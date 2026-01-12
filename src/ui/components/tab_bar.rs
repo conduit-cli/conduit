@@ -230,7 +230,11 @@ impl TabBar {
         if layout.indicator_width > 0 {
             let enabled = Style::default().fg(text_secondary());
             let disabled = Style::default().fg(text_muted());
-            let left_label = if layout.scroll_offset > 0 { " ‹" } else { "  " };
+            let left_label = if layout.scroll_offset > 0 {
+                " ‹"
+            } else {
+                "  "
+            };
             spans.push(Span::styled(
                 left_label,
                 if layout.scroll_offset > 0 {
