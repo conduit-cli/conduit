@@ -134,6 +134,16 @@ impl AgentSelectorState {
         self.selected = 0;
     }
 
+    /// Show the dialog and preselect a preferred agent when available
+    pub fn show_with_default(&mut self, agent_type: AgentType) {
+        self.visible = true;
+        self.selected = self
+            .agents
+            .iter()
+            .position(|agent| agent.agent_type == agent_type)
+            .unwrap_or(0);
+    }
+
     /// Hide the dialog
     pub fn hide(&mut self) {
         self.visible = false;

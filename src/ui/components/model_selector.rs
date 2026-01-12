@@ -675,7 +675,13 @@ impl ModelSelector {
                 width: 1,
                 height: area.height,
             };
-            render_minimal_scrollbar(scrollbar_area, buf, total_items, area.height as usize, scroll);
+            render_minimal_scrollbar(
+                scrollbar_area,
+                buf,
+                total_items,
+                area.height as usize,
+                scroll,
+            );
         }
     }
 }

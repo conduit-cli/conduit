@@ -2026,20 +2026,20 @@ impl App {
                     InputMode::SettingBaseDir => {
                         self.state.base_dir_dialog_state.delete_char();
                     }
-                InputMode::MissingTool => {
-                    self.state.missing_tool_dialog_state.backspace();
-                }
-                InputMode::SelectingTheme => {
-                    self.state.theme_picker_state.backspace();
-                }
-                InputMode::SelectingModel => {
-                    self.state.model_selector_state.delete_char();
-                }
-                _ => {
-                    if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        session.input_box.backspace();
+                    InputMode::MissingTool => {
+                        self.state.missing_tool_dialog_state.backspace();
                     }
-                }
+                    InputMode::SelectingTheme => {
+                        self.state.theme_picker_state.backspace();
+                    }
+                    InputMode::SelectingModel => {
+                        self.state.model_selector_state.delete_char();
+                    }
+                    _ => {
+                        if let Some(session) = self.state.tab_manager.active_session_mut() {
+                            session.input_box.backspace();
+                        }
+                    }
                 }
             }
             Action::Delete => {
@@ -3989,7 +3989,11 @@ impl App {
             .as_ref()
             .map(|saved| saved.agent_type)
             .unwrap_or_else(|| {
-                if self.tools.is_available(crate::util::Tool::Claude) {
+                let default_agent = self.config.default_agent;
+                let default_tool = Self::required_tool(default_agent);
+                if self.tools.is_available(default_tool) {
+                    default_agent
+                } else if self.tools.is_available(crate::util::Tool::Claude) {
                     AgentType::Claude
                 } else if self.tools.is_available(crate::util::Tool::Codex) {
                     AgentType::Codex
@@ -5791,6 +5795,7 @@ Acknowledge that you have received this context by replying ONLY with the single
             attention_flags.push(session.needs_attention);
         }
 
+<<<<<<< HEAD
         TabBar::new(
             self.state.tab_manager.tab_names(),
             self.state.tab_manager.active_index(),
@@ -5873,7 +5878,15 @@ Acknowledge that you have received this context by replying ONLY with the single
             TabBarHitTarget::ScrollRight => {
                 self.scroll_tab_bar(tab_bar_area.width, tabs_focused, false);
             }
-            TabBarHitTarget::None => {}
+            TabBarHitTarget::None => {
+                if self.state.tab_manager.can_add_tab() {
+                    self.state.close_overlays();
+                    self.state
+                        .agent_selector_state
+                        .show_with_default(self.config.default_agent);
+                    self.state.input_mode = InputMode::SelectingAgent;
+                }
+            }
         }
     }
 
