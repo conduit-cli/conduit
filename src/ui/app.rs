@@ -5720,7 +5720,8 @@ Acknowledge that you have received this context by replying ONLY with the single
         }
 
         let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-        self.scroll_tab_bar(tab_bar_area.width, tabs_focused, scroll_left)
+        self.scroll_tab_bar(tab_bar_area.width, tabs_focused, scroll_left);
+        true
     }
 
     /// Handle click in tab bar area
