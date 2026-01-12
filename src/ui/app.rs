@@ -6354,9 +6354,10 @@ Acknowledge that you have received this context by replying ONLY with the single
                             continue;
                         }
 
-                        session.pr_number = status.as_ref().and_then(|s| s.number);
-                        session.status_bar.set_pr_status(status.clone());
-                        any_session_updated = true;
+                        if let Some(status) = status.clone() {
+                            Self::apply_pr_status_to_session(session, status);
+                            any_session_updated = true;
+                        }
                     }
                 }
                 // Update sidebar data when we have an accepted association or when not stale.
