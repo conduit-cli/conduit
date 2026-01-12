@@ -6288,27 +6288,23 @@ Acknowledge that you have received this context by replying ONLY with the single
                         session.update_status();
                     }
                 }
-            } else if relative_x >= model_start && relative_x < model_end {
+            } else if relative_x >= model_start && relative_x < model_end && !shell_mode {
                 // Click on model/agent area - open model selector
-                if !shell_mode {
-                    self.state.close_overlays();
-                    let defaults = self.model_selector_defaults();
-                    self.state.model_selector_state.show(model, defaults);
-                    self.state.input_mode = InputMode::SelectingModel;
-                }
+                self.state.close_overlays();
+                let defaults = self.model_selector_defaults();
+                self.state.model_selector_state.show(model, defaults);
+                self.state.input_mode = InputMode::SelectingModel;
             }
         } else {
             // Codex: no mode area, just model/agent
             let model_start = leading.saturating_sub(1); // 1 char before model
             let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
 
-            if relative_x >= model_start && relative_x < model_end {
-                if !shell_mode {
-                    self.state.close_overlays();
-                    let defaults = self.model_selector_defaults();
-                    self.state.model_selector_state.show(model, defaults);
-                    self.state.input_mode = InputMode::SelectingModel;
-                }
+            if relative_x >= model_start && relative_x < model_end && !shell_mode {
+                self.state.close_overlays();
+                let defaults = self.model_selector_defaults();
+                self.state.model_selector_state.show(model, defaults);
+                self.state.input_mode = InputMode::SelectingModel;
             }
         }
 
