@@ -32,6 +32,8 @@ pub enum Action {
     ToggleMetrics,
     /// Dump debug state to file
     DumpDebugState,
+    /// Suspend the application (Ctrl+Z)
+    Suspend,
     /// Copy current workspace path to clipboard
     CopyWorkspacePath,
     /// Copy active selection to clipboard
@@ -112,6 +114,8 @@ pub enum Action {
     QueueEdit,
     /// Delete selected queued message
     QueueDelete,
+    /// Edit prompt in external editor
+    EditPromptExternal,
 
     // ========== List/Tree Navigation ==========
     /// Select next item in list
@@ -224,6 +228,7 @@ impl Action {
             Action::ShowThemePicker => "Change theme",
             Action::ToggleMetrics => "Toggle metrics",
             Action::DumpDebugState => "Dump debug state",
+            Action::Suspend => "Suspend",
             Action::CopyWorkspacePath => "Copy workspace path",
             Action::CopySelection => "Copy selection",
 
@@ -267,6 +272,7 @@ impl Action {
             Action::QueueMoveDown => "Move queued message down",
             Action::QueueEdit => "Edit queued message",
             Action::QueueDelete => "Delete queued message",
+            Action::EditPromptExternal => "Edit prompt in external editor",
 
             // List/Tree navigation
             Action::SelectNext => "Select next",
@@ -370,6 +376,8 @@ impl Action {
                 | Action::ScrollPageDown
                 | Action::ScrollToTop
                 | Action::ScrollToBottom
+                // Input editing
+                | Action::EditPromptExternal
                 // Sidebar
                 | Action::EnterSidebarMode
                 | Action::AddRepository

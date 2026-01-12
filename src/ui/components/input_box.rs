@@ -88,6 +88,37 @@ impl InputBox {
         &self.input
     }
 
+    /// Get expanded input with large paste placeholders resolved.
+    pub fn expanded_input(&self) -> String {
+        let mut expanded = self.input.clone();
+        for (placeholder, actual) in &self.pending_pastes {
+            if expanded.contains(placeholder) {
+                expanded = expanded.replace(placeholder, actual);
+            }
+        }
+        expanded
+    }
+
+    /// Snapshot command history for persistence.
+    pub fn history_snapshot(&self) -> Vec<String> {
+        self.history.clone()
+    }
+
+    /// Restore command history after session load.
+    pub fn set_history(&mut self, history: Vec<String>) {
+        self.history = history;
+        self.history_index = None;
+        self.saved_input.clear();
+    }
+
+    /// Snapshot attached images to preserve placeholders when editing.
+    pub fn attachments_snapshot(&self) -> Vec<(PathBuf, String)> {
+        self.attached_images
+            .iter()
+            .map(|img| (img.path.clone(), img.placeholder.clone()))
+            .collect()
+    }
+
     /// Set input text
     pub fn set_input(&mut self, text: String) {
         self.input = text;

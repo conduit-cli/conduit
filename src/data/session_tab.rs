@@ -23,9 +23,10 @@ impl SessionTabStore {
     pub fn create(&self, tab: &SessionTab) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
+        let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
-            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id, title)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO session_tabs (id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -38,6 +39,7 @@ impl SessionTabStore {
                 tab.created_at.to_rfc3339(),
                 tab.pending_user_message,
                 queued_messages,
+                input_history,
                 tab.fork_seed_id.map(|id| id.to_string()),
                 tab.title,
             ],
@@ -49,7 +51,7 @@ impl SessionTabStore {
     pub fn get_all(&self) -> SqliteResult<Vec<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id, title
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title
              FROM session_tabs ORDER BY tab_index",
         )?;
 
@@ -65,7 +67,7 @@ impl SessionTabStore {
     pub fn get_by_id(&self, id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id, title
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title
              FROM session_tabs WHERE id = ?1",
         )?;
 
@@ -81,9 +83,10 @@ impl SessionTabStore {
     pub fn update(&self, tab: &SessionTab) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
+        let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
             "UPDATE session_tabs SET tab_index = ?2, workspace_id = ?3, agent_type = ?4, agent_mode = ?5,
-             agent_session_id = ?6, model = ?7, pr_number = ?8, pending_user_message = ?9, queued_messages = ?10, fork_seed_id = ?11, title = ?12 WHERE id = ?1",
+             agent_session_id = ?6, model = ?7, pr_number = ?8, pending_user_message = ?9, queued_messages = ?10, input_history = ?11, fork_seed_id = ?12, title = ?13 WHERE id = ?1",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -95,6 +98,7 @@ impl SessionTabStore {
                 tab.pr_number,
                 tab.pending_user_message,
                 queued_messages,
+                input_history,
                 tab.fork_seed_id.map(|id| id.to_string()),
                 tab.title,
             ],
@@ -131,7 +135,7 @@ impl SessionTabStore {
     pub fn get_by_workspace_id(&self, workspace_id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, fork_seed_id, title
+            "SELECT id, tab_index, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title
              FROM session_tabs WHERE workspace_id = ?1",
         )?;
 
@@ -152,6 +156,8 @@ impl SessionTabStore {
         let created_at_str: String = row.get("created_at")?;
         let queued_messages_json: Option<String> = row.get("queued_messages")?;
         let queued_messages = deserialize_queued_messages(queued_messages_json.as_deref());
+        let input_history_json: Option<String> = row.get("input_history")?;
+        let input_history = deserialize_input_history(input_history_json.as_deref());
         let fork_seed_id_str: Option<String> = row.get("fork_seed_id")?;
 
         Ok(SessionTab {
@@ -168,6 +174,7 @@ impl SessionTabStore {
                 .unwrap_or_else(|_| Utc::now()),
             pending_user_message: row.get("pending_user_message")?,
             queued_messages,
+            input_history,
             fork_seed_id: fork_seed_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
             title: row.get("title")?,
         })
@@ -185,6 +192,23 @@ fn deserialize_queued_messages(raw: Option<&str>) -> Vec<QueuedMessage> {
     match raw {
         Some(value) => serde_json::from_str::<Vec<QueuedMessage>>(value).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "Failed to deserialize queued_messages");
+            Vec::new()
+        }),
+        None => Vec::new(),
+    }
+}
+
+fn serialize_input_history(history: &[String]) -> String {
+    serde_json::to_string(history).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "Failed to serialize input_history");
+        "[]".to_string()
+    })
+}
+
+fn deserialize_input_history(raw: Option<&str>) -> Vec<String> {
+    match raw {
+        Some(value) => serde_json::from_str::<Vec<String>>(value).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "Failed to deserialize input_history");
             Vec::new()
         }),
         None => Vec::new(),
@@ -288,6 +312,7 @@ mod tests {
         tab.agent_session_id = Some("updated-session".to_string());
         tab.model = Some("claude-sonnet".to_string());
         tab.pr_number = Some(42);
+        tab.input_history = vec!["first".to_string(), "second".to_string()];
         tab.queued_messages = vec![QueuedMessage {
             id: Uuid::new_v4(),
             mode: QueuedMessageMode::FollowUp,
@@ -305,5 +330,6 @@ mod tests {
         assert_eq!(retrieved.model, Some("claude-sonnet".to_string()));
         assert_eq!(retrieved.pr_number, Some(42));
         assert_eq!(retrieved.queued_messages.len(), 1);
+        assert_eq!(retrieved.input_history, tab.input_history);
     }
 }

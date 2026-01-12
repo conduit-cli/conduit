@@ -316,6 +316,7 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "show_theme_picker" => Some(Action::ShowThemePicker),
         "toggle_metrics" => Some(Action::ToggleMetrics),
         "dump_debug_state" => Some(Action::DumpDebugState),
+        "suspend" => Some(Action::Suspend),
         "copy_selection" => Some(Action::CopySelection),
 
         // Tab management
@@ -357,6 +358,7 @@ pub fn parse_action(name: &str) -> Option<Action> {
         "queue_move_down" => Some(Action::QueueMoveDown),
         "queue_edit" => Some(Action::QueueEdit),
         "queue_delete" => Some(Action::QueueDelete),
+        "edit_prompt_external" => Some(Action::EditPromptExternal),
 
         // Navigation
         "select_next" => Some(Action::SelectNext),
@@ -421,6 +423,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "show_theme_picker",
     "toggle_metrics",
     "dump_debug_state",
+    "suspend",
     "copy_selection",
     // Tab management
     "close_tab",
@@ -459,6 +462,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "queue_move_down",
     "queue_edit",
     "queue_delete",
+    "edit_prompt_external",
     // Navigation
     "select_next",
     "select_prev",

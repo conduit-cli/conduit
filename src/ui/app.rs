@@ -1,6 +1,8 @@
+use std::env;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Component, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,6 +22,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use sha2::{Digest, Sha256};
+use tempfile::Builder;
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -414,6 +417,8 @@ impl App {
                 session.queued_messages = tab.queued_messages.clone();
             }
 
+            session.input_box.set_history(tab.input_history.clone());
+
             // Derive fork_welcome_shown: if restoring a forked session that has messages,
             // the welcome message was already shown in the previous session
             if session.fork_seed_id.is_some() && !session.chat_view.messages().is_empty() {
@@ -537,6 +542,8 @@ impl App {
                 tab.pending_user_message = session.pending_user_message.clone();
                 // Preserve queued messages for interrupted sessions
                 tab.queued_messages = session.queued_messages.clone();
+                // Preserve input history for arrow-up restoration
+                tab.input_history = session.input_box.history_snapshot();
                 tab.fork_seed_id = session.fork_seed_id;
                 // Preserve AI-generated session title
                 tab.title = session.title.clone();
@@ -645,7 +652,7 @@ impl App {
         terminal.clear()?;
 
         // Main event loop
-        let result = self.event_loop(&mut terminal).await;
+        let result = self.event_loop(&mut terminal, &mut guard).await;
 
         // Best-effort persistence on any exit path.
         self.persist_session_state_on_exit();
@@ -701,6 +708,7 @@ impl App {
     async fn event_loop(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
     ) -> anyhow::Result<()> {
         loop {
             let frame_start = Instant::now();
@@ -732,7 +740,8 @@ impl App {
                         match event::read()? {
                             Event::Key(key) => {
                                 self.flush_scroll_deltas(&mut pending_scroll_up, &mut pending_scroll_down);
-                                self.dispatch_event(AppEvent::Input(Event::Key(key))).await?;
+                                self.dispatch_event(AppEvent::Input(Event::Key(key)), terminal, guard)
+                                    .await?;
                             }
                             Event::Mouse(mouse) => {
                                 match mouse.kind {
@@ -753,7 +762,12 @@ impl App {
                                             &mut pending_scroll_up,
                                             &mut pending_scroll_down,
                                         );
-                                        self.dispatch_event(AppEvent::Input(Event::Mouse(mouse))).await?;
+                                        self.dispatch_event(
+                                            AppEvent::Input(Event::Mouse(mouse)),
+                                            terminal,
+                                            guard,
+                                        )
+                                        .await?;
                                     }
                                 }
                             }
@@ -773,7 +787,7 @@ impl App {
                 // App events from channel
                 Some(event) = self.event_rx.recv() => {
                     let event_start = Instant::now();
-                    self.dispatch_event(event).await?;
+                    self.dispatch_event(event, terminal, guard).await?;
                     self.state.metrics.event_time = event_start.elapsed();
                 }
             }
@@ -793,9 +807,14 @@ impl App {
         Ok(())
     }
 
-    async fn dispatch_event(&mut self, event: AppEvent) -> anyhow::Result<()> {
+    async fn dispatch_event(
+        &mut self,
+        event: AppEvent,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<()> {
         let effects = match event {
-            AppEvent::Input(input) => self.handle_input_event(input).await?,
+            AppEvent::Input(input) => self.handle_input_event(input, terminal, guard).await?,
             AppEvent::Tick => {
                 self.handle_tick();
                 Vec::new()
@@ -806,10 +825,15 @@ impl App {
         self.run_effects(effects).await
     }
 
-    async fn handle_input_event(&mut self, input: Event) -> anyhow::Result<Vec<Effect>> {
+    async fn handle_input_event(
+        &mut self,
+        input: Event,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<Vec<Effect>> {
         match input {
-            Event::Key(key) => self.handle_key_event(key).await,
-            Event::Mouse(mouse) => self.handle_mouse_event(mouse).await,
+            Event::Key(key) => self.handle_key_event(key, terminal, guard).await,
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse, terminal, guard).await,
             Event::Paste(text) => {
                 self.handle_paste_input(text);
                 Ok(Vec::new())
@@ -1318,7 +1342,12 @@ impl App {
         self.state.has_active_overlay()
     }
 
-    async fn handle_key_event(&mut self, key: event::KeyEvent) -> anyhow::Result<Vec<Effect>> {
+    async fn handle_key_event(
+        &mut self,
+        key: event::KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<Vec<Effect>> {
         // Special handling for modes that bypass normal key processing
         if self.state.input_mode == InputMode::RemovingProject {
             // Ignore all input while removing project
@@ -1359,19 +1388,23 @@ impl App {
                 && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')))
                 || matches!(key.code, KeyCode::Char('\x10')); // ASCII 16 = Ctrl+P
             if is_ctrl_p {
-                return self.execute_action(Action::OpenCommandPalette).await;
+                return self
+                    .execute_action(Action::OpenCommandPalette, terminal, guard)
+                    .await;
             }
             // Handle Ctrl+N to add new project
             let is_ctrl_n = (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')))
                 || matches!(key.code, KeyCode::Char('\x0e'));
             if is_ctrl_n || (key.modifiers.is_empty() && key.code == KeyCode::Enter) {
-                return self.execute_action(Action::NewProject).await;
+                return self
+                    .execute_action(Action::NewProject, terminal, guard)
+                    .await;
             }
             if key.modifiers.is_empty() {
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => {
-                        return self.execute_action(Action::Quit).await;
+                        return self.execute_action(Action::Quit, terminal, guard).await;
                     }
                     _ => {}
                 }
@@ -1385,7 +1418,9 @@ impl App {
                 || matches!(key.code, KeyCode::Char('\x0e')); // ASCII 14 = Ctrl+N
 
             if is_ctrl_n {
-                return self.execute_action(Action::NewProject).await;
+                return self
+                    .execute_action(Action::NewProject, terminal, guard)
+                    .await;
             }
 
             // Handle Ctrl+P for command palette
@@ -1394,7 +1429,9 @@ impl App {
                 || matches!(key.code, KeyCode::Char('\x10')); // ASCII 16 = Ctrl+P
 
             if is_ctrl_p {
-                return self.execute_action(Action::OpenCommandPalette).await;
+                return self
+                    .execute_action(Action::OpenCommandPalette, terminal, guard)
+                    .await;
             }
         }
 
@@ -1471,14 +1508,19 @@ impl App {
 
         // Look up action in config (context-specific first, then global)
         if let Some(action) = self.config.keybindings.get_action(&key_combo, context) {
-            return self.execute_action(action.clone()).await;
+            return self.execute_action(action.clone(), terminal, guard).await;
         }
 
         Ok(Vec::new())
     }
 
     /// Execute a keybinding action
-    async fn execute_action(&mut self, action: Action) -> anyhow::Result<Vec<Effect>> {
+    async fn execute_action(
+        &mut self,
+        action: Action,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
         match action {
             // ========== Global Actions ==========
@@ -1604,6 +1646,15 @@ impl App {
             }
             Action::DumpDebugState => {
                 effects.push(Effect::DumpDebugState);
+            }
+            Action::Suspend => {
+                if let Err(err) = self.suspend_app(terminal, guard) {
+                    tracing::warn!(error = %err, "Failed to suspend");
+                    self.state.set_timed_footer_message(
+                        format!("Suspend failed: {err}"),
+                        Duration::from_secs(3),
+                    );
+                }
             }
             Action::CopyWorkspacePath => {
                 if let Some(session) = self.state.tab_manager.active_session() {
@@ -2003,6 +2054,15 @@ impl App {
                     }
                 }
             }
+            Action::EditPromptExternal => {
+                if let Err(err) = self.edit_prompt_external(terminal, guard) {
+                    tracing::warn!(error = %err, "External editor failed");
+                    self.state.set_timed_footer_message(
+                        format!("External editor failed: {err}"),
+                        Duration::from_secs(3),
+                    );
+                }
+            }
 
             // ========== List/Tree Navigation ==========
             Action::SelectNext => match self.state.input_mode {
@@ -2294,7 +2354,9 @@ impl App {
                         self.state.input_mode = InputMode::Normal;
                         // Execute the selected action (avoid recursion if it's Confirm)
                         if !matches!(action, Action::Confirm | Action::OpenCommandPalette) {
-                            effects.extend(Box::pin(self.execute_action(action)).await?);
+                            effects.extend(
+                                Box::pin(self.execute_action(action, terminal, guard)).await?,
+                            );
                         }
                     }
                 }
@@ -2634,7 +2696,9 @@ impl App {
                     if let Some(action) = self.execute_command() {
                         // Prevent recursion - ExecuteCommand can't call itself
                         if !matches!(action, Action::ExecuteCommand) {
-                            effects.extend(Box::pin(self.execute_action(action)).await?);
+                            effects.extend(
+                                Box::pin(self.execute_action(action, terminal, guard)).await?,
+                            );
                         }
                     }
                 }
@@ -4747,6 +4811,8 @@ Acknowledge that you have received this context by replying ONLY with the single
     async fn handle_mouse_event(
         &mut self,
         mouse: event::MouseEvent,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
     ) -> anyhow::Result<Vec<Effect>> {
         let x = mouse.column;
         let y = mouse.row;
@@ -4829,7 +4895,7 @@ Acknowledge that you have received this context by replying ONLY with the single
                     return Ok(Vec::new());
                 }
                 // Handle left clicks based on position
-                self.handle_mouse_click(x, y).await
+                self.handle_mouse_click(x, y, terminal, guard).await
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.handle_scrollbar_drag(y) {
@@ -5219,7 +5285,13 @@ Acknowledge that you have received this context by replying ONLY with the single
     }
 
     /// Handle a mouse click at the given position.
-    async fn handle_mouse_click(&mut self, x: u16, y: u16) -> anyhow::Result<Vec<Effect>> {
+    async fn handle_mouse_click(
+        &mut self,
+        x: u16,
+        y: u16,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
 
         // Handle confirmation dialog - close on any click outside
@@ -5289,7 +5361,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         if let Some(footer_area) = self.state.footer_area {
             if Self::point_in_rect(x, y, footer_area) {
                 if let Some(action) = self.handle_footer_click(x, y, footer_area) {
-                    effects.extend(self.execute_action(action).await?);
+                    effects.extend(self.execute_action(action, terminal, guard).await?);
                 }
                 return Ok(effects);
             }
@@ -6917,6 +6989,7 @@ Acknowledge that you have received this context by replying ONLY with the single
             };
 
             if session.input_box.is_empty() {
+                session.chat_view.scroll_to_bottom();
                 return Ok(effects);
             }
 
@@ -7044,6 +7117,151 @@ Acknowledge that you have received this context by replying ONLY with the single
         }
 
         cleaned.trim().to_string()
+    }
+
+    fn resolve_external_editor(&self) -> Option<Vec<String>> {
+        let editor = env::var("VISUAL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                env::var("EDITOR")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })?;
+
+        let parts: Vec<String> = editor
+            .split_whitespace()
+            .map(|part| part.to_string())
+            .collect();
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts)
+        }
+    }
+
+    fn reinitialize_terminal(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> anyhow::Result<()> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        terminal.clear()?;
+        Ok(())
+    }
+
+    fn edit_prompt_external(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<()> {
+        if self.state.input_mode != InputMode::Normal {
+            self.state.set_timed_footer_message(
+                "External editor only works in chat input".to_string(),
+                Duration::from_secs(3),
+            );
+            return Ok(());
+        }
+
+        let editor_parts = match self.resolve_external_editor() {
+            Some(parts) => parts,
+            None => {
+                self.state.set_timed_footer_message(
+                    "Set $VISUAL or $EDITOR to use external editor".to_string(),
+                    Duration::from_secs(3),
+                );
+                return Ok(());
+            }
+        };
+
+        let (expanded_input, attachments) = {
+            let Some(session) = self.state.tab_manager.active_session_mut() else {
+                return Ok(());
+            };
+            (
+                session.input_box.expanded_input(),
+                session.input_box.attachments_snapshot(),
+            )
+        };
+
+        let temp = Builder::new()
+            .prefix("conduit-prompt-")
+            .suffix(".txt")
+            .tempfile()?;
+        std::fs::write(temp.path(), expanded_input)?;
+
+        guard.cleanup_for_suspend()?;
+
+        let status = {
+            let mut parts = editor_parts.into_iter();
+            let command = match parts.next() {
+                Some(cmd) => cmd,
+                None => {
+                    self.reinitialize_terminal(terminal)?;
+                    self.state.set_timed_footer_message(
+                        "External editor is not configured".to_string(),
+                        Duration::from_secs(3),
+                    );
+                    return Ok(());
+                }
+            };
+            let args: Vec<String> = parts.collect();
+            Command::new(command).args(args).arg(temp.path()).status()
+        };
+
+        self.reinitialize_terminal(terminal)?;
+
+        let status = match status {
+            Ok(status) => status,
+            Err(err) => return Err(err.into()),
+        };
+
+        if !status.success() {
+            self.state.set_timed_footer_message(
+                "External editor cancelled".to_string(),
+                Duration::from_secs(3),
+            );
+            return Ok(());
+        }
+
+        let edited = std::fs::read_to_string(temp.path())?;
+        if let Some(session) = self.state.tab_manager.active_session_mut() {
+            session
+                .input_box
+                .set_input_with_attachments(edited, attachments);
+            session.input_box.move_end();
+        }
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn suspend_app(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        guard: &mut TerminalGuard,
+    ) -> anyhow::Result<()> {
+        guard.cleanup_for_suspend()?;
+        unsafe {
+            libc::raise(libc::SIGTSTP);
+        }
+        self.reinitialize_terminal(terminal)?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn suspend_app(
+        &mut self,
+        _terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        _guard: &mut TerminalGuard,
+    ) -> anyhow::Result<()> {
+        self.state.set_timed_footer_message(
+            "Suspend is not supported on this platform".to_string(),
+            Duration::from_secs(3),
+        );
+        Ok(())
     }
 
     /// Handle Ctrl+P: Open existing PR or create new one

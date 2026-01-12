@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     created_at TEXT NOT NULL,
     pending_user_message TEXT,
     queued_messages TEXT NOT NULL DEFAULT '[]',
+    input_history TEXT NOT NULL DEFAULT '[]',
     fork_seed_id TEXT,
     title TEXT,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
@@ -373,6 +374,27 @@ CREATE TABLE IF NOT EXISTS fork_seeds_new (
         if !has_title {
             conn.execute("ALTER TABLE session_tabs ADD COLUMN title TEXT", [])?;
         }
+
+        // Migration 9: Add input_history column to session_tabs table
+        let has_input_history: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='input_history'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_input_history {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN input_history TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "UPDATE session_tabs SET input_history = '[]' WHERE input_history IS NULL",
+            [],
+        )?;
 
         Ok(())
     }

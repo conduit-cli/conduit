@@ -30,6 +30,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "C-p", Action::OpenCommandPalette);
     bind(&mut config.global, "C-M-p", Action::OpenPr); // Ctrl+Alt+P for PR
     bind(&mut config.global, "M-S-f", Action::ForkSession); // Alt+Shift+F for fork
+    bind(&mut config.global, "C-z", Action::Suspend);
 
     // Note: Ctrl+C is handled specially in app.rs for double-press detection
     bind(&mut config.global, "C-g", Action::ToggleViewMode);
@@ -74,6 +75,7 @@ pub fn default_keybindings() -> KeybindingConfig {
     bind(&mut config.global, "M-g", Action::DumpDebugState);
     bind(&mut config.global, "M-t", Action::ShowThemePicker);
     bind(&mut config.global, "M-q", Action::OpenQueueEditor);
+    bind(&mut config.global, "M-e", Action::EditPromptExternal);
 
     // Agent mode toggle (Build/Plan) - Ctrl+\
     //

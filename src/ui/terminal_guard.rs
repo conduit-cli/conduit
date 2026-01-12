@@ -45,6 +45,11 @@ impl TerminalGuard {
         self.do_cleanup()
     }
 
+    /// Cleanup terminal state for suspend/editor flows while keeping guard active.
+    pub fn cleanup_for_suspend(&self) -> anyhow::Result<()> {
+        self.do_cleanup()
+    }
+
     fn do_cleanup(&self) -> anyhow::Result<()> {
         let mut stdout = io::stdout();
         if self.keyboard_enhancement_enabled {
