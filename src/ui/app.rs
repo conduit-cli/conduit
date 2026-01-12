@@ -1649,7 +1649,7 @@ impl App {
             }
             Action::Suspend => {
                 if let Err(err) = self.suspend_app(terminal, guard) {
-                    tracing::warn!(error = %err, "Failed to suspend");
+                    tracing::warn!(error = %err, "Suspend failed: {err}");
                     self.state.set_timed_footer_message(
                         format!("Suspend failed: {err}"),
                         Duration::from_secs(3),
@@ -7241,8 +7241,11 @@ Acknowledge that you have received this context by replying ONLY with the single
         guard: &mut TerminalGuard,
     ) -> anyhow::Result<()> {
         guard.cleanup_for_suspend()?;
-        unsafe {
-            libc::raise(libc::SIGTSTP);
+        let result = unsafe { libc::raise(libc::SIGTSTP) };
+        if result == -1 {
+            let err = io::Error::last_os_error();
+            self.reinitialize_terminal(terminal)?;
+            return Err(anyhow!("SIGTSTP failed: {}", err));
         }
         self.reinitialize_terminal(terminal)?;
         Ok(())

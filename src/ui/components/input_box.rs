@@ -13,6 +13,7 @@ use super::{bg_highlight, input_bg, render_minimal_scrollbar, text_primary, Scro
 use crate::ui::clipboard_paste::normalize_pasted_path;
 
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
+const HISTORY_MAX: usize = 1000;
 
 #[derive(Debug, Clone)]
 struct VisualLine {
@@ -101,12 +102,21 @@ impl InputBox {
 
     /// Snapshot command history for persistence.
     pub fn history_snapshot(&self) -> Vec<String> {
-        self.history.clone()
+        if self.history.len() <= HISTORY_MAX {
+            return self.history.clone();
+        }
+        let start = self.history.len().saturating_sub(HISTORY_MAX);
+        self.history[start..].to_vec()
     }
 
     /// Restore command history after session load.
     pub fn set_history(&mut self, history: Vec<String>) {
-        self.history = history;
+        if history.len() <= HISTORY_MAX {
+            self.history = history;
+        } else {
+            let start = history.len().saturating_sub(HISTORY_MAX);
+            self.history = history[start..].to_vec();
+        }
         self.history_index = None;
         self.saved_input.clear();
     }
@@ -174,7 +184,7 @@ impl InputBox {
         // Only add non-whitespace entries (matches submit() behavior)
         // Use trim_end() to preserve leading whitespace while removing trailing noise
         if !expanded.trim().is_empty() {
-            self.history.push(expanded.trim_end().to_string());
+            self.push_history(expanded.trim_end().to_string());
         }
     }
 
@@ -198,7 +208,7 @@ impl InputBox {
 
         // Add to history with trim_end() to preserve leading whitespace
         if !expanded.trim().is_empty() {
-            self.history.push(expanded.trim_end().to_string());
+            self.push_history(expanded.trim_end().to_string());
         }
 
         InputSubmit {
@@ -228,6 +238,14 @@ impl InputBox {
             self.scroll_offset = cursor_line;
         } else if cursor_line >= self.scroll_offset + visible_lines {
             self.scroll_offset = cursor_line.saturating_sub(visible_lines - 1);
+        }
+    }
+
+    fn push_history(&mut self, entry: String) {
+        self.history.push(entry);
+        if self.history.len() > HISTORY_MAX {
+            let overflow = self.history.len() - HISTORY_MAX;
+            self.history.drain(0..overflow);
         }
     }
 
