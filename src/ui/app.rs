@@ -7213,10 +7213,7 @@ Acknowledge that you have received this context by replying ONLY with the single
 
         self.reinitialize_terminal(terminal)?;
 
-        let status = match status {
-            Ok(status) => status,
-            Err(err) => return Err(err.into()),
-        };
+        let status = status?;
 
         if !status.success() {
             self.state.set_timed_footer_message(
