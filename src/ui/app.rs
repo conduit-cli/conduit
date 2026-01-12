@@ -3944,7 +3944,9 @@ impl App {
         session: &mut AgentSession,
         status: PrStatus,
     ) -> Option<(Uuid, Option<PrStatus>)> {
-        session.pr_number = status.number;
+        if status.number.is_some() {
+            session.pr_number = status.number;
+        }
         session.status_bar.set_pr_status(Some(status.clone()));
         session.workspace_id.map(|id| (id, Some(status)))
     }
@@ -6329,6 +6331,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                                 pr_number = status.as_ref().and_then(|s| s.number),
                                 "Ignoring stale (merged/closed) PR for new session"
                             );
+                            self.state
+                                .sidebar_data
+                                .clear_workspace_pr_status(workspace_id);
                             continue;
                         }
 
@@ -7624,7 +7629,7 @@ Acknowledge that you have received this context by replying ONLY with the single
     /// Handle the result of the PR preflight check
     fn handle_pr_preflight_result(
         &mut self,
-        _tab_index: usize,
+        tab_index: usize,
         working_dir: std::path::PathBuf,
         preflight: crate::git::PrPreflightResult,
     ) -> Vec<Effect> {
@@ -7634,7 +7639,7 @@ Acknowledge that you have received this context by replying ONLY with the single
         let preflight_workspace_id = self
             .state
             .tab_manager
-            .session(_tab_index)
+            .session(tab_index)
             .and_then(|session| session.workspace_id);
         // Handle blocking errors
         if !preflight.gh_installed {
@@ -7671,8 +7676,8 @@ Acknowledge that you have received this context by replying ONLY with the single
             return effects;
         }
 
-        // If no PR exists (or PR lookup failed), clear any stale PR UI state.
-        if !preflight.existing_pr.as_ref().is_some_and(|pr| pr.exists) {
+        // If we explicitly determined no PR exists, clear any stale PR UI state.
+        if matches!(preflight.existing_pr.as_ref(), Some(pr) if !pr.exists) {
             if let Some(workspace_id) = preflight_workspace_id {
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
@@ -7755,7 +7760,7 @@ Acknowledge that you have received this context by replying ONLY with the single
             ConfirmationType::Info,
             "Create PR",
             Some(ConfirmationContext::CreatePullRequest {
-                tab_index: _tab_index,
+                tab_index,
                 working_dir,
                 preflight,
             }),
