@@ -7107,6 +7107,11 @@ Acknowledge that you have received this context by replying ONLY with the single
                                     error = %e,
                                     "Failed to deserialize AskUserQuestion arguments"
                                 );
+                                // Surface error to user so they know why prompt didn't appear
+                                let display = MessageDisplay::Error {
+                                    content: format!("Failed to parse AskUserQuestion: {}", e),
+                                };
+                                session.chat_view.push(display.to_chat_message());
                                 false
                             }
                         }
@@ -9641,11 +9646,20 @@ Acknowledge that you have received this context by replying ONLY with the single
                 }
 
                 // Store layout areas for mouse hit-testing
+                // Set hidden areas to None when inline prompt is active to avoid hit-testing confusion
                 self.state.tab_bar_area = Some(tab_bar_chunk);
                 self.state.chat_area = Some(chat_chunk);
                 self.state.raw_events_area = None;
-                self.state.input_area = Some(input_area_inner);
-                self.state.status_bar_area = Some(status_bar_area_inner);
+                self.state.input_area = if has_inline_prompt {
+                    None
+                } else {
+                    Some(input_area_inner)
+                };
+                self.state.status_bar_area = if has_inline_prompt {
+                    None
+                } else {
+                    Some(status_bar_area_inner)
+                };
                 self.state.footer_area = Some(footer_area);
 
                 // Draw tab bar (unfocused when sidebar is focused)
