@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Component, PathBuf};
 use std::process::Command;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,7 @@ use ratatui::{
 };
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -3323,26 +3325,79 @@ impl App {
                             let (shell, flag) = if cfg!(windows) {
                                 ("cmd", "/C")
                             } else {
-                                ("sh", "-lc")
+                                ("sh", "-c")
                             };
                             let mut cmd = tokio::process::Command::new(shell);
                             cmd.arg(flag).arg(&command);
-                            cmd.kill_on_drop(true);
+                            cmd.stdout(Stdio::piped());
+                            cmd.stderr(Stdio::piped());
                             if let Some(dir) = working_dir.as_ref() {
                                 cmd.current_dir(dir);
                             }
 
-                            let output = tokio::time::timeout(SHELL_COMMAND_TIMEOUT, cmd.output())
-                                .await
-                                .map_err(|_| {
-                                    format!(
-                                        "Shell command timed out after {}s",
-                                        SHELL_COMMAND_TIMEOUT.as_secs()
-                                    )
-                                })?
+                            let mut child = cmd
+                                .spawn()
                                 .map_err(|e| format!("Failed to run shell command: {e}"))?;
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            let mut stdout = child.stdout.take().ok_or_else(|| {
+                                "Failed to capture shell command stdout".to_string()
+                            })?;
+                            let mut stderr = child.stderr.take().ok_or_else(|| {
+                                "Failed to capture shell command stderr".to_string()
+                            })?;
+
+                            let stdout_task = tokio::spawn(async move {
+                                let mut buf = Vec::new();
+                                stdout.read_to_end(&mut buf).await.map(|_| buf)
+                            });
+                            let stderr_task = tokio::spawn(async move {
+                                let mut buf = Vec::new();
+                                stderr.read_to_end(&mut buf).await.map(|_| buf)
+                            });
+
+                            let status =
+                                match tokio::time::timeout(SHELL_COMMAND_TIMEOUT, child.wait())
+                                    .await
+                                {
+                                    Ok(status) => status
+                                        .map_err(|e| format!("Failed to run shell command: {e}"))?,
+                                    Err(_) => {
+                                        if let Err(err) = child.kill().await {
+                                            tracing::debug!(
+                                                error = %err,
+                                                "Failed to kill timed out shell command"
+                                            );
+                                            return Err(format!(
+                                                "Shell command timed out after {}s",
+                                                SHELL_COMMAND_TIMEOUT.as_secs()
+                                            ));
+                                        }
+                                        if let Err(err) = child.wait().await {
+                                            tracing::debug!(
+                                                error = %err,
+                                                "Failed to reap timed out shell command"
+                                            );
+                                            return Err(format!(
+                                                "Shell command timed out after {}s",
+                                                SHELL_COMMAND_TIMEOUT.as_secs()
+                                            ));
+                                        }
+                                        return Err(format!(
+                                            "Shell command timed out after {}s",
+                                            SHELL_COMMAND_TIMEOUT.as_secs()
+                                        ));
+                                    }
+                                };
+
+                            let stdout_bytes = stdout_task
+                                .await
+                                .map_err(|e| format!("Failed to run shell command: {e}"))?
+                                .map_err(|e| format!("Failed to run shell command: {e}"))?;
+                            let stderr_bytes = stderr_task
+                                .await
+                                .map_err(|e| format!("Failed to run shell command: {e}"))?
+                                .map_err(|e| format!("Failed to run shell command: {e}"))?;
+                            let stdout = String::from_utf8_lossy(&stdout_bytes);
+                            let stderr = String::from_utf8_lossy(&stderr_bytes);
                             let mut combined = String::new();
                             if !stdout.is_empty() {
                                 combined.push_str(&stdout);
@@ -3355,7 +3410,7 @@ impl App {
                             }
                             Ok(crate::ui::events::ShellCommandResult {
                                 output: combined,
-                                exit_code: output.status.code(),
+                                exit_code: status.code(),
                             })
                         }
                         .await;
