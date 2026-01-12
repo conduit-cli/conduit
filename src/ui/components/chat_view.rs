@@ -11,7 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::{
     render_minimal_scrollbar,
     theme::{
-        accent_error, accent_success, bg_base, bg_highlight, diff_add, diff_remove,
+        accent_error, accent_primary, accent_success, bg_base, bg_highlight, diff_add, diff_remove,
         markdown_code_bg, theme_revision, tool_block_bg, tool_command, tool_comment, tool_output,
     },
     ChatMessage, MarkdownRenderer, MessageRole, ScrollbarMetrics, TurnSummary,
@@ -153,6 +153,65 @@ impl ToolBlockBuilder {
             .into_iter()
             .map(|line_spans| self.line(line_spans))
             .collect()
+    }
+}
+
+// =============================================================================
+// User Message Block Builder - Accent stripe with base background
+// =============================================================================
+
+/// Helper for building user message blocks with an accent stripe and base background.
+/// Uses the same ┃ glyph as tool blocks, but keeps the base background.
+struct UserMessageBlockBuilder {
+    width: usize,
+    stripe_style: Style,
+    bg_style: Style,
+}
+
+impl UserMessageBlockBuilder {
+    const PREFIX_WIDTH: usize = 3; // "┃" (1) + "  " (2)
+    const RIGHT_PADDING: usize = 2;
+
+    fn new(width: usize) -> Self {
+        Self {
+            width,
+            stripe_style: Style::default().fg(accent_primary()).bg(bg_base()),
+            bg_style: Style::default().bg(tool_block_bg()),
+        }
+    }
+
+    /// Create a line with ┃ prefix, left padding, content, and right padding.
+    fn line(&self, spans: Vec<Span<'static>>) -> Line<'static> {
+        let content_width: usize = spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum();
+        let total_used = Self::PREFIX_WIDTH + Self::RIGHT_PADDING + content_width;
+        let padding_needed = self.width.saturating_sub(total_used);
+
+        let mut line_spans = vec![
+            Span::styled("┃", self.stripe_style),
+            Span::styled("  ", self.bg_style),
+        ];
+        line_spans.extend(spans);
+        line_spans.push(Span::styled(" ".repeat(Self::RIGHT_PADDING), self.bg_style));
+        if padding_needed > 0 {
+            line_spans.push(Span::styled(" ".repeat(padding_needed), self.bg_style));
+        }
+
+        Line::from(line_spans)
+    }
+
+    /// Create an empty line for vertical padding (fills the line width).
+    fn empty_line(&self) -> Line<'static> {
+        self.line(Vec::new())
+    }
+
+    /// Get the content width (total width minus prefix and right padding).
+    fn content_width(&self) -> usize {
+        self.width
+            .saturating_sub(Self::PREFIX_WIDTH + Self::RIGHT_PADDING)
+            .max(1)
     }
 }
 
@@ -873,7 +932,7 @@ impl ChatView {
         }
     }
 
-    /// Format user messages with chevron prefix
+    /// Format user messages with accent stripe and padding
     fn format_user_message(
         &self,
         msg: &ChatMessage,
@@ -881,33 +940,34 @@ impl ChatView {
         lines: &mut Vec<Line<'static>>,
         joiner_before: &mut Vec<Option<String>>,
     ) {
-        let content_lines: Vec<&str> = msg.content.lines().collect();
-        let prefix_first = vec![Span::styled("❯ ", Style::default().fg(Color::Green))];
-        let prefix_next = vec![Span::raw("  ")];
-        let prefix_first_width = UnicodeWidthStr::width("❯ ");
-        let prefix_next_width = UnicodeWidthStr::width("  ");
+        if msg.content.is_empty() {
+            return;
+        }
+
+        let builder = UserMessageBlockBuilder::new(width);
         let text_style = Style::default()
             .fg(Color::White)
+            .bg(tool_block_bg())
             .add_modifier(Modifier::BOLD);
 
-        for (i, line) in content_lines.iter().enumerate() {
+        // Top padding
+        lines.push(builder.empty_line());
+        joiner_before.push(None);
+
+        for line in msg.content.lines() {
             let content_spans = vec![Span::styled(line.to_string(), text_style)];
-            let (first_prefix, first_prefix_width) = if i == 0 {
-                (prefix_first.clone(), prefix_first_width)
-            } else {
-                (prefix_next.clone(), prefix_next_width)
-            };
-            self.format_wrapped_lines(
-                lines,
-                joiner_before,
-                content_spans,
-                first_prefix,
-                prefix_next.clone(),
-                first_prefix_width,
-                prefix_next_width,
-                width,
-            );
+            let (wrapped, wrapped_joiners) =
+                wrap_spans_with_joiners(content_spans, builder.content_width());
+
+            for (wrapped_spans, joiner) in wrapped.into_iter().zip(wrapped_joiners) {
+                lines.push(builder.line(wrapped_spans));
+                joiner_before.push(joiner);
+            }
         }
+
+        // Bottom padding
+        lines.push(builder.empty_line());
+        joiner_before.push(None);
     }
 
     /// Format assistant messages - flowing text with markdown
