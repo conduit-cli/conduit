@@ -142,7 +142,7 @@ const SHELL_COMMAND_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct App {
     /// Application configuration
     config: Config,
-    /// Tool availability (git, gh, claude, codex)
+    /// Tool availability (git, gh, claude, codex, gemini)
     tools: ToolAvailability,
     /// In-memory UI state
     state: AppState,
@@ -421,7 +421,12 @@ impl App {
                         }
                     }
                     AgentType::Gemini => {
-                        // Gemini CLI session history import not supported yet.
+                        session.chat_view.push(
+                            MessageDisplay::System {
+                                content: "Gemini CLI history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                            }
+                            .to_chat_message(),
+                        );
                     }
                 }
             }
@@ -3836,7 +3841,12 @@ impl App {
                             }
                         }
                         AgentType::Gemini => {
-                            // Gemini CLI session history import not supported yet.
+                            session.chat_view.push(
+                                MessageDisplay::System {
+                                    content: "Gemini CLI history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                                }
+                                .to_chat_message(),
+                            );
                         }
                     }
                 }
@@ -4511,7 +4521,14 @@ impl App {
                 }
             }
             AgentType::Gemini => {
-                // Gemini CLI session history import not supported yet.
+                session.resume_session_id = None;
+                session.agent_session_id = None;
+                session.chat_view.push(
+                    MessageDisplay::System {
+                        content: "Gemini CLI session import isn't supported yet.".to_string(),
+                    }
+                    .to_chat_message(),
+                );
             }
         }
 
@@ -6716,27 +6733,27 @@ impl App {
         }
 
         // Start agent
-        // Strip placeholders for both Codex and Claude since images are sent separately:
-        // - Codex: images passed via --images flag
-        // - Claude: images encoded as base64 in JSONL payload
-        // This prevents the agent from trying to read the file path from the placeholder text
-        if matches!(agent_type, AgentType::Codex | AgentType::Claude) {
-            prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
-        }
-        if agent_type == AgentType::Gemini {
-            if !images.is_empty() {
-                if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
-                    session.stop_processing();
-                    let display = MessageDisplay::Error {
-                        content: "Gemini CLI does not support image attachments yet.".to_string(),
-                    };
-                    session.chat_view.push(display.to_chat_message());
-                }
-                if self.state.tab_manager.active_index() == tab_index {
-                    self.state.stop_footer_spinner();
-                }
-                return Ok(effects);
+        if agent_type == AgentType::Gemini && !images.is_empty() {
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                session.stop_processing();
+                session.pending_user_message = None;
+                let display = MessageDisplay::Error {
+                    content: "Image attachments aren't supported for Gemini in Conduit yet."
+                        .to_string(),
+                };
+                session.chat_view.push(display.to_chat_message());
             }
+            if self.state.tab_manager.active_index() == tab_index {
+                self.state.stop_footer_spinner();
+            }
+            return Ok(effects);
+        }
+
+        // Strip placeholders for agents that send images out-of-band.
+        if matches!(
+            agent_type,
+            AgentType::Codex | AgentType::Claude | AgentType::Gemini
+        ) {
             prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
         }
 
