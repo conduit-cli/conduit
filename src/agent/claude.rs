@@ -11,7 +11,7 @@ use crate::agent::events::{
     AgentEvent, AssistantMessageEvent, ControlRequestEvent, ErrorEvent, SessionInitEvent,
     TokenUsage, ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent,
 };
-use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
+use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
 use crate::agent::stream::{ClaudeRawEvent, JsonlStreamParser};
 
@@ -302,11 +302,11 @@ impl AgentRunner for ClaudeCodeRunner {
             .as_deref()
             .is_some_and(|format| format == "stream-json");
         let stdin_payload = config.stdin_payload.clone();
-        let mut input_tx: Option<mpsc::Sender<String>> = None;
+        let mut input_tx: Option<mpsc::Sender<AgentInput>> = None;
 
         if let Some(stdin) = child.stdin.take() {
             if use_stream_input {
-                let (tx, mut rx) = mpsc::channel::<String>(32);
+                let (tx, mut rx) = mpsc::channel::<AgentInput>(32);
                 input_tx = Some(tx);
                 tokio::spawn(async move {
                     use tokio::io::AsyncWriteExt;
@@ -335,10 +335,17 @@ impl AgentRunner for ClaudeCodeRunner {
                     } else {
                         tracing::info!("No initial stdin_payload to write to Claude");
                     }
-                    while let Some(line) = rx.recv().await {
-                        if let Err(err) = stdin.write_all(line.as_bytes()).await {
-                            tracing::error!("Failed to write to Claude stdin: {}", err);
-                            break;
+                    while let Some(input) = rx.recv().await {
+                        match input {
+                            AgentInput::ClaudeJsonl(line) => {
+                                if let Err(err) = stdin.write_all(line.as_bytes()).await {
+                                    tracing::error!("Failed to write to Claude stdin: {}", err);
+                                    break;
+                                }
+                            }
+                            AgentInput::CodexPrompt { .. } => {
+                                tracing::warn!("Ignored Codex prompt sent to Claude input channel");
+                            }
                         }
                     }
                     if let Err(err) = stdin.shutdown().await {
@@ -428,7 +435,9 @@ impl AgentRunner for ClaudeCodeRunner {
                                     &request.request_id,
                                     serde_json::Value::Object(response_payload),
                                 ) {
-                                    if let Err(err) = tx.send(response).await {
+                                    if let Err(err) =
+                                        tx.send(AgentInput::ClaudeJsonl(response)).await
+                                    {
                                         tracing::warn!(
                                             "Failed to respond to control request: {}",
                                             err
@@ -443,7 +452,9 @@ impl AgentRunner for ClaudeCodeRunner {
                                     &request.request_id,
                                     json!({ "decision": "allow" }),
                                 ) {
-                                    if let Err(err) = tx.send(response).await {
+                                    if let Err(err) =
+                                        tx.send(AgentInput::ClaudeJsonl(response)).await
+                                    {
                                         tracing::warn!(
                                             "Failed to respond to hook callback: {}",
                                             err
@@ -531,7 +542,11 @@ impl AgentRunner for ClaudeCodeRunner {
         Ok(AgentHandle::new(rx, pid, input_tx))
     }
 
-    async fn send_input(&self, _handle: &AgentHandle, _input: &str) -> Result<(), AgentError> {
+    async fn send_input(
+        &self,
+        _handle: &AgentHandle,
+        _input: AgentInput,
+    ) -> Result<(), AgentError> {
         // Claude Code headless mode doesn't support interactive input via stdin
         // Tool results must be sent by resuming the session with a new prompt
         Err(AgentError::NotSupported(

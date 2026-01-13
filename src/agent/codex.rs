@@ -1,31 +1,119 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::sync::{
+    atomic::{AtomicI64, Ordering},
+    Arc,
+};
 
 use async_trait::async_trait;
+use codex_app_server_protocol::{
+    AddConversationListenerParams, ApplyPatchApprovalResponse, ClientInfo, ClientNotification,
+    ClientRequest, ExecCommandApprovalResponse, InitializeParams, InputItem, JSONRPCMessage,
+    JSONRPCResponse, NewConversationParams, NewConversationResponse, RequestId,
+    ResumeConversationParams, ResumeConversationResponse, SendUserMessageParams,
+    SendUserMessageResponse, ServerRequest,
+};
+use codex_protocol::config_types::SandboxMode;
+use codex_protocol::protocol::{AskForApproval, EventMsg, FileChange, ReviewDecision};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use tokio::process::Command;
-use tokio::sync::mpsc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{ChildStdin, Command};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
-use crate::agent::display::MessageDisplay;
 use crate::agent::error::AgentError;
 use crate::agent::events::{
-    AgentEvent, AssistantMessageEvent, CommandOutputEvent, ErrorEvent, ReasoningEvent,
-    SessionInitEvent, TokenUsage, TokenUsageEvent, ToolCompletedEvent, ToolStartedEvent,
-    TurnCompletedEvent, TurnFailedEvent,
+    AgentEvent, AssistantMessageEvent, CommandOutputEvent, ContextCompactionEvent, ErrorEvent,
+    FileChangedEvent, FileOperation, ReasoningEvent, TokenUsage, TokenUsageEvent,
+    ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent, TurnFailedEvent,
 };
-use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
-use crate::agent::session::SessionId;
-use crate::agent::stream::{CodexErrorInfo, CodexThreadItem, CodexUsage, JsonlStreamParser};
+use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
+
+const CODEX_NPX_PACKAGE: &str = "@openai/codex";
+const CODEX_NPX_VERSION_ENV: &str = "CODEX_NPX_VERSION";
+
+/// Notification params containing an EventMsg
+#[derive(Debug, Deserialize)]
+struct CodexNotificationParams {
+    #[serde(rename = "msg")]
+    msg: EventMsg,
+}
+
+// ============================================================================
+// JSON-RPC Peer (bidirectional communication)
+// ============================================================================
+
+#[derive(Clone)]
+struct JsonRpcPeer {
+    stdin: Arc<Mutex<ChildStdin>>,
+    pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<Value>>>>,
+    id_counter: Arc<AtomicI64>,
+}
+
+impl JsonRpcPeer {
+    fn new(stdin: ChildStdin) -> Self {
+        Self {
+            stdin: Arc::new(Mutex::new(stdin)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            id_counter: Arc::new(AtomicI64::new(1)),
+        }
+    }
+
+    fn next_request_id(&self) -> RequestId {
+        RequestId::Integer(self.id_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    async fn send<T: Serialize>(&self, message: &T) -> io::Result<()> {
+        let raw = serde_json::to_string(message)?;
+        let mut guard = self.stdin.lock().await;
+        guard.write_all(raw.as_bytes()).await?;
+        guard.write_all(b"\n").await?;
+        guard.flush().await
+    }
+
+    async fn request<R: DeserializeOwned>(&self, request: &ClientRequest) -> io::Result<R> {
+        let request_id = match request {
+            ClientRequest::Initialize { request_id, .. }
+            | ClientRequest::NewConversation { request_id, .. }
+            | ClientRequest::ResumeConversation { request_id, .. }
+            | ClientRequest::AddConversationListener { request_id, .. }
+            | ClientRequest::SendUserMessage { request_id, .. } => request_id.clone(),
+            _ => return Err(io::Error::other("unsupported request type")),
+        };
+
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(request_id, tx);
+        self.send(request).await?;
+
+        let value = rx.await.map_err(|_| io::Error::other("response dropped"))?;
+        serde_json::from_value(value).map_err(|e| io::Error::other(e.to_string()))
+    }
+
+    async fn resolve(&self, request_id: RequestId, value: Value) {
+        if let Some(tx) = self.pending.lock().await.remove(&request_id) {
+            if tx.send(value).is_err() {
+                tracing::debug!("Dropping JSON-RPC response; receiver already closed");
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct CodexEventState {
+    exec_command_by_id: HashMap<String, String>,
+    exec_output_by_id: HashMap<String, String>,
+    last_usage: Option<TokenUsage>,
+    last_total_tokens: Option<i64>,
+    pending_compaction: bool,
+}
+
+// ============================================================================
+// Codex app-server runner
+// ============================================================================
 
 pub struct CodexCliRunner {
     binary_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-struct FunctionCallInfo {
-    name: String,
-    command: String,
 }
 
 impl CodexCliRunner {
@@ -44,420 +132,370 @@ impl CodexCliRunner {
         which::which("codex").ok()
     }
 
-    fn build_command(&self, config: &AgentStartConfig) -> Command {
+    fn npx_package() -> String {
+        if let Ok(version) = std::env::var(CODEX_NPX_VERSION_ENV) {
+            format!("{CODEX_NPX_PACKAGE}@{version}")
+        } else {
+            CODEX_NPX_PACKAGE.to_string()
+        }
+    }
+
+    fn approval_policy() -> AskForApproval {
+        match std::env::var("CODEX_APPROVAL_POLICY")
+            .unwrap_or_else(|_| "never".to_string())
+            .to_lowercase()
+            .as_str()
+        {
+            "untrusted" => AskForApproval::UnlessTrusted,
+            "on-failure" => AskForApproval::OnFailure,
+            "on-request" => AskForApproval::OnRequest,
+            "never" => AskForApproval::Never,
+            _ => AskForApproval::Never,
+        }
+    }
+
+    fn sandbox_mode() -> SandboxMode {
+        match std::env::var("CODEX_SANDBOX_MODE")
+            .unwrap_or_else(|_| "danger-full-access".to_string())
+            .to_lowercase()
+            .as_str()
+        {
+            "read-only" => SandboxMode::ReadOnly,
+            "workspace-write" => SandboxMode::WorkspaceWrite,
+            "danger-full-access" => SandboxMode::DangerFullAccess,
+            _ => SandboxMode::DangerFullAccess,
+        }
+    }
+
+    fn build_codex_command(&self, cwd: &PathBuf) -> io::Result<Command> {
         let mut cmd = Command::new(&self.binary_path);
+        cmd.arg("app-server");
+        cmd.current_dir(cwd);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.env("NODE_NO_WARNINGS", "1");
+        cmd.env("NO_COLOR", "1");
+        Ok(cmd)
+    }
 
-        // Start with exec subcommand
-        cmd.arg("exec");
+    fn build_npx_command(&self, cwd: &PathBuf) -> io::Result<Command> {
+        let mut cmd = Command::new("npx");
+        cmd.args(["-y", &Self::npx_package(), "app-server"]);
+        cmd.current_dir(cwd);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.env("NODE_NO_WARNINGS", "1");
+        cmd.env("NO_COLOR", "1");
+        Ok(cmd)
+    }
 
-        // Flags must come before positional arguments in Codex CLI
-        cmd.arg("--json");
-
-        // Model selection (flag, so comes before positional args)
-        if let Some(model) = &config.model {
-            cmd.arg("-m").arg(model);
+    fn build_input_items(prompt: &str, images: &[PathBuf]) -> Vec<InputItem> {
+        let mut items = Vec::new();
+        if !prompt.trim().is_empty() {
+            items.push(InputItem::Text {
+                text: prompt.to_string(),
+            });
         }
+        for image in images {
+            items.push(InputItem::LocalImage {
+                path: image.clone(),
+            });
+        }
+        items
+    }
 
-        if !config.images.is_empty() {
-            for image in &config.images {
-                cmd.arg("--image").arg(image);
+    fn to_file_operation(change: &FileChange) -> FileOperation {
+        match change {
+            FileChange::Add { .. } => FileOperation::Create,
+            FileChange::Delete { .. } => FileOperation::Delete,
+            FileChange::Update { .. } => FileOperation::Update,
+        }
+    }
+
+    fn convert_event(event: &EventMsg, state: &mut CodexEventState) -> Vec<AgentEvent> {
+        match event {
+            EventMsg::TurnStarted(_) => vec![AgentEvent::TurnStarted],
+            EventMsg::TurnComplete(_) => {
+                let usage = state.last_usage.clone().unwrap_or_default();
+                vec![AgentEvent::TurnCompleted(TurnCompletedEvent { usage })]
             }
-        }
-
-        // High reasoning effort for better responses
-        cmd.arg("-c").arg("model_reasoning_effort=\"high\"");
-
-        // Enable web search
-        cmd.arg("-c").arg("features.web_search_request=true");
-
-        // --yolo bypasses approvals and sandbox restrictions
-        // Required for git operations in worktrees and complex repo structures
-        cmd.arg("--yolo");
-
-        // Additional args (assumed to be flags)
-        for arg in &config.additional_args {
-            cmd.arg(arg);
-        }
-
-        // Now add positional arguments: resume/prompt
-        // Use "--" to signal end of flags, so prompts starting with "-" (like "- [ ] task")
-        // are not interpreted as CLI arguments
-        if let Some(session_id) = &config.resume_session {
-            // Resume existing session: exec [flags] resume <session_id> -- [prompt]
-            cmd.arg("resume").arg(session_id.as_str());
-            if !config.prompt.is_empty() {
-                cmd.arg("--").arg(&config.prompt);
+            EventMsg::TurnAborted(ev) => vec![AgentEvent::TurnFailed(TurnFailedEvent {
+                error: format!("Turn aborted: {:?}", ev.reason),
+            })],
+            EventMsg::AgentMessageDelta(msg) => {
+                vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                    text: msg.delta.clone(),
+                    is_final: false,
+                })]
             }
-        } else {
-            // New session: exec [flags] -- <prompt>
-            if !config.prompt.is_empty() {
-                cmd.arg("--").arg(&config.prompt);
-            }
-        }
-
-        // Working directory
-        cmd.current_dir(&config.working_dir);
-
-        // Stdio setup
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        cmd
-    }
-
-    fn extract_text_content(payload: &Value) -> String {
-        if let Some(blocks) = payload.get("content").and_then(|c| c.as_array()) {
-            return blocks
-                .iter()
-                .filter_map(|block| {
-                    let block_type = block.get("type")?.as_str()?;
-                    match block_type {
-                        "input_text" | "output_text" | "text" => {
-                            block.get("text")?.as_str().map(|s| s.to_string())
-                        }
-                        _ => None,
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-        }
-
-        payload
-            .get("text")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string()
-    }
-
-    fn extract_summary_text(payload: &Value) -> Option<String> {
-        let summary = payload.get("summary")?.as_array()?;
-        let text = summary
-            .iter()
-            .filter_map(|entry| entry.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
-    }
-
-    fn parse_args(payload: &Value) -> Option<Value> {
-        if let Some(args_str) = payload.get("arguments").and_then(|a| a.as_str()) {
-            serde_json::from_str::<Value>(args_str).ok()
-        } else {
-            payload
-                .get("arguments")
-                .and_then(|a| a.as_object())
-                .map(|args_obj| Value::Object(args_obj.clone()))
-        }
-    }
-
-    fn extract_command_from_args(args: &Value) -> Option<String> {
-        args.get("command")
-            .or_else(|| args.get("cmd"))
-            .or_else(|| args.get("file_path"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-    }
-
-    fn extract_function_call_info(raw: &Value) -> Option<(String, FunctionCallInfo)> {
-        let entry_type = raw.get("type")?.as_str()?;
-        if entry_type != "response_item" {
-            return None;
-        }
-        let payload = raw.get("payload")?;
-        let payload_type = payload.get("type")?.as_str()?;
-        if payload_type != "function_call" {
-            return None;
-        }
-
-        let call_id = payload.get("call_id")?.as_str()?.to_string();
-        let name = payload.get("name")?.as_str()?.to_string();
-        let args = Self::parse_args(payload).unwrap_or(Value::Null);
-        let command = Self::extract_command_from_args(&args).unwrap_or_default();
-
-        Some((call_id, FunctionCallInfo { name, command }))
-    }
-
-    fn convert_message(payload: &Value) -> Option<AgentEvent> {
-        let role = payload.get("role").and_then(|r| r.as_str())?;
-        let text = Self::extract_text_content(payload);
-        if text.is_empty() {
-            return None;
-        }
-
-        match role {
-            "assistant" => Some(AgentEvent::AssistantMessage(AssistantMessageEvent {
-                text,
-                is_final: true,
-            })),
-            "user" => None,
-            _ => None,
-        }
-    }
-
-    fn convert_response_item(
-        payload: &Value,
-        function_calls: &HashMap<String, FunctionCallInfo>,
-    ) -> Option<AgentEvent> {
-        let payload_type = payload.get("type").and_then(|t| t.as_str())?;
-        match payload_type {
-            "message" => Self::convert_message(payload),
-            "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("tool");
-                let args = Self::parse_args(payload).unwrap_or(Value::Null);
-                Some(AgentEvent::ToolStarted(ToolStartedEvent {
-                    tool_name: name.to_string(),
-                    tool_id: name.to_string(),
-                    arguments: args,
-                }))
-            }
-            "function_call_output" => {
-                let call_id = payload
-                    .get("call_id")
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
-                let raw_output = payload.get("output").and_then(|o| o.as_str()).unwrap_or("");
-                let (output, exit_code) = MessageDisplay::parse_codex_tool_output(raw_output);
-                let info = function_calls.get(call_id);
-                let tool_name = info.map(|i| i.name.as_str()).unwrap_or("tool");
-                let command = info.map(|i| i.command.as_str()).unwrap_or(call_id);
-
-                if Self::is_shell_tool(tool_name) {
-                    Some(AgentEvent::CommandOutput(CommandOutputEvent {
-                        command: command.to_string(),
-                        output,
-                        exit_code,
-                        is_streaming: false,
-                    }))
-                } else {
-                    Some(AgentEvent::ToolCompleted(ToolCompletedEvent {
-                        tool_id: tool_name.to_string(),
-                        success: true,
-                        result: Some(output),
-                        error: None,
-                    }))
-                }
-            }
-            "reasoning" => Self::extract_summary_text(payload)
-                .map(|text| AgentEvent::AssistantReasoning(ReasoningEvent { text })),
-            _ => Some(AgentEvent::Raw {
-                data: payload.clone(),
-            }),
-        }
-    }
-
-    fn convert_event_msg(payload: &Value) -> Option<AgentEvent> {
-        let payload_type = payload.get("type").and_then(|t| t.as_str())?;
-        match payload_type {
-            "agent_message" => payload.get("message").and_then(|m| m.as_str()).map(|text| {
-                AgentEvent::AssistantMessage(AssistantMessageEvent {
-                    text: text.to_string(),
+            EventMsg::AgentMessage(msg) => {
+                vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                    text: msg.message.clone(),
                     is_final: true,
-                })
-            }),
-            "agent_reasoning" => payload.get("text").and_then(|t| t.as_str()).map(|text| {
-                AgentEvent::AssistantReasoning(ReasoningEvent {
-                    text: text.to_string(),
-                })
-            }),
-            "token_count" => {
-                let info = payload.get("info")?;
-                let total = info
-                    .get("total_token_usage")
-                    .or_else(|| info.get("last_token_usage"))?;
-                let input_tokens = total.get("input_tokens")?.as_i64()?;
-                let output_tokens = total.get("output_tokens")?.as_i64()?;
-                let cached_tokens = total
-                    .get("cached_input_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                let total_tokens = total
-                    .get("total_tokens")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(input_tokens + output_tokens);
-                let context_window = info.get("model_context_window").and_then(|v| v.as_i64());
-
-                Some(AgentEvent::TokenUsage(TokenUsageEvent {
-                    usage: TokenUsage {
-                        input_tokens,
-                        output_tokens,
-                        cached_tokens,
-                        total_tokens,
-                    },
-                    context_window,
-                    usage_percent: None,
-                }))
+                })]
             }
-            _ => Some(AgentEvent::Raw {
-                data: payload.clone(),
-            }),
-        }
-    }
-
-    fn convert_thread_event(raw: &Value) -> Option<AgentEvent> {
-        let event_type = raw.get("type").and_then(|t| t.as_str())?;
-        match event_type {
-            "thread.started" => raw.get("thread_id").and_then(|v| v.as_str()).map(|id| {
-                AgentEvent::SessionInit(SessionInitEvent {
-                    session_id: SessionId::from_string(id.to_string()),
-                    model: None,
-                })
-            }),
-            "turn.started" => Some(AgentEvent::TurnStarted),
-            "turn.completed" => {
-                let usage: CodexUsage = serde_json::from_value(raw.get("usage")?.clone()).ok()?;
-                Some(AgentEvent::TurnCompleted(TurnCompletedEvent {
-                    usage: TokenUsage {
-                        input_tokens: usage.input_tokens,
-                        output_tokens: usage.output_tokens,
-                        cached_tokens: usage.cached_input_tokens,
-                        total_tokens: usage.input_tokens + usage.output_tokens,
-                    },
-                }))
+            EventMsg::AgentReasoningDelta(r) => {
+                vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                    text: r.delta.clone(),
+                })]
             }
-            "turn.failed" => {
-                let error: CodexErrorInfo =
-                    serde_json::from_value(raw.get("error")?.clone()).ok()?;
-                Some(AgentEvent::TurnFailed(TurnFailedEvent {
-                    error: error.message,
-                }))
-            }
-            "item.started" => {
-                let item: CodexThreadItem =
-                    serde_json::from_value(raw.get("item")?.clone()).ok()?;
-                Self::convert_item_started_event(&item)
-            }
-            "item.completed" | "item.updated" => {
-                let item: CodexThreadItem =
-                    serde_json::from_value(raw.get("item")?.clone()).ok()?;
-                Self::convert_item_event(&item)
-            }
-            "error" => raw.get("message").and_then(|m| m.as_str()).map(|message| {
-                AgentEvent::Error(ErrorEvent {
-                    message: message.to_string(),
-                    is_fatal: true,
-                })
-            }),
-            _ => None,
-        }
-    }
+            EventMsg::AgentReasoning(r) => vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                text: r.text.clone(),
+            })],
+            EventMsg::ExecCommandBegin(cmd) => {
+                let command_str = cmd.command.join(" ");
+                state
+                    .exec_command_by_id
+                    .insert(cmd.call_id.clone(), command_str.clone());
+                state
+                    .exec_output_by_id
+                    .insert(cmd.call_id.clone(), String::new());
 
-    /// Convert Codex-specific event to unified AgentEvent
-    fn convert_event(
-        raw: &Value,
-        function_calls: &HashMap<String, FunctionCallInfo>,
-    ) -> Option<AgentEvent> {
-        let event_type = raw.get("type").and_then(|t| t.as_str())?;
-        match event_type {
-            "session_meta" => raw.get("payload").and_then(|p| {
-                p.get("id").and_then(|id| id.as_str()).map(|id| {
-                    AgentEvent::SessionInit(SessionInitEvent {
-                        session_id: SessionId::from_string(id.to_string()),
-                        model: None,
-                    })
-                })
-            }),
-            "response_item" => raw
-                .get("payload")
-                .and_then(|payload| Self::convert_response_item(payload, function_calls)),
-            "event_msg" => raw.get("payload").and_then(Self::convert_event_msg),
-            "message" => Self::convert_message(raw),
-            "thread.started" | "turn.started" | "turn.completed" | "turn.failed"
-            | "item.started" | "item.updated" | "item.completed" | "error" => {
-                Self::convert_thread_event(raw)
-            }
-            _ => Some(AgentEvent::Raw { data: raw.clone() }),
-        }
-    }
-
-    /// Convert item.started events to ToolStarted events
-    /// This creates the placeholder message that CommandOutput will later update
-    fn convert_item_started_event(item: &CodexThreadItem) -> Option<AgentEvent> {
-        let item_type = item.item_type.as_deref()?;
-
-        match item_type {
-            "command_execution" | "local_shell_call" => {
-                let command = item
-                    .details
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("shell");
-
-                Some(AgentEvent::ToolStarted(ToolStartedEvent {
+                vec![AgentEvent::ToolStarted(ToolStartedEvent {
                     tool_name: "Bash".to_string(),
-                    tool_id: "Bash".to_string(),
-                    arguments: serde_json::json!({ "command": command }),
-                }))
+                    tool_id: cmd.call_id.clone(),
+                    arguments: serde_json::json!({ "command": command_str }),
+                })]
             }
-            _ => None, // Other item types don't need ToolStarted
-        }
-    }
-
-    fn convert_item_event(item: &CodexThreadItem) -> Option<AgentEvent> {
-        let item_type = item.item_type.as_deref()?;
-
-        match item_type {
-            "agent_message" | "message" => {
-                let text = Self::extract_text_content(&item.details);
-                if text.is_empty() {
-                    return None;
-                }
-                Some(AgentEvent::AssistantMessage(AssistantMessageEvent {
-                    text,
-                    is_final: true,
-                }))
+            EventMsg::ExecCommandOutputDelta(delta) => {
+                let chunk = String::from_utf8_lossy(&delta.chunk).to_string();
+                let entry = state
+                    .exec_output_by_id
+                    .entry(delta.call_id.clone())
+                    .or_default();
+                entry.push_str(&chunk);
+                let command = state
+                    .exec_command_by_id
+                    .get(&delta.call_id)
+                    .cloned()
+                    .unwrap_or_default();
+                vec![AgentEvent::CommandOutput(CommandOutputEvent {
+                    command,
+                    output: entry.clone(),
+                    exit_code: None,
+                    is_streaming: true,
+                })]
             }
-            "command_execution" | "local_shell_call" => {
-                let command = item
-                    .details
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let output = item
-                    .details
-                    .get("aggregated_output")
-                    .or_else(|| item.details.get("output"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let exit_code = item
-                    .details
-                    .get("exit_code")
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-                Some(AgentEvent::CommandOutput(CommandOutputEvent {
-                    command: command.to_string(),
-                    output: output.to_string(),
-                    exit_code,
+            EventMsg::ExecCommandEnd(end) => {
+                let output = if !end.aggregated_output.is_empty() {
+                    end.aggregated_output.clone()
+                } else {
+                    format!("{}{}", end.stdout, end.stderr)
+                };
+                let command = end.command.join(" ");
+                state.exec_output_by_id.remove(&end.call_id);
+                state.exec_command_by_id.remove(&end.call_id);
+                vec![AgentEvent::CommandOutput(CommandOutputEvent {
+                    command,
+                    output,
+                    exit_code: Some(end.exit_code),
                     is_streaming: false,
-                }))
+                })]
             }
-            _ => None,
+            EventMsg::McpToolCallBegin(ev) => {
+                let tool_name = format!("mcp:{}::{}", ev.invocation.server, ev.invocation.tool);
+                let args = ev
+                    .invocation
+                    .arguments
+                    .clone()
+                    .unwrap_or_else(|| Value::Null);
+                vec![AgentEvent::ToolStarted(ToolStartedEvent {
+                    tool_name,
+                    tool_id: ev.call_id.clone(),
+                    arguments: args,
+                })]
+            }
+            EventMsg::McpToolCallEnd(ev) => {
+                let tool_name = format!("mcp:{}::{}", ev.invocation.server, ev.invocation.tool);
+                let (success, result, error) = match &ev.result {
+                    Ok(result) => {
+                        let rendered = serde_json::to_string(result).unwrap_or_default();
+                        (!result.is_error.unwrap_or(false), Some(rendered), None)
+                    }
+                    Err(err) => (false, None, Some(err.clone())),
+                };
+                vec![AgentEvent::ToolCompleted(ToolCompletedEvent {
+                    tool_id: tool_name,
+                    success,
+                    result,
+                    error,
+                })]
+            }
+            EventMsg::WebSearchBegin(ev) => vec![AgentEvent::ToolStarted(ToolStartedEvent {
+                tool_name: "WebSearch".to_string(),
+                tool_id: ev.call_id.clone(),
+                arguments: Value::Null,
+            })],
+            EventMsg::WebSearchEnd(ev) => vec![AgentEvent::ToolCompleted(ToolCompletedEvent {
+                tool_id: "WebSearch".to_string(),
+                success: true,
+                result: Some(format!("Query: {}", ev.query)),
+                error: None,
+            })],
+            EventMsg::PatchApplyBegin(ev) => {
+                let files: Vec<String> = ev
+                    .changes
+                    .keys()
+                    .map(|path| path.display().to_string())
+                    .collect();
+                let mut events = vec![AgentEvent::ToolStarted(ToolStartedEvent {
+                    tool_name: "ApplyPatch".to_string(),
+                    tool_id: ev.call_id.clone(),
+                    arguments: serde_json::json!({ "files": files }),
+                })];
+                for (path, change) in &ev.changes {
+                    events.push(AgentEvent::FileChanged(FileChangedEvent {
+                        path: path.display().to_string(),
+                        operation: Self::to_file_operation(change),
+                    }));
+                }
+                events
+            }
+            EventMsg::PatchApplyEnd(ev) => {
+                let output = if ev.success {
+                    ev.stdout.clone()
+                } else {
+                    format!("{}{}", ev.stdout, ev.stderr)
+                };
+                vec![AgentEvent::ToolCompleted(ToolCompletedEvent {
+                    tool_id: "ApplyPatch".to_string(),
+                    success: ev.success,
+                    result: Some(output),
+                    error: if ev.success {
+                        None
+                    } else {
+                        Some(ev.stderr.clone())
+                    },
+                })]
+            }
+            EventMsg::ViewImageToolCall(ev) => {
+                let args = serde_json::json!({ "path": ev.path });
+                vec![
+                    AgentEvent::ToolStarted(ToolStartedEvent {
+                        tool_name: "ViewImage".to_string(),
+                        tool_id: ev.call_id.clone(),
+                        arguments: args,
+                    }),
+                    AgentEvent::ToolCompleted(ToolCompletedEvent {
+                        tool_id: "ViewImage".to_string(),
+                        success: true,
+                        result: Some(ev.path.display().to_string()),
+                        error: None,
+                    }),
+                ]
+            }
+            EventMsg::TokenCount(count) => {
+                let mut events = Vec::new();
+                if let Some(info) = &count.info {
+                    let total = &info.total_token_usage;
+                    let usage = TokenUsage {
+                        input_tokens: total.input_tokens,
+                        output_tokens: total.output_tokens,
+                        cached_tokens: total.cached_input_tokens,
+                        total_tokens: total.total_tokens,
+                    };
+                    let context_window = info.model_context_window;
+                    let usage_percent = context_window.and_then(|window| {
+                        if window > 0 {
+                            Some((usage.total_tokens as f32 / window as f32) * 100.0)
+                        } else {
+                            None
+                        }
+                    });
+                    let previous_total = state.last_total_tokens;
+                    state.last_total_tokens = Some(usage.total_tokens);
+                    state.last_usage = Some(usage.clone());
+
+                    if let Some(prev) = previous_total {
+                        if state.pending_compaction && prev > 0 {
+                            events.push(AgentEvent::ContextCompaction(ContextCompactionEvent {
+                                reason: "context_compacted".to_string(),
+                                tokens_before: prev,
+                                tokens_after: usage.total_tokens,
+                            }));
+                            state.pending_compaction = false;
+                        } else if usage.total_tokens < prev {
+                            events.push(AgentEvent::ContextCompaction(ContextCompactionEvent {
+                                reason: "token_count_drop".to_string(),
+                                tokens_before: prev,
+                                tokens_after: usage.total_tokens,
+                            }));
+                        }
+                    }
+
+                    events.push(AgentEvent::TokenUsage(TokenUsageEvent {
+                        usage,
+                        context_window,
+                        usage_percent,
+                    }));
+                }
+                events
+            }
+            EventMsg::ContextCompacted(_) => {
+                state.pending_compaction = true;
+                Vec::new()
+            }
+            EventMsg::Error(err) => vec![
+                AgentEvent::Error(ErrorEvent {
+                    message: err.message.clone(),
+                    is_fatal: true,
+                }),
+                AgentEvent::TurnFailed(TurnFailedEvent {
+                    error: err.message.clone(),
+                }),
+            ],
+            EventMsg::Warning(warn) => vec![AgentEvent::Error(ErrorEvent {
+                message: format!("Warning: {}", warn.message),
+                is_fatal: false,
+            })],
+            EventMsg::StreamError(err) => vec![AgentEvent::Error(ErrorEvent {
+                message: format!("Stream error: {}", err.message),
+                is_fatal: false,
+            })],
+            _ => serde_json::to_value(event)
+                .ok()
+                .map(|data| vec![AgentEvent::Raw { data }])
+                .unwrap_or_default(),
         }
     }
 
-    fn is_shell_tool(name: &str) -> bool {
-        matches!(
-            name,
-            "shell_command"
-                | "exec_command"
-                | "command_execution"
-                | "local_shell_call"
-                | "shell"
-                | "Bash"
-        )
+    async fn send_user_message(
+        peer: &JsonRpcPeer,
+        conversation_id: codex_protocol::ThreadId,
+        prompt: &str,
+        images: &[PathBuf],
+    ) -> io::Result<()> {
+        let items = Self::build_input_items(prompt, images);
+        if items.is_empty() {
+            return Ok(());
+        }
+        let request = ClientRequest::SendUserMessage {
+            request_id: peer.next_request_id(),
+            params: SendUserMessageParams {
+                conversation_id,
+                items,
+            },
+        };
+        let _: SendUserMessageResponse = peer.request(&request).await?;
+        Ok(())
     }
-}
 
-impl Default for CodexCliRunner {
-    fn default() -> Self {
-        Self::new()
+    async fn spawn_app_server(&self, cwd: &PathBuf) -> Result<tokio::process::Child, AgentError> {
+        if self.binary_path.exists() {
+            let mut cmd = self.build_codex_command(cwd)?;
+            match cmd.spawn() {
+                Ok(child) => return Ok(child),
+                Err(err) => {
+                    tracing::warn!(error = %err, "Failed to spawn codex app-server, falling back to npx");
+                }
+            }
+        }
+
+        let mut cmd = self.build_npx_command(cwd)?;
+        let child = cmd.spawn()?;
+        Ok(child)
     }
 }
 
@@ -468,62 +506,257 @@ impl AgentRunner for CodexCliRunner {
     }
 
     async fn start(&self, config: AgentStartConfig) -> Result<AgentHandle, AgentError> {
-        let mut cmd = self.build_command(&config);
-        let mut child = cmd.spawn()?;
-
+        let mut child = self.spawn_app_server(&config.working_dir).await?;
         let pid = child.id().ok_or(AgentError::ProcessSpawnFailed)?;
-        let stdout = child.stdout.take().ok_or(AgentError::StdoutCaptureFailed)?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AgentError::Io(io::Error::other("failed to capture stdin")))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AgentError::StdoutCaptureFailed)?;
         let stderr = child.stderr.take();
+
+        let peer = JsonRpcPeer::new(stdin);
 
         let (tx, rx) = mpsc::channel::<AgentEvent>(256);
         let tx_for_monitor = tx.clone();
 
-        // Spawn JSONL parser task
+        // Spawn JSON-RPC read loop
+        let reader_peer = peer.clone();
         tokio::spawn(async move {
-            let (raw_tx, mut raw_rx) = mpsc::channel::<Value>(256);
-            let tx_for_parser = tx.clone();
+            let mut reader = BufReader::new(stdout);
+            let mut buffer = String::new();
+            let mut state = CodexEventState::default();
 
-            let parse_handle = tokio::spawn(async move {
-                if let Err(e) = JsonlStreamParser::parse_stream(stdout, raw_tx).await {
-                    if let Err(send_err) = tx_for_parser
-                        .send(AgentEvent::Error(ErrorEvent {
-                            message: format!("Stream parsing error: {}", e),
-                            is_fatal: true,
-                        }))
-                        .await
-                    {
-                        tracing::debug!(
-                            error = ?send_err,
-                            "Failed to send Codex stream parsing error"
-                        );
-                    }
-                }
-            });
-
-            let mut function_calls: HashMap<String, FunctionCallInfo> = HashMap::new();
-            let mut last_assistant_text: Option<String> = None;
-
-            while let Some(raw_event) = raw_rx.recv().await {
-                if let Some((call_id, info)) = Self::extract_function_call_info(&raw_event) {
-                    function_calls.insert(call_id, info);
-                }
-                if let Some(event) = Self::convert_event(&raw_event, &function_calls) {
-                    if let AgentEvent::AssistantMessage(msg) = &event {
-                        if last_assistant_text.as_deref() == Some(msg.text.as_str()) {
+            loop {
+                buffer.clear();
+                match reader.read_line(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let line = buffer.trim();
+                        if line.is_empty() {
                             continue;
                         }
-                        last_assistant_text = Some(msg.text.clone());
+
+                        match serde_json::from_str::<JSONRPCMessage>(line) {
+                            Ok(JSONRPCMessage::Response(response)) => {
+                                reader_peer
+                                    .resolve(response.id.clone(), response.result)
+                                    .await;
+                            }
+                            Ok(JSONRPCMessage::Notification(notification)) => {
+                                if notification.method.starts_with("codex/event/") {
+                                    if let Some(params) = notification.params {
+                                        match serde_json::from_value::<CodexNotificationParams>(
+                                            params,
+                                        ) {
+                                            Ok(codex_params) => {
+                                                let events = Self::convert_event(
+                                                    &codex_params.msg,
+                                                    &mut state,
+                                                );
+                                                for event in events {
+                                                    if tx.send(event).await.is_err() {
+                                                        return;
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    error = %err,
+                                                    "Failed to parse codex event notification"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(JSONRPCMessage::Request(request)) => {
+                                if let Ok(server_req) = ServerRequest::try_from(request) {
+                                    match server_req {
+                                        ServerRequest::ApplyPatchApproval {
+                                            request_id, ..
+                                        } => {
+                                            let response = JSONRPCResponse {
+                                                id: request_id,
+                                                result: serde_json::to_value(
+                                                    ApplyPatchApprovalResponse {
+                                                        decision: ReviewDecision::Approved,
+                                                    },
+                                                )
+                                                .unwrap_or(Value::Null),
+                                            };
+                                            if let Err(err) = reader_peer.send(&response).await {
+                                                tracing::warn!(
+                                                    error = %err,
+                                                    "Failed to send patch approval response"
+                                                );
+                                            }
+                                        }
+                                        ServerRequest::ExecCommandApproval {
+                                            request_id, ..
+                                        } => {
+                                            let response = JSONRPCResponse {
+                                                id: request_id,
+                                                result: serde_json::to_value(
+                                                    ExecCommandApprovalResponse {
+                                                        decision: ReviewDecision::Approved,
+                                                    },
+                                                )
+                                                .unwrap_or(Value::Null),
+                                            };
+                                            if let Err(err) = reader_peer.send(&response).await {
+                                                tracing::warn!(
+                                                    error = %err,
+                                                    "Failed to send exec approval response"
+                                                );
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            Ok(JSONRPCMessage::Error(err)) => {
+                                let message = format!("[Error] {}", err.error.message);
+                                if let Err(err) = tx
+                                    .send(AgentEvent::Error(ErrorEvent {
+                                        message,
+                                        is_fatal: true,
+                                    }))
+                                    .await
+                                {
+                                    tracing::debug!(
+                                        error = ?err,
+                                        "Failed to forward JSON-RPC error event"
+                                    );
+                                }
+                                reader_peer.resolve(err.id.clone(), Value::Null).await;
+                            }
+                            Err(err) => {
+                                tracing::warn!(error = %err, "Non-JSON output from codex app-server");
+                            }
+                        }
                     }
-                    if tx.send(event).await.is_err() {
+                    Err(err) => {
+                        tracing::warn!(error = %err, "Codex app-server read loop failed");
                         break;
                     }
                 }
             }
+        });
 
-            if let Err(join_err) = parse_handle.await {
-                tracing::warn!(error = ?join_err, "Codex parser task failed to join");
+        // Initialize connection
+        let init_request = ClientRequest::Initialize {
+            request_id: peer.next_request_id(),
+            params: InitializeParams {
+                client_info: ClientInfo {
+                    name: "conduit".to_string(),
+                    title: Some("Conduit".to_string()),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+            },
+        };
+        let _: Value = peer.request(&init_request).await?;
+        peer.send(&ClientNotification::Initialized).await?;
+
+        let mut conversation_id = None;
+
+        if let Some(resume_session) = &config.resume_session {
+            let thread_id = codex_protocol::ThreadId::from_string(resume_session.as_str())
+                .map_err(|err| AgentError::Config(err.to_string()))?;
+            let request = ClientRequest::ResumeConversation {
+                request_id: peer.next_request_id(),
+                params: ResumeConversationParams {
+                    path: None,
+                    conversation_id: Some(thread_id),
+                    history: None,
+                    overrides: Some(NewConversationParams {
+                        model: config.model.clone(),
+                        model_provider: None,
+                        profile: None,
+                        cwd: Some(config.working_dir.to_string_lossy().to_string()),
+                        approval_policy: Some(Self::approval_policy()),
+                        sandbox: Some(Self::sandbox_mode()),
+                        config: None,
+                        base_instructions: None,
+                        developer_instructions: None,
+                        compact_prompt: None,
+                        include_apply_patch_tool: None,
+                    }),
+                },
+            };
+            let response: ResumeConversationResponse = peer.request(&request).await?;
+            conversation_id = Some(response.conversation_id);
+        }
+
+        if conversation_id.is_none() {
+            let conv_request = ClientRequest::NewConversation {
+                request_id: peer.next_request_id(),
+                params: NewConversationParams {
+                    model: config.model.clone(),
+                    profile: None,
+                    cwd: Some(config.working_dir.to_string_lossy().to_string()),
+                    approval_policy: Some(Self::approval_policy()),
+                    sandbox: Some(Self::sandbox_mode()),
+                    config: None,
+                    base_instructions: None,
+                    include_apply_patch_tool: None,
+                    model_provider: None,
+                    compact_prompt: None,
+                    developer_instructions: None,
+                },
+            };
+            let response: NewConversationResponse = peer.request(&conv_request).await?;
+            conversation_id = Some(response.conversation_id);
+        }
+
+        let conversation_id = conversation_id.ok_or_else(|| {
+            AgentError::Config("Failed to establish Codex conversation".to_string())
+        })?;
+
+        // Subscribe to conversation events
+        let listen_request = ClientRequest::AddConversationListener {
+            request_id: peer.next_request_id(),
+            params: AddConversationListenerParams {
+                conversation_id,
+                experimental_raw_events: false,
+            },
+        };
+        let _: Value = peer.request(&listen_request).await?;
+
+        // Input channel for subsequent prompts
+        let (input_tx, mut input_rx) = mpsc::channel::<AgentInput>(32);
+        let input_peer = peer.clone();
+        let input_conversation_id = conversation_id;
+        tokio::spawn(async move {
+            while let Some(input) = input_rx.recv().await {
+                match input {
+                    AgentInput::CodexPrompt { text, images } => {
+                        if let Err(err) = Self::send_user_message(
+                            &input_peer,
+                            input_conversation_id,
+                            &text,
+                            &images,
+                        )
+                        .await
+                        {
+                            tracing::warn!(error = %err, "Failed to send Codex prompt");
+                        }
+                    }
+                    AgentInput::ClaudeJsonl(_) => {
+                        tracing::warn!("Ignored Claude JSONL sent to Codex input channel");
+                    }
+                }
             }
         });
+
+        // Send initial prompt if present
+        if !config.prompt.trim().is_empty() || !config.images.is_empty() {
+            Self::send_user_message(&peer, conversation_id, &config.prompt, &config.images).await?;
+        }
 
         // Monitor process and capture stderr on failure
         tokio::spawn(async move {
@@ -531,18 +764,16 @@ impl AgentRunner for CodexCliRunner {
 
             let status = child.wait().await;
 
-            // Read stderr if available
             let stderr_content = if let Some(mut stderr) = stderr {
                 let mut buf = String::new();
-                if let Err(e) = stderr.read_to_string(&mut buf).await {
-                    tracing::debug!(error = %e, "Failed to read Codex stderr");
+                if let Err(err) = stderr.read_to_string(&mut buf).await {
+                    tracing::debug!(error = %err, "Failed to read Codex stderr");
                 }
                 buf
             } else {
                 String::new()
             };
 
-            // Check if process failed
             match status {
                 Ok(exit_status) if !exit_status.success() => {
                     let error_msg = if stderr_content.is_empty() {
@@ -554,7 +785,7 @@ impl AgentRunner for CodexCliRunner {
                             stderr_content.trim()
                         )
                     };
-                    if let Err(send_err) = tx_for_monitor
+                    if let Err(err) = tx_for_monitor
                         .send(AgentEvent::Error(ErrorEvent {
                             message: error_msg,
                             is_fatal: true,
@@ -562,39 +793,44 @@ impl AgentRunner for CodexCliRunner {
                         .await
                     {
                         tracing::debug!(
-                            error = ?send_err,
-                            "Failed to send Codex process failure"
+                            error = ?err,
+                            "Failed to send Codex process failure event"
                         );
                     }
                 }
-                Err(e) => {
-                    let error_msg = format!("Failed to wait for Codex process: {}", e);
+                Err(err) => {
                     if let Err(send_err) = tx_for_monitor
                         .send(AgentEvent::Error(ErrorEvent {
-                            message: error_msg,
+                            message: format!("Failed to wait for Codex process: {}", err),
                             is_fatal: true,
                         }))
                         .await
                     {
-                        tracing::debug!(error = ?send_err, "Failed to send Codex wait error");
+                        tracing::debug!(
+                            error = ?send_err,
+                            "Failed to send Codex wait error event"
+                        );
                     }
                 }
                 Ok(_) => {
-                    // Process exited successfully, but if there was stderr output, log it
                     if !stderr_content.is_empty() {
-                        // Could log this for debugging, but don't treat as error
+                        tracing::debug!("Codex stderr: {}", stderr_content.trim());
                     }
                 }
             }
         });
 
-        Ok(AgentHandle::new(rx, pid, None))
+        Ok(AgentHandle::new(rx, pid, Some(input_tx)))
     }
 
-    async fn send_input(&self, _handle: &AgentHandle, _input: &str) -> Result<(), AgentError> {
-        Err(AgentError::NotSupported(
-            "Codex exec mode doesn't support interactive input".into(),
-        ))
+    async fn send_input(&self, handle: &AgentHandle, input: AgentInput) -> Result<(), AgentError> {
+        let Some(ref input_tx) = handle.input_tx else {
+            return Err(AgentError::ChannelClosed);
+        };
+        input_tx
+            .send(input)
+            .await
+            .map_err(|_| AgentError::ChannelClosed)
     }
 
     async fn stop(&self, handle: &AgentHandle) -> Result<(), AgentError> {
@@ -634,7 +870,7 @@ impl AgentRunner for CodexCliRunner {
     }
 
     fn is_available(&self) -> bool {
-        self.binary_path.exists() || Self::find_binary().is_some()
+        self.binary_path.exists() || Self::find_binary().is_some() || which::which("npx").is_ok()
     }
 
     fn binary_path(&self) -> Option<PathBuf> {
@@ -646,376 +882,28 @@ impl AgentRunner for CodexCliRunner {
     }
 }
 
+impl Default for CodexCliRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn get_command_args(cmd: &Command) -> Vec<String> {
-        cmd.as_std()
-            .get_args()
-            .map(|s| s.to_string_lossy().to_string())
-            .collect()
-    }
-
     #[test]
-    fn test_prompt_starting_with_dash_is_escaped() {
-        let runner = CodexCliRunner {
-            binary_path: PathBuf::from("/usr/bin/codex"),
-        };
-        let config = AgentStartConfig::new(
-            "- [ ] Try to understand the source of this error",
-            PathBuf::from("/tmp"),
+    fn test_build_input_items_with_text_and_images() {
+        let items = CodexCliRunner::build_input_items(
+            "hello",
+            &[
+                PathBuf::from("/tmp/test.png"),
+                PathBuf::from("/tmp/other.png"),
+            ],
         );
-
-        let cmd = runner.build_command(&config);
-        let args = get_command_args(&cmd);
-
-        // Find the position of "--" and verify the prompt comes after it
-        let double_dash_pos = args.iter().position(|a| a == "--");
-        assert!(
-            double_dash_pos.is_some(),
-            "Command should contain '--' separator. Args: {:?}",
-            args
-        );
-
-        let prompt_pos = args
-            .iter()
-            .position(|a| a == "- [ ] Try to understand the source of this error");
-        assert!(
-            prompt_pos.is_some(),
-            "Command should contain the prompt. Args: {:?}",
-            args
-        );
-
-        assert!(
-            prompt_pos.unwrap() > double_dash_pos.unwrap(),
-            "Prompt should come after '--' separator. Args: {:?}",
-            args
-        );
-    }
-
-    #[test]
-    fn test_prompt_without_dash_still_works() {
-        let runner = CodexCliRunner {
-            binary_path: PathBuf::from("/usr/bin/codex"),
-        };
-        let config = AgentStartConfig::new("Hello, can you help me?", PathBuf::from("/tmp"));
-
-        let cmd = runner.build_command(&config);
-        let args = get_command_args(&cmd);
-
-        // Should still contain "--" for consistency
-        assert!(
-            args.contains(&"--".to_string()),
-            "Command should contain '--' separator. Args: {:?}",
-            args
-        );
-        assert!(
-            args.contains(&"Hello, can you help me?".to_string()),
-            "Command should contain the prompt. Args: {:?}",
-            args
-        );
-    }
-
-    #[test]
-    fn test_resume_session_with_dash_prompt() {
-        let runner = CodexCliRunner {
-            binary_path: PathBuf::from("/usr/bin/codex"),
-        };
-        let config = AgentStartConfig::new("- continue with this task", PathBuf::from("/tmp"))
-            .with_resume(SessionId::from_string("session-123".to_string()));
-
-        let cmd = runner.build_command(&config);
-        let args = get_command_args(&cmd);
-
-        // Check command structure: ... resume session-123 -- "- continue..."
-        let resume_pos = args.iter().position(|a| a == "resume");
-        let session_pos = args.iter().position(|a| a == "session-123");
-        let double_dash_pos = args.iter().position(|a| a == "--");
-        let prompt_pos = args.iter().position(|a| a == "- continue with this task");
-
-        assert!(
-            resume_pos.is_some(),
-            "Should contain 'resume'. Args: {:?}",
-            args
-        );
-        assert!(
-            session_pos.is_some(),
-            "Should contain session ID. Args: {:?}",
-            args
-        );
-        assert!(
-            double_dash_pos.is_some(),
-            "Should contain '--'. Args: {:?}",
-            args
-        );
-        assert!(
-            prompt_pos.is_some(),
-            "Should contain prompt. Args: {:?}",
-            args
-        );
-
-        // Verify order: resume < session_id < -- < prompt
-        assert!(
-            resume_pos.unwrap() < session_pos.unwrap(),
-            "'resume' should come before session ID"
-        );
-        assert!(
-            session_pos.unwrap() < double_dash_pos.unwrap(),
-            "session ID should come before '--'"
-        );
-        assert!(
-            double_dash_pos.unwrap() < prompt_pos.unwrap(),
-            "'--' should come before prompt"
-        );
-    }
-
-    /// Test that function_call events are converted to ToolStarted events
-    #[test]
-    fn test_function_call_produces_tool_started() {
-        let raw_event = serde_json::json!({
-            "type": "response_item",
-            "payload": {
-                "type": "function_call",
-                "name": "exec_command",
-                "arguments": "{\"cmd\":\"ls -la\"}",
-                "call_id": "call_test123"
-            }
-        });
-        let function_calls = HashMap::new();
-
-        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
-
-        assert!(event.is_some(), "function_call should produce an event");
-        match event.unwrap() {
-            AgentEvent::ToolStarted(tool) => {
-                assert_eq!(tool.tool_name, "exec_command");
-                // Arguments should be parsed
-                assert!(!tool.arguments.is_null());
-            }
-            other => panic!(
-                "Expected ToolStarted event, got {:?}",
-                std::mem::discriminant(&other)
-            ),
-        }
-    }
-
-    /// Test that function_call_output events are converted to CommandOutput for shell tools
-    #[test]
-    fn test_function_call_output_produces_command_output() {
-        let raw_event = serde_json::json!({
-            "type": "response_item",
-            "payload": {
-                "type": "function_call_output",
-                "call_id": "call_test123",
-                "output": "Process exited with code 0\nOutput:\nfile1.txt\nfile2.txt"
-            }
-        });
-
-        // Pre-populate function_calls with the call info
-        let mut function_calls = HashMap::new();
-        function_calls.insert(
-            "call_test123".to_string(),
-            FunctionCallInfo {
-                name: "exec_command".to_string(),
-                command: "ls -la".to_string(),
-            },
-        );
-
-        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
-
-        assert!(
-            event.is_some(),
-            "function_call_output should produce an event"
-        );
-        match event.unwrap() {
-            AgentEvent::CommandOutput(cmd) => {
-                assert_eq!(cmd.command, "ls -la");
-                assert!(cmd.output.contains("file1.txt"));
-                assert_eq!(cmd.exit_code, Some(0));
-            }
-            other => panic!(
-                "Expected CommandOutput event, got {:?}",
-                std::mem::discriminant(&other)
-            ),
-        }
-    }
-
-    /// Test the full event cycle: function_call followed by function_call_output
-    #[test]
-    fn test_codex_tool_event_cycle() {
-        // Simulate the event sequence from a real Codex session
-        let function_call_event = serde_json::json!({
-            "type": "response_item",
-            "payload": {
-                "type": "function_call",
-                "name": "exec_command",
-                "arguments": "{\"cmd\":\"ls\"}",
-                "call_id": "call_abc123"
-            }
-        });
-
-        let function_call_output_event = serde_json::json!({
-            "type": "response_item",
-            "payload": {
-                "type": "function_call_output",
-                "call_id": "call_abc123",
-                "output": "Process exited with code 0\nOutput:\nAGENTS.md\nCargo.toml"
-            }
-        });
-
-        let mut function_calls = HashMap::new();
-
-        // First event: function_call
-        if let Some((call_id, info)) =
-            CodexCliRunner::extract_function_call_info(&function_call_event)
-        {
-            function_calls.insert(call_id, info);
-        }
-
-        let event1 = CodexCliRunner::convert_event(&function_call_event, &function_calls);
-        assert!(
-            matches!(event1, Some(AgentEvent::ToolStarted(_))),
-            "First event should be ToolStarted"
-        );
-
-        // Second event: function_call_output (uses the function_calls map)
-        let event2 = CodexCliRunner::convert_event(&function_call_output_event, &function_calls);
-        assert!(
-            matches!(event2, Some(AgentEvent::CommandOutput(_))),
-            "Second event should be CommandOutput"
-        );
-
-        // Verify the CommandOutput has the correct command from the lookup
-        if let Some(AgentEvent::CommandOutput(cmd)) = event2 {
-            assert_eq!(
-                cmd.command, "ls",
-                "Command should be looked up from function_calls"
-            );
-        }
-    }
-
-    /// Test that item.started events are converted to ToolStarted events
-    #[test]
-    fn test_item_started_produces_tool_started() {
-        // This is the actual structure from a real Codex session
-        // CodexThreadItem requires an "id" field
-        let raw_event = serde_json::json!({
-            "type": "item.started",
-            "item": {
-                "id": "item_123",
-                "type": "command_execution",
-                "command": "/bin/zsh -lc \"sed -n '6420,7855p' ~/code/file.rs\"",
-                "status": "in_progress"
-            }
-        });
-        let function_calls = HashMap::new();
-
-        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
-
-        assert!(event.is_some(), "item.started should produce an event");
-        match event.unwrap() {
-            AgentEvent::ToolStarted(tool) => {
-                assert_eq!(tool.tool_name, "Bash");
-                assert_eq!(tool.tool_id, "Bash");
-                // Arguments should contain the command
-                let args = tool.arguments;
-                assert!(
-                    args.get("command").is_some(),
-                    "Arguments should contain the command"
-                );
-            }
-            other => panic!(
-                "Expected ToolStarted event, got {:?}",
-                std::mem::discriminant(&other)
-            ),
-        }
-    }
-
-    /// Test that item.completed events for command_execution produce CommandOutput
-    #[test]
-    fn test_item_completed_produces_command_output() {
-        let raw_event = serde_json::json!({
-            "type": "item.completed",
-            "item": {
-                "id": "item_456",
-                "type": "command_execution",
-                "command": "ls -la",
-                "aggregated_output": "file1.txt\nfile2.txt",
-                "exit_code": 0
-            }
-        });
-        let function_calls = HashMap::new();
-
-        let event = CodexCliRunner::convert_event(&raw_event, &function_calls);
-
-        assert!(event.is_some(), "item.completed should produce an event");
-        match event.unwrap() {
-            AgentEvent::CommandOutput(cmd) => {
-                assert_eq!(cmd.command, "ls -la");
-                assert!(cmd.output.contains("file1.txt"));
-                assert_eq!(cmd.exit_code, Some(0));
-            }
-            other => panic!(
-                "Expected CommandOutput event, got {:?}",
-                std::mem::discriminant(&other)
-            ),
-        }
-    }
-
-    /// Test the full item event cycle: item.started followed by item.completed
-    #[test]
-    fn test_item_event_cycle() {
-        // Simulate the event sequence from a real Codex session using item.* events
-        let item_started_event = serde_json::json!({
-            "type": "item.started",
-            "item": {
-                "id": "item_789",
-                "type": "command_execution",
-                "command": "ls -la",
-                "status": "in_progress"
-            }
-        });
-
-        let item_completed_event = serde_json::json!({
-            "type": "item.completed",
-            "item": {
-                "id": "item_789",
-                "type": "command_execution",
-                "command": "ls -la",
-                "aggregated_output": "total 123\ndrwxr-xr-x  10 user  staff   320 Jan  8 10:00 .\ndrwxr-xr-x   5 user  staff   160 Jan  8 09:00 ..",
-                "exit_code": 0
-            }
-        });
-
-        let function_calls = HashMap::new();
-
-        // First event: item.started should create ToolStarted
-        let event1 = CodexCliRunner::convert_event(&item_started_event, &function_calls);
-        assert!(
-            matches!(event1, Some(AgentEvent::ToolStarted(_))),
-            "item.started should produce ToolStarted, got {:?}",
-            event1.as_ref().map(std::mem::discriminant)
-        );
-
-        // Second event: item.completed should create CommandOutput
-        let event2 = CodexCliRunner::convert_event(&item_completed_event, &function_calls);
-        assert!(
-            matches!(event2, Some(AgentEvent::CommandOutput(_))),
-            "item.completed should produce CommandOutput, got {:?}",
-            event2.as_ref().map(std::mem::discriminant)
-        );
-
-        // Verify the ToolStarted has correct tool info
-        if let Some(AgentEvent::ToolStarted(tool)) = event1 {
-            assert_eq!(tool.tool_name, "Bash");
-        }
-
-        // Verify the CommandOutput has the correct output
-        if let Some(AgentEvent::CommandOutput(cmd)) = event2 {
-            assert_eq!(cmd.command, "ls -la");
-            assert!(cmd.output.contains("total 123"));
-            assert_eq!(cmd.exit_code, Some(0));
-        }
+        assert_eq!(items.len(), 3);
+        assert!(matches!(items[0], InputItem::Text { .. }));
+        assert!(matches!(items[1], InputItem::LocalImage { .. }));
+        assert!(matches!(items[2], InputItem::LocalImage { .. }));
     }
 }

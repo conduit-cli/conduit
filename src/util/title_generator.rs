@@ -10,6 +10,8 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::process::Command;
 
+use crate::agent::{AgentEvent, AgentRunner, AgentStartConfig, CodexCliRunner};
+
 use super::{Tool, ToolAvailability};
 
 /// Timeout for AI title generation calls
@@ -168,27 +170,43 @@ async fn call_codex(
     prompt: &str,
     working_dir: &PathBuf,
 ) -> Result<GeneratedMetadata, TitleGeneratorError> {
-    let mut cmd = Command::new(binary_path);
-    // Codex CLI uses different flags
-    cmd.args(["--quiet", "--approval-mode", "full-auto"]);
-    cmd.arg(prompt);
-    cmd.current_dir(working_dir);
-    cmd.kill_on_drop(true);
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    let runner = CodexCliRunner::with_path(binary_path.clone());
+    let config = AgentStartConfig::new(prompt, working_dir.clone());
+    let mut handle = runner
+        .start(config)
+        .await
+        .map_err(|err| TitleGeneratorError::AiCallFailed(err.to_string()))?;
 
-    let output = cmd.output().await?;
+    let mut response = String::new();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(TitleGeneratorError::AiCallFailed(format!(
-            "Codex process failed: {}",
-            stderr
-        )));
+    while let Some(event) = handle.events.recv().await {
+        match event {
+            AgentEvent::AssistantMessage(msg) => {
+                response.push_str(&msg.text);
+                if msg.is_final {
+                    // Continue; we still wait for TurnCompleted to avoid truncation.
+                }
+            }
+            AgentEvent::TurnCompleted(_) => break,
+            AgentEvent::Error(err) => {
+                if let Err(stop_err) = runner.stop(&handle).await {
+                    tracing::debug!(
+                        error = %stop_err,
+                        "Failed to stop Codex app-server after title generation error"
+                    );
+                }
+                return Err(TitleGeneratorError::AiCallFailed(err.message));
+            }
+            _ => {}
+        }
     }
 
-    let response = String::from_utf8_lossy(&output.stdout);
+    if let Err(stop_err) = runner.stop(&handle).await {
+        tracing::debug!(
+            error = %stop_err,
+            "Failed to stop Codex app-server after title generation"
+        );
+    }
     parse_json_response(&response)
 }
 

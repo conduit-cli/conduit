@@ -37,6 +37,10 @@ anyhow = "1.0"
 # Async trait
 async-trait = "0.1"
 
+# Codex app-server protocol
+codex-protocol = { git = "https://github.com/openai/codex.git", rev = "d75626ad9970133b82d9ca3c0914190785a421ea" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", rev = "d75626ad9970133b82d9ca3c0914190785a421ea" }
+
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 

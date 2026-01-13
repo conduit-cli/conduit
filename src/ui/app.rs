@@ -28,9 +28,9 @@ use uuid::Uuid;
 
 use crate::agent::events::UserQuestion;
 use crate::agent::{
-    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
-    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
-    HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
+    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentInput,
+    AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner,
+    GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::data::{
@@ -5817,8 +5817,19 @@ impl App {
             }
 
             // Record raw event for debug view
-            let event_type = event.event_type_name();
-            let raw_json = serde_json::to_value(&event).unwrap_or_default();
+            let (event_type, raw_json) = match &event {
+                AgentEvent::Raw { data } => {
+                    let event_type = data
+                        .get("type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("Raw");
+                    (event_type.to_string(), data.clone())
+                }
+                _ => (
+                    event.event_type_name().to_string(),
+                    serde_json::to_value(&event).unwrap_or_default(),
+                ),
+            };
             session.record_raw_event(EventDirection::Received, event_type, raw_json);
 
             match event {
@@ -6018,7 +6029,9 @@ impl App {
                                 if let Some(ref input_tx) = session.agent_input_tx {
                                     let input_tx = input_tx.clone();
                                     tokio::spawn(async move {
-                                        if let Err(err) = input_tx.send(jsonl).await {
+                                        if let Err(err) =
+                                            input_tx.send(AgentInput::ClaudeJsonl(jsonl)).await
+                                        {
                                             tracing::warn!(
                                                 "Failed to send deferred control response: {}",
                                                 err
@@ -6247,7 +6260,10 @@ impl App {
                             let input_tx = input_tx.clone();
                             let jsonl_to_send = jsonl.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                if let Err(err) = input_tx
+                                    .send(AgentInput::ClaudeJsonl(jsonl_to_send))
+                                    .await
+                                {
                                     tracing::warn!(
                                         "Failed to send tool result via streaming input: {}",
                                         err
@@ -6293,7 +6309,10 @@ impl App {
                             let input_tx = input_tx.clone();
                             let jsonl_to_send = jsonl.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                if let Err(err) = input_tx
+                                    .send(AgentInput::ClaudeJsonl(jsonl_to_send))
+                                    .await
+                                {
                                     tracing::warn!(
                                         "Failed to send control response via streaming input: {}",
                                         err
@@ -6819,7 +6838,9 @@ impl App {
                     if let Some(payload) = stdin_payload.clone() {
                         let input_tx = input_tx.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = input_tx.send(payload).await {
+                            if let Err(err) =
+                                input_tx.send(AgentInput::ClaudeJsonl(payload)).await
+                            {
                                 tracing::warn!("Failed to send streaming prompt: {}", err);
                             }
                         });
@@ -6831,6 +6852,33 @@ impl App {
                         }
                         return Ok(Vec::new());
                     }
+                }
+            }
+        }
+
+        if agent_type == AgentType::Codex {
+            let is_active_tab = self.state.tab_manager.active_index() == tab_index;
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                if let Some(ref input_tx) = session.agent_input_tx {
+                    let input_tx = input_tx.clone();
+                    let prompt_to_send = prompt.clone();
+                    let images_to_send = images.clone();
+                    tokio::spawn(async move {
+                        let input = AgentInput::CodexPrompt {
+                            text: prompt_to_send,
+                            images: images_to_send,
+                        };
+                        if let Err(err) = input_tx.send(input).await {
+                            tracing::warn!("Failed to send codex prompt: {}", err);
+                        }
+                    });
+
+                    session.start_processing();
+                    session.set_processing_state(ProcessingState::Thinking);
+                    if is_active_tab {
+                        self.state.start_footer_spinner(None);
+                    }
+                    return Ok(Vec::new());
                 }
             }
         }

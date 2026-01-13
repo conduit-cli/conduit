@@ -179,6 +179,15 @@ impl AgentStartConfig {
     }
 }
 
+/// Input payload for running agents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentInput {
+    /// Raw JSONL payload for Claude streaming input.
+    ClaudeJsonl(String),
+    /// Codex prompt with optional local images.
+    CodexPrompt { text: String, images: Vec<PathBuf> },
+}
+
 /// Handle to a running agent process
 pub struct AgentHandle {
     /// Receiver for agent events
@@ -188,14 +197,14 @@ pub struct AgentHandle {
     /// Process ID for monitoring
     pub pid: u32,
     /// Optional input channel for streaming stdin payloads
-    pub input_tx: Option<mpsc::Sender<String>>,
+    pub input_tx: Option<mpsc::Sender<AgentInput>>,
 }
 
 impl AgentHandle {
     pub fn new(
         events: mpsc::Receiver<AgentEvent>,
         pid: u32,
-        input_tx: Option<mpsc::Sender<String>>,
+        input_tx: Option<mpsc::Sender<AgentInput>>,
     ) -> Self {
         Self {
             events,
@@ -209,7 +218,7 @@ impl AgentHandle {
         self.session_id = Some(session_id);
     }
 
-    pub fn take_input_sender(&mut self) -> Option<mpsc::Sender<String>> {
+    pub fn take_input_sender(&mut self) -> Option<mpsc::Sender<AgentInput>> {
         self.input_tx.take()
     }
 }
@@ -224,7 +233,7 @@ pub trait AgentRunner: Send + Sync {
     async fn start(&self, config: AgentStartConfig) -> Result<AgentHandle, AgentError>;
 
     /// Send input to a running agent (for interactive prompts)
-    async fn send_input(&self, handle: &AgentHandle, input: &str) -> Result<(), AgentError>;
+    async fn send_input(&self, handle: &AgentHandle, input: AgentInput) -> Result<(), AgentError>;
 
     /// Request graceful shutdown
     async fn stop(&self, handle: &AgentHandle) -> Result<(), AgentError>;

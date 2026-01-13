@@ -88,6 +88,8 @@ impl Tool {
 pub enum ToolStatus {
     /// Tool is available at the given path
     Available(PathBuf),
+    /// Tool is available via npx at the given path
+    AvailableViaNpx(PathBuf),
     /// Tool was not found in PATH or configured location
     #[default]
     NotFound,
@@ -98,7 +100,7 @@ pub enum ToolStatus {
 impl ToolStatus {
     /// Check if the tool is available
     pub fn is_available(&self) -> bool {
-        matches!(self, ToolStatus::Available(_))
+        matches!(self, ToolStatus::Available(_) | ToolStatus::AvailableViaNpx(_))
     }
 
     /// Get the path if available
@@ -186,7 +188,12 @@ impl ToolAvailability {
         match which::which(tool.binary_name()) {
             Ok(path) => ToolStatus::Available(path),
             Err(_) => {
-                if tool == Tool::Gemini {
+                if tool == Tool::Codex {
+                    match which::which("npx") {
+                        Ok(path) => ToolStatus::AvailableViaNpx(path),
+                        Err(_) => ToolStatus::NotFound,
+                    }
+                } else if tool == Tool::Gemini {
                     match which::which("npx") {
                         Ok(path) => ToolStatus::Available(path),
                         Err(_) => ToolStatus::NotFound,
@@ -361,6 +368,7 @@ mod tests {
     #[test]
     fn test_tool_status_is_available() {
         assert!(ToolStatus::Available(PathBuf::from("/bin/test")).is_available());
+        assert!(ToolStatus::AvailableViaNpx(PathBuf::from("/bin/npx")).is_available());
         assert!(!ToolStatus::NotFound.is_available());
         assert!(!ToolStatus::ConfiguredPathInvalid(PathBuf::from("/bad")).is_available());
     }

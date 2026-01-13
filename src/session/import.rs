@@ -634,6 +634,17 @@ fn parse_codex_session_file(path: &PathBuf) -> Option<ExternalSession> {
             }
         }
 
+        // Fallback: extract project from session_meta payload when thread.started is missing
+        if project.is_none() && entry.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
+            if let Some(payload) = entry.get("payload") {
+                if let Some(meta) = payload.get("meta") {
+                    if let Some(cwd) = meta.get("cwd").and_then(|c| c.as_str()) {
+                        project = Some(cwd.to_string());
+                    }
+                }
+            }
+        }
+
         // Count messages and get first user message
         if entry.get("type").and_then(|t| t.as_str()) == Some("response_item") {
             if let Some(payload) = entry.get("payload") {
