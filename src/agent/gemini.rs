@@ -156,9 +156,7 @@ impl acp::Client for GeminiAcpClient {
                     tool_call.title.clone()
                 };
                 self.store_tool_title(&tool_id, title.clone());
-                let arguments = tool_call
-                    .raw_input
-                    .unwrap_or_else(|| serde_json::Value::Null);
+                let arguments = tool_call.raw_input.unwrap_or(serde_json::Value::Null);
                 self.send_event(AgentEvent::ToolStarted(ToolStartedEvent {
                     tool_name: title.clone(),
                     tool_id,
