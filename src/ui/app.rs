@@ -68,6 +68,7 @@ mod app_actions_queue;
 mod app_actions_raw_events;
 mod app_actions_scroll;
 mod app_actions_sidebar;
+mod app_actions_submit;
 mod app_actions_tabs;
 mod app_input;
 mod app_scroll;
@@ -1662,12 +1663,8 @@ impl App {
             | Action::HistoryNext => {
                 self.handle_input_edit_action(action);
             }
-            Action::Submit => {
-                effects
-                    .extend(self.handle_submit_action(crate::data::QueuedMessageMode::FollowUp)?);
-            }
-            Action::SubmitSteer => {
-                effects.extend(self.handle_submit_action(crate::data::QueuedMessageMode::Steer)?);
+            Action::Submit | Action::SubmitSteer => {
+                self.handle_submit_related_action(action, &mut effects)?;
             }
             Action::OpenQueueEditor
             | Action::CloseQueueEditor
@@ -9482,5 +9479,16 @@ mod tests {
             .active_session()
             .expect("session missing");
         assert_eq!(session.agent_type, AgentType::Claude);
+    }
+
+    #[test]
+    fn test_handle_submit_related_action_with_no_session() {
+        let mut app = build_test_app_with_sessions(&[]);
+        let mut effects = Vec::new();
+
+        app.handle_submit_related_action(Action::Submit, &mut effects)
+            .unwrap();
+
+        assert!(effects.is_empty());
     }
 }
