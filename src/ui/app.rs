@@ -60,6 +60,7 @@ use crate::ui::terminal_guard::TerminalGuard;
 use crate::util::ToolAvailability;
 
 mod app_actions_confirmation;
+mod app_actions_dialog;
 mod app_actions_global;
 mod app_actions_input_edit;
 mod app_actions_list;
@@ -1765,117 +1766,11 @@ impl App {
                     }
                 }
             }
-            Action::Cancel => match self.state.input_mode {
-                InputMode::SidebarNavigation => {
-                    self.state.input_mode = InputMode::Normal;
-                    self.state.sidebar_state.set_focused(false);
-                }
-                InputMode::SelectingModel => {
-                    self.state.model_selector_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::SelectingTheme => {
-                    self.state.theme_picker_state.hide(true); // Cancelled - restore original
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::SelectingAgent => {
-                    self.state.agent_selector_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::PickingProject => {
-                    self.state.project_picker_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::AddingRepository => {
-                    self.state.add_repo_dialog_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::SettingBaseDir => {
-                    self.state.base_dir_dialog_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::Confirming => {
-                    self.state.input_mode = self.dismiss_confirmation_dialog();
-                }
-                InputMode::ShowingError => {
-                    self.state.error_dialog_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::MissingTool => {
-                    self.state.missing_tool_dialog_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::Scrolling => {
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::Command => {
-                    self.state.command_buffer.clear();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::ShowingHelp => {
-                    self.state.help_dialog_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::ImportingSession => {
-                    self.state.session_import_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::CommandPalette => {
-                    self.state.command_palette_state.hide();
-                    self.state.input_mode = InputMode::Normal;
-                }
-                InputMode::QueueEditing => {
-                    self.close_queue_editor();
-                }
-                _ => {}
-            },
-            Action::AddRepository => match self.state.input_mode {
-                InputMode::SidebarNavigation => {
-                    self.state.close_overlays();
-                    self.state.add_repo_dialog_state.show();
-                    self.state.input_mode = InputMode::AddingRepository;
-                }
-                InputMode::PickingProject => {
-                    self.state.project_picker_state.hide();
-                    self.state.close_overlays();
-                    self.state.add_repo_dialog_state.show();
-                    self.state.input_mode = InputMode::AddingRepository;
-                }
-                _ => {}
-            },
-            Action::OpenSettings => {
-                if self.state.input_mode == InputMode::SidebarNavigation {
-                    self.state.close_overlays();
-                    if let Some(dao) = &self.app_state_dao {
-                        if let Ok(Some(current_dir)) = dao.get("projects_base_dir") {
-                            self.state
-                                .base_dir_dialog_state
-                                .show_with_path(&current_dir);
-                        } else {
-                            self.state.base_dir_dialog_state.show();
-                        }
-                    } else {
-                        self.state.base_dir_dialog_state.show();
-                    }
-                    self.state.input_mode = InputMode::SettingBaseDir;
-                }
-            }
-            Action::ArchiveOrRemove => {
-                if self.state.input_mode == InputMode::SidebarNavigation {
-                    let selected = self.state.sidebar_state.tree_state.selected;
-                    if let Some(node) = self.state.sidebar_data.get_at(selected) {
-                        use crate::ui::components::NodeType;
-                        match node.node_type {
-                            NodeType::Workspace => {
-                                self.initiate_archive_workspace(node.id);
-                            }
-                            NodeType::Repository => {
-                                self.initiate_remove_project(node.id);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+            Action::Cancel
+            | Action::AddRepository
+            | Action::OpenSettings
+            | Action::ArchiveOrRemove => {
+                self.handle_dialog_action(action);
             }
 
             // ========== Raw Events View ==========
@@ -9360,5 +9255,28 @@ mod tests {
             effects.as_slice(),
             [Effect::CopyToClipboard(content)] if content == "workspace"
         ));
+    }
+
+    #[test]
+    fn test_handle_dialog_cancel_clears_command_buffer() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::Command;
+        app.state.command_buffer = "cmd".to_string();
+
+        app.handle_dialog_action(Action::Cancel);
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(app.state.command_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_handle_dialog_add_repository_from_sidebar() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::SidebarNavigation;
+
+        app.handle_dialog_action(Action::AddRepository);
+
+        assert_eq!(app.state.input_mode, InputMode::AddingRepository);
+        assert!(app.state.add_repo_dialog_state.path.is_visible());
     }
 }
