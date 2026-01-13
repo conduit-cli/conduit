@@ -60,6 +60,7 @@ use crate::ui::terminal_guard::TerminalGuard;
 use crate::util::ToolAvailability;
 
 mod app_actions_confirmation;
+mod app_actions_input_edit;
 mod app_actions_list;
 mod app_actions_pr;
 mod app_actions_queue;
@@ -1641,167 +1642,24 @@ impl App {
             }
 
             // ========== Input Box Editing ==========
-            Action::InsertNewline => {
-                // Don't insert newlines in help dialog, command mode, or sidebar navigation
-                if self.state.input_mode != InputMode::ShowingHelp
-                    && self.state.input_mode != InputMode::Command
-                    && self.state.input_mode != InputMode::SidebarNavigation
-                {
-                    if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        session.input_box.insert_newline();
-                    }
-                }
-            }
-            Action::Backspace => {
-                match self.state.input_mode {
-                    InputMode::Command => {
-                        if self.state.command_buffer.is_empty() {
-                            // Exit command mode if buffer is empty
-                            self.state.input_mode = InputMode::Normal;
-                        } else {
-                            self.state.command_buffer.pop();
-                        }
-                    }
-                    InputMode::ShowingHelp => {
-                        self.state.help_dialog_state.delete_char();
-                    }
-                    InputMode::ImportingSession => {
-                        self.state.session_import_state.delete_char();
-                    }
-                    InputMode::PickingProject => {
-                        self.state.project_picker_state.delete_char();
-                    }
-                    InputMode::CommandPalette => {
-                        self.state.command_palette_state.delete_char();
-                    }
-                    InputMode::SettingBaseDir => {
-                        self.state.base_dir_dialog_state.delete_char();
-                    }
-                    InputMode::MissingTool => {
-                        self.state.missing_tool_dialog_state.backspace();
-                    }
-                    InputMode::SelectingTheme => {
-                        self.state.theme_picker_state.backspace();
-                    }
-                    InputMode::SelectingModel => {
-                        self.state.model_selector_state.delete_char();
-                    }
-                    _ => {
-                        if let Some(session) = self.state.tab_manager.active_session_mut() {
-                            session.input_box.backspace();
-                        }
-                    }
-                }
-            }
-            Action::Delete => {
-                if self.state.input_mode == InputMode::MissingTool {
-                    self.state.missing_tool_dialog_state.delete();
-                } else if self.state.input_mode == InputMode::SelectingTheme {
-                    self.state.theme_picker_state.delete();
-                } else if self.state.input_mode == InputMode::SelectingModel {
-                    self.state.model_selector_state.delete_forward();
-                } else if self.state.input_mode == InputMode::SettingBaseDir {
-                    self.state.base_dir_dialog_state.delete_forward();
-                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.delete();
-                }
-            }
-            Action::DeleteWordBack => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.delete_word_back();
-                }
-            }
-            Action::DeleteWordForward => {
-                // TODO: implement delete_word_forward in InputBox
-            }
-            Action::DeleteToStart => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.delete_to_start();
-                }
-            }
-            Action::DeleteToEnd => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.delete_to_end();
-                }
-            }
-            Action::MoveCursorLeft => {
-                if self.state.input_mode == InputMode::SelectingTheme {
-                    self.state.theme_picker_state.move_left();
-                } else if self.state.input_mode == InputMode::SelectingModel {
-                    self.state.model_selector_state.move_cursor_left();
-                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_left();
-                }
-            }
-            Action::MoveCursorRight => {
-                if self.state.input_mode == InputMode::SelectingTheme {
-                    self.state.theme_picker_state.move_right();
-                } else if self.state.input_mode == InputMode::SelectingModel {
-                    self.state.model_selector_state.move_cursor_right();
-                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_right();
-                }
-            }
-            Action::MoveCursorStart => {
-                if self.state.input_mode == InputMode::SelectingTheme {
-                    self.state.theme_picker_state.move_to_start();
-                } else if self.state.input_mode == InputMode::SelectingModel {
-                    self.state.model_selector_state.move_cursor_start();
-                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_start();
-                }
-            }
-            Action::MoveCursorEnd => {
-                if self.state.input_mode == InputMode::SelectingTheme {
-                    self.state.theme_picker_state.move_to_end();
-                } else if self.state.input_mode == InputMode::SelectingModel {
-                    self.state.model_selector_state.move_cursor_end();
-                } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_end();
-                }
-            }
-            Action::MoveWordLeft => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_word_left();
-                }
-            }
-            Action::MoveWordRight => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.move_word_right();
-                }
-            }
-            Action::MoveCursorUp => {
-                let mut dequeued = None;
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    if !session.input_box.move_up() && session.input_box.is_cursor_on_first_line() {
-                        if session.input_box.is_empty() && !session.queued_messages.is_empty() {
-                            dequeued = session.dequeue_last();
-                        } else {
-                            session.input_box.history_prev();
-                        }
-                    }
-                }
-                if let Some(message) = dequeued {
-                    self.restore_queued_to_input(message);
-                }
-            }
-            Action::MoveCursorDown => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    if !session.input_box.move_down() && session.input_box.is_cursor_on_last_line()
-                    {
-                        session.input_box.history_next();
-                    }
-                }
-            }
-            Action::HistoryPrev => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.history_prev();
-                }
-            }
-            Action::HistoryNext => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.input_box.history_next();
-                }
+            Action::InsertNewline
+            | Action::Backspace
+            | Action::Delete
+            | Action::DeleteWordBack
+            | Action::DeleteWordForward
+            | Action::DeleteToStart
+            | Action::DeleteToEnd
+            | Action::MoveCursorLeft
+            | Action::MoveCursorRight
+            | Action::MoveCursorStart
+            | Action::MoveCursorEnd
+            | Action::MoveWordLeft
+            | Action::MoveWordRight
+            | Action::MoveCursorUp
+            | Action::MoveCursorDown
+            | Action::HistoryPrev
+            | Action::HistoryNext => {
+                self.handle_input_edit_action(action);
             }
             Action::Submit => {
                 effects
@@ -8981,9 +8839,11 @@ mod tests {
     use crate::agent::events::AssistantMessageEvent;
     use crate::agent::AgentType;
     use crate::config::Config;
+    use crate::data::{QueuedMessage, QueuedMessageMode};
     use crate::ui::components::MessageRole;
     use crate::ui::session::AgentSession;
     use crate::util::ToolAvailability;
+    use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
@@ -9539,5 +9399,50 @@ mod tests {
         assert_eq!(app.state.input_mode, InputMode::SidebarNavigation);
         assert!(!app.state.confirmation_dialog_state.visible);
         assert!(app.state.confirmation_dialog_state.context.is_none());
+    }
+
+    #[test]
+    fn test_handle_input_edit_backspace_exits_command_mode_when_empty() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::Command;
+        app.state.command_buffer.clear();
+
+        app.handle_input_edit_action(Action::Backspace);
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(app.state.command_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_handle_input_edit_move_cursor_up_dequeues_queue() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let queued = QueuedMessage {
+            id: Uuid::new_v4(),
+            mode: QueuedMessageMode::FollowUp,
+            text: "queued message".to_string(),
+            images: Vec::new(),
+            created_at: Utc::now(),
+        };
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.queue_message(queued);
+            assert!(session.input_box.input().is_empty());
+        }
+
+        app.handle_input_edit_action(Action::MoveCursorUp);
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.input_box.input(), "queued message");
+        assert!(session.queued_messages.is_empty());
     }
 }
