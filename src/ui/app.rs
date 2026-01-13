@@ -3898,9 +3898,7 @@ impl App {
 
     /// Clamp unsupported agent modes to a safe default.
     fn clamp_agent_mode(agent_type: AgentType, mode: AgentMode) -> AgentMode {
-        if matches!(agent_type, AgentType::Codex | AgentType::Gemini)
-            && mode == AgentMode::Plan
-        {
+        if matches!(agent_type, AgentType::Codex | AgentType::Gemini) && mode == AgentMode::Plan {
             AgentMode::Build
         } else {
             mode
