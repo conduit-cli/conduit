@@ -62,6 +62,7 @@ use crate::util::ToolAvailability;
 mod app_actions_confirmation;
 mod app_actions_input_edit;
 mod app_actions_list;
+mod app_actions_overlay;
 mod app_actions_pr;
 mod app_actions_queue;
 mod app_actions_raw_events;
@@ -2077,25 +2078,17 @@ impl App {
                 self.handle_confirmation_action(action, &mut effects)?;
             }
             Action::ToggleDetails => {
-                if self.state.input_mode == InputMode::ShowingError {
-                    self.state.error_dialog_state.toggle_details();
-                }
+                self.handle_overlay_action(action);
             }
 
             // ========== Agent Selection ==========
             Action::SelectAgent => {
-                if self.state.input_mode == InputMode::SelectingAgent {
-                    let agent_type = self.state.agent_selector_state.selected_agent();
-                    self.state.agent_selector_state.hide();
-                    self.create_tab_with_agent(agent_type);
-                }
+                self.handle_overlay_action(action);
             }
 
             // ========== Command Mode ==========
             Action::ShowHelp => {
-                self.state.close_overlays();
-                self.state.help_dialog_state.show(&self.config.keybindings);
-                self.state.input_mode = InputMode::ShowingHelp;
+                self.handle_overlay_action(action);
             }
             Action::ExecuteCommand => {
                 if self.state.input_mode == InputMode::Command {
@@ -2117,16 +2110,7 @@ impl App {
 
             // ========== Command Palette ==========
             Action::OpenCommandPalette => {
-                self.state.close_overlays();
-                let supports_plan_mode = self
-                    .state
-                    .tab_manager
-                    .active_session()
-                    .is_some_and(|s| s.capabilities.supports_plan_mode);
-                self.state
-                    .command_palette_state
-                    .show(&self.config.keybindings, supports_plan_mode);
-                self.state.input_mode = InputMode::CommandPalette;
+                self.handle_overlay_action(action);
             }
         }
 
@@ -9444,5 +9428,59 @@ mod tests {
             .expect("session missing");
         assert_eq!(session.input_box.input(), "queued message");
         assert!(session.queued_messages.is_empty());
+    }
+
+    #[test]
+    fn test_handle_overlay_show_help() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::Normal;
+
+        app.handle_overlay_action(Action::ShowHelp);
+
+        assert_eq!(app.state.input_mode, InputMode::ShowingHelp);
+        assert!(app.state.help_dialog_state.is_visible());
+    }
+
+    #[test]
+    fn test_handle_overlay_open_command_palette() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::Normal;
+
+        app.handle_overlay_action(Action::OpenCommandPalette);
+
+        assert_eq!(app.state.input_mode, InputMode::CommandPalette);
+        assert!(app.state.command_palette_state.is_visible());
+    }
+
+    #[test]
+    fn test_handle_overlay_toggle_details() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::ShowingError;
+        app.state
+            .error_dialog_state
+            .show_with_details("Oops", "Something broke", "trace");
+        assert!(!app.state.error_dialog_state.details_expanded);
+
+        app.handle_overlay_action(Action::ToggleDetails);
+
+        assert!(app.state.error_dialog_state.details_expanded);
+    }
+
+    #[test]
+    fn test_handle_overlay_select_agent_creates_tab() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::SelectingAgent;
+        app.state.agent_selector_state.show();
+
+        app.handle_overlay_action(Action::SelectAgent);
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(!app.state.agent_selector_state.is_visible());
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.agent_type, AgentType::Claude);
     }
 }
