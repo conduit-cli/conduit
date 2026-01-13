@@ -1,7 +1,8 @@
 //! Session discovery and import utilities
 //!
 //! Provides functions to discover sessions from Claude Code and Codex CLI,
-//! and parse them for display in the import picker.
+//! and parse them for display in the import picker. (Gemini CLI discovery
+//! is not supported yet.)
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -21,7 +22,7 @@ use crate::session::cache::{get_file_mtime, SessionCache};
 pub struct ExternalSession {
     /// Unique identifier (session file UUID)
     pub id: String,
-    /// Agent type (Claude or Codex)
+    /// Agent type (Claude, Codex, or Gemini)
     pub agent_type: AgentType,
     /// Display text (first message or summary)
     pub display: String,

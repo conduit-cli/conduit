@@ -3,6 +3,7 @@
 //! Reads chat history from agent files for session restoration.
 //! - Claude Code: ~/.claude/projects/{project-path}/{session-id}.jsonl
 //! - Codex CLI: ~/.codex/sessions/YYYY/MM/DD/rollout-*-{session-id}.jsonl
+//! - Gemini CLI: not supported yet
 
 use std::collections::HashMap;
 use std::fs::{self, File};

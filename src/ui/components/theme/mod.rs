@@ -304,6 +304,10 @@ pub fn agent_claude() -> Color {
 pub fn agent_codex() -> Color {
     current_theme().agent_codex
 }
+#[inline]
+pub fn agent_gemini() -> Color {
+    current_theme().agent_codex
+}
 
 // PR State Colors
 #[inline]

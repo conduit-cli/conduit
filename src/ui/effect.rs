@@ -34,7 +34,7 @@ pub enum Effect {
         repo_id: Uuid,
     },
     CopyToClipboard(String),
-    /// Discover external sessions (Claude Code and Codex CLI)
+    /// Discover external sessions (Claude Code and Codex CLI; Gemini not supported yet)
     DiscoverSessions,
     /// Import an external session
     ImportSession(ExternalSession),

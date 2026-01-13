@@ -1,7 +1,7 @@
 //! Tool availability detection and management
 //!
 //! This module provides functionality to detect and track the availability
-//! of external tools required by Conduit (git, gh, claude, codex).
+//! of external tools required by Conduit (git, gh, claude, codex, gemini).
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +18,8 @@ pub enum Tool {
     Claude,
     /// OpenAI Codex CLI agent
     Codex,
+    /// Google Gemini CLI agent
+    Gemini,
 }
 
 impl Tool {
@@ -28,6 +30,7 @@ impl Tool {
             Tool::Gh => "gh",
             Tool::Claude => "claude",
             Tool::Codex => "codex",
+            Tool::Gemini => "gemini",
         }
     }
 
@@ -38,6 +41,7 @@ impl Tool {
             Tool::Gh => "GitHub CLI",
             Tool::Claude => "Claude Code",
             Tool::Codex => "Codex CLI",
+            Tool::Gemini => "Gemini CLI",
         }
     }
 
@@ -48,6 +52,7 @@ impl Tool {
             Tool::Gh => "brew install gh\nhttps://cli.github.com/",
             Tool::Claude => "npm install -g @anthropic-ai/claude-code\nhttps://docs.anthropic.com/en/docs/claude-code",
             Tool::Codex => "npm install -g @openai/codex\nhttps://github.com/openai/codex-cli",
+            Tool::Gemini => "npm install -g @google/gemini-cli\nhttps://github.com/google-gemini/gemini-cli",
         }
     }
 
@@ -58,6 +63,7 @@ impl Tool {
             Tool::Gh => "GitHub CLI is needed for PR operations (create, view, open in browser).",
             Tool::Claude => "Claude Code is an AI coding assistant from Anthropic.",
             Tool::Codex => "Codex is an AI coding assistant from OpenAI.",
+            Tool::Gemini => "Gemini CLI is an AI coding assistant from Google.",
         }
     }
 
@@ -68,12 +74,12 @@ impl Tool {
 
     /// Check if this tool is an agent
     pub fn is_agent(&self) -> bool {
-        matches!(self, Tool::Claude | Tool::Codex)
+        matches!(self, Tool::Claude | Tool::Codex | Tool::Gemini)
     }
 
     /// Get all tools
     pub fn all() -> &'static [Tool] {
-        &[Tool::Git, Tool::Gh, Tool::Claude, Tool::Codex]
+        &[Tool::Git, Tool::Gh, Tool::Claude, Tool::Codex, Tool::Gemini]
     }
 }
 
@@ -111,6 +117,7 @@ pub struct ToolPaths {
     pub gh: Option<PathBuf>,
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
+    pub gemini: Option<PathBuf>,
 }
 
 impl ToolPaths {
@@ -121,6 +128,7 @@ impl ToolPaths {
             Tool::Gh => self.gh.as_ref(),
             Tool::Claude => self.claude.as_ref(),
             Tool::Codex => self.codex.as_ref(),
+            Tool::Gemini => self.gemini.as_ref(),
         }
     }
 
@@ -131,6 +139,7 @@ impl ToolPaths {
             Tool::Gh => self.gh = Some(path),
             Tool::Claude => self.claude = Some(path),
             Tool::Codex => self.codex = Some(path),
+            Tool::Gemini => self.gemini = Some(path),
         }
     }
 }
@@ -142,6 +151,7 @@ pub struct ToolAvailability {
     gh: ToolStatus,
     claude: ToolStatus,
     codex: ToolStatus,
+    gemini: ToolStatus,
 }
 
 impl ToolAvailability {
@@ -157,6 +167,7 @@ impl ToolAvailability {
             gh: Self::detect_tool(Tool::Gh, configured_paths.gh.as_ref()),
             claude: Self::detect_tool(Tool::Claude, configured_paths.claude.as_ref()),
             codex: Self::detect_tool(Tool::Codex, configured_paths.codex.as_ref()),
+            gemini: Self::detect_tool(Tool::Gemini, configured_paths.gemini.as_ref()),
         }
     }
 
@@ -174,7 +185,16 @@ impl ToolAvailability {
         // Otherwise, try to find it in PATH using `which`
         match which::which(tool.binary_name()) {
             Ok(path) => ToolStatus::Available(path),
-            Err(_) => ToolStatus::NotFound,
+            Err(_) => {
+                if tool == Tool::Gemini {
+                    match which::which("npx") {
+                        Ok(path) => ToolStatus::Available(path),
+                        Err(_) => ToolStatus::NotFound,
+                    }
+                } else {
+                    ToolStatus::NotFound
+                }
+            }
         }
     }
 
@@ -209,6 +229,7 @@ impl ToolAvailability {
             Tool::Gh => &self.gh,
             Tool::Claude => &self.claude,
             Tool::Codex => &self.codex,
+            Tool::Gemini => &self.gemini,
         }
     }
 
@@ -241,7 +262,9 @@ impl ToolAvailability {
 
     /// Check if at least one agent is available
     pub fn has_any_agent(&self) -> bool {
-        self.is_available(Tool::Claude) || self.is_available(Tool::Codex)
+        self.is_available(Tool::Claude)
+            || self.is_available(Tool::Codex)
+            || self.is_available(Tool::Gemini)
     }
 
     /// Get list of available agents
@@ -270,6 +293,7 @@ impl ToolAvailability {
             Tool::Gh => self.gh = status,
             Tool::Claude => self.claude = status,
             Tool::Codex => self.codex = status,
+            Tool::Gemini => self.gemini = status,
         }
 
         is_available
@@ -313,6 +337,7 @@ mod tests {
         assert_eq!(Tool::Gh.binary_name(), "gh");
         assert_eq!(Tool::Claude.binary_name(), "claude");
         assert_eq!(Tool::Codex.binary_name(), "codex");
+        assert_eq!(Tool::Gemini.binary_name(), "gemini");
     }
 
     #[test]
@@ -321,6 +346,7 @@ mod tests {
         assert!(!Tool::Gh.is_required());
         assert!(!Tool::Claude.is_required());
         assert!(!Tool::Codex.is_required());
+        assert!(!Tool::Gemini.is_required());
     }
 
     #[test]
@@ -329,6 +355,7 @@ mod tests {
         assert!(!Tool::Gh.is_agent());
         assert!(Tool::Claude.is_agent());
         assert!(Tool::Codex.is_agent());
+        assert!(Tool::Gemini.is_agent());
     }
 
     #[test]

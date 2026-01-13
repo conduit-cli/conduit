@@ -80,6 +80,7 @@
 # gh = "/usr/local/bin/gh"
 # claude = "/opt/homebrew/bin/claude"
 # codex = "/usr/local/bin/codex"
+# gemini = "/usr/local/bin/gemini"
 
 # ============================================================================
 # Keybindings

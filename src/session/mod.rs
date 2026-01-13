@@ -1,7 +1,7 @@
 //! Session management module
 //!
 //! This module provides utilities for discovering and importing
-//! sessions from external agents (Claude Code and Codex CLI).
+//! sessions from external agents (Claude Code, Codex CLI, and Gemini CLI).
 
 pub mod cache;
 pub mod import;

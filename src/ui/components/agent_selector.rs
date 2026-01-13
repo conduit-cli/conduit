@@ -56,6 +56,11 @@ impl AgentSelectorState {
                     name: "Codex CLI",
                     description: "OpenAI's code generation model",
                 },
+                AgentOption {
+                    agent_type: AgentType::Gemini,
+                    name: "Gemini CLI",
+                    description: "Google's Gemini coding assistant",
+                },
             ],
         }
     }
@@ -77,6 +82,14 @@ impl AgentSelectorState {
                 agent_type: AgentType::Codex,
                 name: "Codex CLI",
                 description: "OpenAI's code generation model",
+            });
+        }
+
+        if tools.is_available(Tool::Gemini) {
+            agents.push(AgentOption {
+                agent_type: AgentType::Gemini,
+                name: "Gemini CLI",
+                description: "Google's Gemini coding assistant",
             });
         }
 
@@ -110,6 +123,14 @@ impl AgentSelectorState {
                 agent_type: AgentType::Codex,
                 name: "Codex CLI",
                 description: "OpenAI's code generation model",
+            });
+        }
+
+        if tools.is_available(Tool::Gemini) {
+            agents.push(AgentOption {
+                agent_type: AgentType::Gemini,
+                name: "Gemini CLI",
+                description: "Google's Gemini coding assistant",
             });
         }
 
@@ -189,7 +210,7 @@ impl AgentSelector {
         }
 
         // Render dialog frame
-        let frame = DialogFrame::new("Select Agent", 44, 9);
+        let frame = DialogFrame::new("Select Agent", 44, 11);
         let inner = frame.render(area, buf);
 
         // Layout inside dialog
@@ -198,6 +219,7 @@ impl AgentSelector {
             Constraint::Length(1), // Spacing
             Constraint::Length(2), // Claude option
             Constraint::Length(2), // Codex option
+            Constraint::Length(2), // Gemini option
             Constraint::Length(1), // Instructions
         ])
         .split(inner);
@@ -263,7 +285,7 @@ impl AgentSelector {
             ("Enter", "confirm"),
             ("Esc", "cancel"),
         ]);
-        instructions.render(chunks[4], buf);
+        instructions.render(chunks[5], buf);
     }
 }
 

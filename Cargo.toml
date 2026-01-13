@@ -13,6 +13,9 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 # Async runtime
 tokio = { version = "1.42", features = ["full", "process", "sync", "macros", "rt-multi-thread"] }
+tokio-util = { version = "0.7", features = ["compat", "io"] }
+futures = "0.3"
+agent-client-protocol = { version = "0.8", features = ["unstable"] }
 
 # TUI
 ratatui = "0.30"

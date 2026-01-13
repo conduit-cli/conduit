@@ -58,6 +58,9 @@ impl ModelRegistry {
     /// Default context window for Codex models (272K tokens)
     pub const CODEX_CONTEXT_WINDOW: i64 = 272_000;
 
+    /// Default context window for Gemini models (approximate)
+    pub const GEMINI_CONTEXT_WINDOW: i64 = 1_000_000;
+
     /// Get available models for Claude Code
     pub fn claude_models() -> Vec<ModelInfo> {
         vec![
@@ -119,10 +122,59 @@ impl ModelRegistry {
         ]
     }
 
+    /// Get available models for Gemini CLI
+    pub fn gemini_models() -> Vec<ModelInfo> {
+        vec![
+            ModelInfo::new(
+                AgentType::Gemini,
+                "gemini-2.5-pro",
+                "Gemini 2.5 Pro",
+                "gemini-2.5-pro",
+                "Highest quality Gemini model",
+                Self::GEMINI_CONTEXT_WINDOW,
+            ),
+            ModelInfo::new(
+                AgentType::Gemini,
+                "gemini-2.5-flash",
+                "Gemini 2.5 Flash",
+                "gemini-2.5-flash",
+                "Fast and capable Gemini model",
+                Self::GEMINI_CONTEXT_WINDOW,
+            ),
+            ModelInfo::new(
+                AgentType::Gemini,
+                "gemini-2.5-flash-lite",
+                "Gemini 2.5 Flash Lite",
+                "gemini-2.5-flash-lite",
+                "Lowest-latency Gemini model",
+                Self::GEMINI_CONTEXT_WINDOW,
+            ),
+            ModelInfo::new(
+                AgentType::Gemini,
+                "gemini-3-pro-preview",
+                "Gemini 3 Pro Preview",
+                "gemini-3-pro-preview",
+                "Preview Gemini 3 model",
+                Self::GEMINI_CONTEXT_WINDOW,
+            )
+            .with_new_badge(),
+            ModelInfo::new(
+                AgentType::Gemini,
+                "gemini-3-flash-preview",
+                "Gemini 3 Flash Preview",
+                "gemini-3-flash-preview",
+                "Preview Gemini 3 flash model",
+                Self::GEMINI_CONTEXT_WINDOW,
+            )
+            .with_new_badge(),
+        ]
+    }
+
     /// Get all models grouped by agent type
     pub fn all_models() -> Vec<ModelInfo> {
         let mut models = Self::claude_models();
         models.extend(Self::codex_models());
+        models.extend(Self::gemini_models());
         models
     }
 
@@ -131,6 +183,7 @@ impl ModelRegistry {
         match agent_type {
             AgentType::Claude => Self::claude_models(),
             AgentType::Codex => Self::codex_models(),
+            AgentType::Gemini => Self::gemini_models(),
         }
     }
 
@@ -139,6 +192,7 @@ impl ModelRegistry {
         match agent_type {
             AgentType::Claude => "opus".to_string(),
             AgentType::Codex => "gpt-5.2-codex".to_string(),
+            AgentType::Gemini => "gemini-2.5-pro".to_string(),
         }
     }
 
@@ -154,6 +208,7 @@ impl ModelRegistry {
         match agent_type {
             AgentType::Claude => "✻",
             AgentType::Codex => "◎",
+            AgentType::Gemini => "◆",
         }
     }
 
@@ -162,6 +217,7 @@ impl ModelRegistry {
         match agent_type {
             AgentType::Claude => "Claude Code",
             AgentType::Codex => "Codex",
+            AgentType::Gemini => "Gemini",
         }
     }
 
@@ -177,6 +233,7 @@ impl ModelRegistry {
         match agent_type {
             AgentType::Claude => Self::CLAUDE_CONTEXT_WINDOW,
             AgentType::Codex => Self::CODEX_CONTEXT_WINDOW,
+            AgentType::Gemini => Self::GEMINI_CONTEXT_WINDOW,
         }
     }
 }

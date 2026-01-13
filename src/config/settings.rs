@@ -39,7 +39,7 @@ pub struct Config {
     pub claude_output_cost_per_million: f64,
     /// Keybinding configuration
     pub keybindings: KeybindingConfig,
-    /// Configured paths for external tools (git, gh, claude, codex)
+    /// Configured paths for external tools (git, gh, claude, codex, gemini)
     pub tool_paths: ToolPaths,
     /// Theme name from config (None = use default)
     pub theme_name: Option<String>,

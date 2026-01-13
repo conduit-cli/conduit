@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "conduit")]
-#[command(about = "Multi-agent TUI for Claude Code and Codex CLI")]
+#[command(about = "Multi-agent TUI for Claude Code, Codex CLI, and Gemini CLI")]
 struct Cli {
     /// Custom data directory (default: ~/.conduit)
     #[arg(long, value_name = "PATH")]
@@ -119,17 +119,19 @@ async fn run_app() -> Result<()> {
 
     // Check critical requirement: at least one agent
     if !tools.has_any_agent() {
-        // Prefer Claude, but accept either
+        // Prefer Claude, but accept any available agent
         let preferred_agent = Tool::Claude;
         match run_blocking_tool_dialog(preferred_agent, &tools)? {
             Some(path) => {
                 // Determine which agent based on path name
-                let tool = if path
+                let file_name = path
                     .file_name()
-                    .map(|n| n.to_string_lossy().contains("codex"))
-                    .unwrap_or(false)
-                {
+                    .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default();
+                let tool = if file_name.contains("codex") {
                     Tool::Codex
+                } else if file_name.contains("gemini") {
+                    Tool::Gemini
                 } else {
                     Tool::Claude
                 };

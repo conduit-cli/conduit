@@ -1,6 +1,6 @@
 //! Session import picker dialog component
 //!
-//! Allows users to import sessions from Claude Code and Codex CLI.
+//! Allows users to import sessions from Claude Code, Codex CLI, and Gemini CLI.
 
 use ratatui::{
     buffer::Buffer,
@@ -10,9 +10,9 @@ use ratatui::{
 };
 
 use super::{
-    agent_claude, agent_codex, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
-    render_minimal_scrollbar, selected_bg, text_muted, text_primary, DialogFrame, InstructionBar,
-    ScrollbarMetrics, SearchableListState,
+    agent_claude, agent_codex, agent_gemini, bg_highlight, dialog_bg, ensure_contrast_bg,
+    ensure_contrast_fg, render_minimal_scrollbar, selected_bg, text_muted, text_primary,
+    DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
 };
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
@@ -41,6 +41,8 @@ pub enum AgentFilter {
     Claude,
     /// Show only Codex CLI sessions
     Codex,
+    /// Show only Gemini CLI sessions
+    Gemini,
 }
 
 impl AgentFilter {
@@ -49,7 +51,8 @@ impl AgentFilter {
         match self {
             AgentFilter::All => AgentFilter::Claude,
             AgentFilter::Claude => AgentFilter::Codex,
-            AgentFilter::Codex => AgentFilter::All,
+            AgentFilter::Codex => AgentFilter::Gemini,
+            AgentFilter::Gemini => AgentFilter::All,
         }
     }
 
@@ -59,6 +62,7 @@ impl AgentFilter {
             AgentFilter::All => "All",
             AgentFilter::Claude => "Claude",
             AgentFilter::Codex => "Codex",
+            AgentFilter::Gemini => "Gemini",
         }
     }
 }
@@ -190,6 +194,7 @@ impl SessionImportPickerState {
                     AgentFilter::All => true,
                     AgentFilter::Claude => matches!(s.agent_type, AgentType::Claude),
                     AgentFilter::Codex => matches!(s.agent_type, AgentType::Codex),
+                    AgentFilter::Gemini => matches!(s.agent_type, AgentType::Gemini),
                 }
             })
             .filter(|(_, s)| {
@@ -462,7 +467,12 @@ impl SessionImportPicker {
         let mut x = area.x;
         let tab_selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
 
-        for filter in [AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex] {
+        for filter in [
+            AgentFilter::All,
+            AgentFilter::Claude,
+            AgentFilter::Codex,
+            AgentFilter::Gemini,
+        ] {
             let is_selected = state.agent_filter == filter;
             let label = format!(" {} ", filter.label());
             let width = label.len() as u16;
@@ -471,6 +481,7 @@ impl SessionImportPicker {
                 AgentFilter::All => text_primary(),
                 AgentFilter::Claude => agent_claude(),
                 AgentFilter::Codex => agent_codex(),
+                AgentFilter::Gemini => agent_gemini(),
             };
             let style = if is_selected {
                 let fg = ensure_contrast_fg(base_fg, tab_selected_bg, 4.5);
@@ -540,10 +551,12 @@ impl SessionImportPicker {
             let agent_icon = match session.agent_type {
                 AgentType::Claude => "C",
                 AgentType::Codex => "X",
+                AgentType::Gemini => "G",
             };
             let agent_color = match session.agent_type {
                 AgentType::Claude => agent_claude(),
                 AgentType::Codex => agent_codex(),
+                AgentType::Gemini => agent_gemini(),
             };
 
             // Calculate widths

@@ -29,8 +29,8 @@ use uuid::Uuid;
 use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
-    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
-    MessageDisplay, ModelRegistry, SessionId,
+    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
+    HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::data::{
@@ -149,6 +149,7 @@ pub struct App {
     /// Agent runners
     claude_runner: Arc<ClaudeCodeRunner>,
     codex_runner: Arc<CodexCliRunner>,
+    gemini_runner: Arc<GeminiCliRunner>,
     /// Event channel sender
     event_tx: mpsc::UnboundedSender<AppEvent>,
     /// Event channel receiver
@@ -251,6 +252,10 @@ impl App {
             Some(path) => Arc::new(CodexCliRunner::with_path(path.clone())),
             None => Arc::new(CodexCliRunner::new()),
         };
+        let gemini_runner = match tools.get_path(crate::util::Tool::Gemini) {
+            Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
+            None => Arc::new(GeminiCliRunner::new()),
+        };
 
         let mut app = Self {
             config: config.clone(),
@@ -258,6 +263,7 @@ impl App {
             state: AppState::new(config.max_tabs),
             claude_runner,
             codex_runner,
+            gemini_runner,
             event_tx,
             event_rx,
             repo_dao,
@@ -413,6 +419,9 @@ impl App {
                                 session.chat_view.push(msg);
                             }
                         }
+                    }
+                    AgentType::Gemini => {
+                        // Gemini CLI session history import not supported yet.
                     }
                 }
             }
@@ -2595,6 +2604,7 @@ impl App {
                     let runner: Arc<dyn AgentRunner> = match agent_type {
                         AgentType::Claude => self.claude_runner.clone(),
                         AgentType::Codex => self.codex_runner.clone(),
+                        AgentType::Gemini => self.gemini_runner.clone(),
                     };
 
                     let event_tx = self.event_tx.clone();
@@ -3713,7 +3723,8 @@ impl App {
 
         let has_saved_session = saved_tab.is_some();
         let no_agents_available = !self.tools.is_available(crate::util::Tool::Claude)
-            && !self.tools.is_available(crate::util::Tool::Codex);
+            && !self.tools.is_available(crate::util::Tool::Codex)
+            && !self.tools.is_available(crate::util::Tool::Gemini);
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
@@ -3726,6 +3737,8 @@ impl App {
                     AgentType::Claude
                 } else if self.tools.is_available(crate::util::Tool::Codex) {
                     AgentType::Codex
+                } else if self.tools.is_available(crate::util::Tool::Gemini) {
+                    AgentType::Gemini
                 } else {
                     AgentType::Claude
                 }
@@ -3750,7 +3763,7 @@ impl App {
                         required_tool.display_name()
                     )
                 } else if no_agents_available {
-                    "An agent tool (Claude Code or Codex CLI) is required to open this workspace."
+                    "An agent tool (Claude Code, Codex CLI, or Gemini CLI) is required to open this workspace."
                         .to_string()
                 } else {
                     format!(
@@ -3822,6 +3835,9 @@ impl App {
                                 }
                             }
                         }
+                        AgentType::Gemini => {
+                            // Gemini CLI session history import not supported yet.
+                        }
                     }
                 }
 
@@ -3882,7 +3898,9 @@ impl App {
 
     /// Clamp unsupported agent modes to a safe default.
     fn clamp_agent_mode(agent_type: AgentType, mode: AgentMode) -> AgentMode {
-        if agent_type == AgentType::Codex && mode == AgentMode::Plan {
+        if matches!(agent_type, AgentType::Codex | AgentType::Gemini)
+            && mode == AgentMode::Plan
+        {
             AgentMode::Build
         } else {
             mode
@@ -3894,6 +3912,7 @@ impl App {
         match agent_type {
             AgentType::Claude => crate::util::Tool::Claude,
             AgentType::Codex => crate::util::Tool::Codex,
+            AgentType::Gemini => crate::util::Tool::Gemini,
         }
     }
 
@@ -3946,6 +3965,10 @@ impl App {
         self.codex_runner = match self.tools.get_path(crate::util::Tool::Codex) {
             Some(path) => Arc::new(CodexCliRunner::with_path(path.clone())),
             None => Arc::new(CodexCliRunner::new()),
+        };
+        self.gemini_runner = match self.tools.get_path(crate::util::Tool::Gemini) {
+            Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
+            None => Arc::new(GeminiCliRunner::new()),
         };
         self.state
             .agent_selector_state
@@ -4488,6 +4511,9 @@ impl App {
                         session.chat_view.push(msg);
                     }
                 }
+            }
+            AgentType::Gemini => {
+                // Gemini CLI session history import not supported yet.
             }
         }
 
@@ -6696,7 +6722,23 @@ impl App {
         // - Codex: images passed via --images flag
         // - Claude: images encoded as base64 in JSONL payload
         // This prevents the agent from trying to read the file path from the placeholder text
-        if agent_type == AgentType::Codex || agent_type == AgentType::Claude {
+        if matches!(agent_type, AgentType::Codex | AgentType::Claude) {
+            prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
+        }
+        if agent_type == AgentType::Gemini {
+            if !images.is_empty() {
+                if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                    session.stop_processing();
+                    let display = MessageDisplay::Error {
+                        content: "Gemini CLI does not support image attachments yet.".to_string(),
+                    };
+                    session.chat_view.push(display.to_chat_message());
+                }
+                if self.state.tab_manager.active_index() == tab_index {
+                    self.state.stop_footer_spinner();
+                }
+                return Ok(effects);
+            }
             prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
         }
 
@@ -9259,6 +9301,7 @@ mod tests {
             state,
             claude_runner: Arc::new(ClaudeCodeRunner::new()),
             codex_runner: Arc::new(CodexCliRunner::new()),
+            gemini_runner: Arc::new(GeminiCliRunner::new()),
             event_tx,
             event_rx,
             repo_dao: None,

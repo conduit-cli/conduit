@@ -12,6 +12,7 @@ use crate::agent::session::SessionId;
 pub enum AgentType {
     Claude,
     Codex,
+    Gemini,
 }
 
 /// Agent mode (Build vs Plan)
@@ -72,12 +73,14 @@ impl AgentType {
         match self {
             AgentType::Claude => "claude",
             AgentType::Codex => "codex",
+            AgentType::Gemini => "gemini",
         }
     }
 
     pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "codex" => AgentType::Codex,
+            "gemini" => AgentType::Gemini,
             _ => AgentType::Claude,
         }
     }
@@ -86,6 +89,7 @@ impl AgentType {
         match self {
             AgentType::Claude => "Claude Code",
             AgentType::Codex => "Codex CLI",
+            AgentType::Gemini => "Gemini CLI",
         }
     }
 }

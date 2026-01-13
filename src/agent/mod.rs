@@ -3,6 +3,7 @@ pub mod codex;
 pub mod display;
 pub mod error;
 pub mod events;
+pub mod gemini;
 pub mod history;
 pub mod mock;
 pub mod models;
@@ -15,6 +16,7 @@ pub use codex::CodexCliRunner;
 pub use display::MessageDisplay;
 pub use error::AgentError;
 pub use events::*;
+pub use gemini::GeminiCliRunner;
 pub use history::{
     load_claude_history_with_debug, load_codex_history_with_debug, HistoryDebugEntry, HistoryError,
 };

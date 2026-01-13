@@ -8,8 +8,9 @@ pub mod util;
 
 pub use agent::{
     AgentError, AgentEvent, AgentHandle, AgentMode, AgentRunner, AgentStartConfig, AgentType,
-    ClaudeCodeRunner, CodexCliRunner, MockAgentRunner, MockConfig, MockEventBuilder,
-    MockStartError, ModelInfo, ModelRegistry, SessionId, SessionMetadata, SessionStatus,
+    ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, MockAgentRunner, MockConfig,
+    MockEventBuilder, MockStartError, ModelInfo, ModelRegistry, SessionId, SessionMetadata,
+    SessionStatus,
 };
 pub use config::Config;
 pub use data::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore};

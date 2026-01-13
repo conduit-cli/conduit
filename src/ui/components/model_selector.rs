@@ -119,6 +119,12 @@ impl ModelSelectorState {
             items.push(ModelSelectorItem::Model(model));
         }
 
+        // Gemini section
+        items.push(ModelSelectorItem::SectionHeader(AgentType::Gemini));
+        for model in ModelRegistry::gemini_models() {
+            items.push(ModelSelectorItem::Model(model));
+        }
+
         items
     }
 
