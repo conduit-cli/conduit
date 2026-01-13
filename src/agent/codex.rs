@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicI64, Ordering},
@@ -7,6 +8,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use base64::Engine;
 use codex_app_server_protocol::{
     AddConversationListenerParams, ApplyPatchApprovalResponse, ClientInfo, ClientNotification,
     ClientRequest, ExecCommandApprovalResponse, InitializeParams, InputItem, JSONRPCMessage,
@@ -18,6 +20,7 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::protocol::{AskForApproval, EventMsg, FileChange, ReviewDecision};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -207,7 +210,7 @@ impl CodexCliRunner {
         Ok(cmd)
     }
 
-    fn build_input_items(prompt: &str, images: &[PathBuf]) -> Vec<InputItem> {
+    fn build_input_items(prompt: &str, images: &[PathBuf]) -> io::Result<Vec<InputItem>> {
         let mut items = Vec::new();
         if !prompt.trim().is_empty() {
             items.push(InputItem::Text {
@@ -215,11 +218,32 @@ impl CodexCliRunner {
             });
         }
         for image in images {
-            items.push(InputItem::LocalImage {
-                path: image.clone(),
-            });
+            let image_url = Self::encode_image_as_data_url(image)?;
+            items.push(InputItem::Image { image_url });
         }
-        items
+        Ok(items)
+    }
+
+    fn encode_image_as_data_url(path: &Path) -> io::Result<String> {
+        let dyn_img = image::open(path).map_err(|err| {
+            io::Error::other(format!(
+                "Failed to decode image {}: {}",
+                path.display(),
+                err
+            ))
+        })?;
+        let mut png_bytes = Vec::new();
+        dyn_img
+            .write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "Failed to encode image {}: {}",
+                    path.display(),
+                    err
+                ))
+            })?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+        Ok(format!("data:image/png;base64,{}", encoded))
     }
 
     fn to_file_operation(change: &FileChange) -> FileOperation {
@@ -556,7 +580,7 @@ impl CodexCliRunner {
         prompt: &str,
         images: &[PathBuf],
     ) -> io::Result<()> {
-        let items = Self::build_input_items(prompt, images);
+        let items = Self::build_input_items(prompt, images)?;
         if items.is_empty() {
             return Ok(());
         }
@@ -994,16 +1018,20 @@ mod tests {
 
     #[test]
     fn test_build_input_items_with_text_and_images() {
-        let items = CodexCliRunner::build_input_items(
-            "hello",
-            &[
-                PathBuf::from("/tmp/test.png"),
-                PathBuf::from("/tmp/other.png"),
-            ],
-        );
-        assert_eq!(items.len(), 3);
+        let tmp = tempfile::Builder::new()
+            .prefix("conduit-codex-image-")
+            .suffix(".png")
+            .tempfile()
+            .expect("failed to create temp image");
+        let path = tmp.path().to_path_buf();
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .save(&path)
+            .expect("failed to write temp image");
+
+        let items = CodexCliRunner::build_input_items("hello", &[PathBuf::from(&path)]).unwrap();
+        assert_eq!(items.len(), 2);
         assert!(matches!(items[0], InputItem::Text { .. }));
-        assert!(matches!(items[1], InputItem::LocalImage { .. }));
-        assert!(matches!(items[2], InputItem::LocalImage { .. }));
+        assert!(matches!(items[1], InputItem::Image { .. }));
     }
 }
