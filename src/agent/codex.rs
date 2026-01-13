@@ -122,9 +122,9 @@ enum MessageStreamSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReasoningStreamSource {
-    LegacyDelta,
-    SummaryDelta,
-    RawDelta,
+    Legacy,
+    Summary,
+    Raw,
 }
 
 // ============================================================================
@@ -306,8 +306,8 @@ impl CodexCliRunner {
                 Some(MessageStreamSource::LegacyDelta) => Vec::new(),
             },
             EventMsg::AgentReasoningDelta(r) => match state.reasoning_stream_source {
-                None | Some(ReasoningStreamSource::LegacyDelta) => {
-                    state.reasoning_stream_source = Some(ReasoningStreamSource::LegacyDelta);
+                None | Some(ReasoningStreamSource::Legacy) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::Legacy);
                     vec![AgentEvent::AssistantReasoning(ReasoningEvent {
                         text: r.delta.clone(),
                     })]
@@ -335,8 +335,8 @@ impl CodexCliRunner {
                 }
             }
             EventMsg::AgentReasoningRawContentDelta(r) => match state.reasoning_stream_source {
-                None | Some(ReasoningStreamSource::LegacyDelta) => {
-                    state.reasoning_stream_source = Some(ReasoningStreamSource::LegacyDelta);
+                None | Some(ReasoningStreamSource::Legacy) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::Legacy);
                     vec![AgentEvent::AssistantReasoning(ReasoningEvent {
                         text: r.delta.clone(),
                     })]
@@ -344,8 +344,8 @@ impl CodexCliRunner {
                 _ => Vec::new(),
             },
             EventMsg::ReasoningContentDelta(r) => match state.reasoning_stream_source {
-                None | Some(ReasoningStreamSource::SummaryDelta) => {
-                    state.reasoning_stream_source = Some(ReasoningStreamSource::SummaryDelta);
+                None | Some(ReasoningStreamSource::Summary) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::Summary);
                     vec![AgentEvent::AssistantReasoning(ReasoningEvent {
                         text: r.delta.clone(),
                     })]
@@ -353,8 +353,8 @@ impl CodexCliRunner {
                 _ => Vec::new(),
             },
             EventMsg::ReasoningRawContentDelta(r) => match state.reasoning_stream_source {
-                None | Some(ReasoningStreamSource::RawDelta) => {
-                    state.reasoning_stream_source = Some(ReasoningStreamSource::RawDelta);
+                None | Some(ReasoningStreamSource::Raw) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::Raw);
                     vec![AgentEvent::AssistantReasoning(ReasoningEvent {
                         text: r.delta.clone(),
                     })]
