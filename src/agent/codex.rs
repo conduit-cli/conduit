@@ -296,11 +296,7 @@ impl CodexCliRunner {
             }
             EventMsg::McpToolCallBegin(ev) => {
                 let tool_name = format!("mcp:{}::{}", ev.invocation.server, ev.invocation.tool);
-                let args = ev
-                    .invocation
-                    .arguments
-                    .clone()
-                    .unwrap_or_else(|| Value::Null);
+                let args = ev.invocation.arguments.clone().unwrap_or(Value::Null);
                 vec![AgentEvent::ToolStarted(ToolStartedEvent {
                     tool_name,
                     tool_id: ev.call_id.clone(),
@@ -513,10 +509,7 @@ impl AgentRunner for CodexCliRunner {
             .stdin
             .take()
             .ok_or_else(|| AgentError::Io(io::Error::other("failed to capture stdin")))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AgentError::StdoutCaptureFailed)?;
+        let stdout = child.stdout.take().ok_or(AgentError::StdoutCaptureFailed)?;
         let stderr = child.stderr.take();
 
         let peer = JsonRpcPeer::new(stdin);

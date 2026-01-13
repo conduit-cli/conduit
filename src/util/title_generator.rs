@@ -4,7 +4,7 @@
 //! from the first user message in a session using Claude or Codex.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use thiserror::Error;
@@ -98,7 +98,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         if let Some(tool_path) = tools.get_path(Tool::Codex) {
             let result = tokio::time::timeout(
                 Duration::from_secs(AI_CALL_TIMEOUT_SECS),
-                call_codex(tool_path, &prompt, working_dir),
+                call_codex(tool_path.as_path(), &prompt, working_dir.as_path()),
             )
             .await;
             match result {
@@ -166,12 +166,12 @@ async fn call_claude(
 }
 
 async fn call_codex(
-    binary_path: &PathBuf,
+    binary_path: &Path,
     prompt: &str,
-    working_dir: &PathBuf,
+    working_dir: &Path,
 ) -> Result<GeneratedMetadata, TitleGeneratorError> {
-    let runner = CodexCliRunner::with_path(binary_path.clone());
-    let config = AgentStartConfig::new(prompt, working_dir.clone());
+    let runner = CodexCliRunner::with_path(binary_path.to_path_buf());
+    let config = AgentStartConfig::new(prompt, working_dir.to_path_buf());
     let mut handle = runner
         .start(config)
         .await
