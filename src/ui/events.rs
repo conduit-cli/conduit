@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::agent::{AgentEvent, AgentType};
+use crate::agent::{AgentEvent, AgentInput, AgentType};
 use crate::git::PrPreflightResult;
 use crate::ui::git_tracker::GitTrackerUpdate;
 use tokio::sync::mpsc;
@@ -22,7 +22,7 @@ pub enum AppEvent {
     AgentStarted {
         session_id: Uuid,
         pid: u32,
-        input_tx: Option<mpsc::Sender<String>>,
+        input_tx: Option<mpsc::Sender<AgentInput>>,
     },
     /// Agent failed to start for a specific session
     AgentStartFailed { session_id: Uuid, error: String },

@@ -31,9 +31,9 @@ use uuid::Uuid;
 
 use crate::agent::events::UserQuestion;
 use crate::agent::{
-    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentMode,
-    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, HistoryDebugEntry,
-    MessageDisplay, ModelRegistry, SessionId,
+    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentInput,
+    AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner,
+    HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{
     parse_action, parse_key_notation, Config, KeyCombo, KeyContext, COMMAND_NAMES,
@@ -7497,7 +7497,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                                 if let Some(ref input_tx) = session.agent_input_tx {
                                     let input_tx = input_tx.clone();
                                     tokio::spawn(async move {
-                                        if let Err(err) = input_tx.send(jsonl).await {
+                                        if let Err(err) =
+                                            input_tx.send(AgentInput::ClaudeJsonl(jsonl)).await
+                                        {
                                             tracing::warn!(
                                                 "Failed to send deferred control response: {}",
                                                 err
@@ -7726,7 +7728,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                             let input_tx = input_tx.clone();
                             let jsonl_to_send = jsonl.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                if let Err(err) =
+                                    input_tx.send(AgentInput::ClaudeJsonl(jsonl_to_send)).await
+                                {
                                     tracing::warn!(
                                         "Failed to send tool result via streaming input: {}",
                                         err
@@ -7772,7 +7776,9 @@ Acknowledge that you have received this context by replying ONLY with the single
                             let input_tx = input_tx.clone();
                             let jsonl_to_send = jsonl.clone();
                             tokio::spawn(async move {
-                                if let Err(err) = input_tx.send(jsonl_to_send).await {
+                                if let Err(err) =
+                                    input_tx.send(AgentInput::ClaudeJsonl(jsonl_to_send)).await
+                                {
                                     tracing::warn!(
                                         "Failed to send control response via streaming input: {}",
                                         err
@@ -8203,7 +8209,8 @@ Acknowledge that you have received this context by replying ONLY with the single
                     if let Some(payload) = stdin_payload.clone() {
                         let input_tx = input_tx.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = input_tx.send(payload).await {
+                            if let Err(err) = input_tx.send(AgentInput::ClaudeJsonl(payload)).await
+                            {
                                 tracing::warn!("Failed to send streaming prompt: {}", err);
                             }
                         });
@@ -8215,6 +8222,33 @@ Acknowledge that you have received this context by replying ONLY with the single
                         }
                         return Ok(Vec::new());
                     }
+                }
+            }
+        }
+
+        if agent_type == AgentType::Codex {
+            let is_active_tab = self.state.tab_manager.active_index() == tab_index;
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                if let Some(ref input_tx) = session.agent_input_tx {
+                    let input_tx = input_tx.clone();
+                    let prompt_to_send = prompt.clone();
+                    let images_to_send = images.clone();
+                    tokio::spawn(async move {
+                        if let Err(err) = input_tx
+                            .send(AgentInput::CodexPrompt {
+                                text: prompt_to_send,
+                                images: images_to_send,
+                            })
+                            .await
+                        {
+                            tracing::warn!("Failed to send Codex prompt: {}", err);
+                        }
+                    });
+
+                    if is_active_tab {
+                        self.state.start_footer_spinner(None);
+                    }
+                    return Ok(Vec::new());
                 }
             }
         }

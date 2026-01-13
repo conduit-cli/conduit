@@ -20,5 +20,5 @@ pub use history::{
 };
 pub use mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
 pub use models::{ModelInfo, ModelRegistry};
-pub use runner::{AgentHandle, AgentMode, AgentRunner, AgentStartConfig, AgentType};
+pub use runner::{AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType};
 pub use session::{SessionId, SessionMetadata, SessionStatus};

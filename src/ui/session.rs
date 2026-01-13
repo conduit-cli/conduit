@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::agent::{
     events::{ContextCompactionEvent, ContextWarningLevel, ContextWindowState, TokenUsageEvent},
     models::ModelRegistry,
-    AgentHandle, AgentMode, AgentType, SessionId, TokenUsage,
+    AgentHandle, AgentInput, AgentMode, AgentType, SessionId, TokenUsage,
 };
 use crate::data::{QueuedMessage, QueuedMessageMode};
 use crate::git::PrManager;
@@ -69,7 +69,7 @@ pub struct AgentSession {
     /// Best-effort PID start time to reduce kill reuse risk (platform-dependent)
     pub agent_pid_start_time: Option<u64>,
     /// Optional input channel for streaming stdin payloads
-    pub agent_input_tx: Option<mpsc::Sender<String>>,
+    pub agent_input_tx: Option<mpsc::Sender<AgentInput>>,
     /// Pending user message that hasn't been confirmed by agent yet
     pub pending_user_message: Option<String>,
     /// Queued messages waiting to be delivered

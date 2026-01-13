@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 use crate::agent::error::AgentError;
 use crate::agent::events::AgentEvent;
-use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
+use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 
 /// Type of error to simulate on start failure
 #[derive(Clone, Debug)]
@@ -110,7 +110,7 @@ pub struct MockAgentRunner {
     /// Captured start configs for verification
     captured_configs: Arc<Mutex<Vec<AgentStartConfig>>>,
     /// Captured inputs sent via send_input
-    captured_inputs: Arc<Mutex<Vec<String>>>,
+    captured_inputs: Arc<Mutex<Vec<AgentInput>>>,
     /// Whether stop was called
     stop_called: Arc<Mutex<bool>>,
     /// Whether kill was called
@@ -153,7 +153,7 @@ impl MockAgentRunner {
     }
 
     /// Get captured inputs for assertions
-    pub fn captured_inputs(&self) -> Vec<String> {
+    pub fn captured_inputs(&self) -> Vec<AgentInput> {
         self.captured_inputs.lock().clone()
     }
 
@@ -216,8 +216,8 @@ impl AgentRunner for MockAgentRunner {
         Ok(AgentHandle::new(rx, 99999, None)) // Fake PID
     }
 
-    async fn send_input(&self, _handle: &AgentHandle, input: &str) -> Result<(), AgentError> {
-        self.captured_inputs.lock().push(input.to_string());
+    async fn send_input(&self, _handle: &AgentHandle, input: AgentInput) -> Result<(), AgentError> {
+        self.captured_inputs.lock().push(input);
         Ok(())
     }
 
@@ -435,11 +435,23 @@ mod tests {
         let config = AgentStartConfig::new("test", PathBuf::from("/tmp"));
         let handle = runner.start(config).await.unwrap();
 
-        runner.send_input(&handle, "first input").await.unwrap();
-        runner.send_input(&handle, "second input").await.unwrap();
+        runner
+            .send_input(&handle, AgentInput::ClaudeJsonl("first input".to_string()))
+            .await
+            .unwrap();
+        runner
+            .send_input(&handle, AgentInput::ClaudeJsonl("second input".to_string()))
+            .await
+            .unwrap();
 
         let inputs = runner.captured_inputs();
-        assert_eq!(inputs, vec!["first input", "second input"]);
+        assert_eq!(
+            inputs,
+            vec![
+                AgentInput::ClaudeJsonl("first input".to_string()),
+                AgentInput::ClaudeJsonl("second input".to_string())
+            ]
+        );
     }
 
     #[tokio::test]
@@ -475,7 +487,10 @@ mod tests {
         let config = AgentStartConfig::new("test", PathBuf::from("/tmp"));
         let handle = runner.start(config).await.unwrap();
 
-        runner.send_input(&handle, "input").await.unwrap();
+        runner
+            .send_input(&handle, AgentInput::ClaudeJsonl("input".to_string()))
+            .await
+            .unwrap();
         runner.stop(&handle).await.unwrap();
 
         assert!(!runner.captured_configs().is_empty());

@@ -82,6 +82,8 @@ impl Tool {
 pub enum ToolStatus {
     /// Tool is available at the given path
     Available(PathBuf),
+    /// Tool is available via npx (fallback for Codex app-server)
+    AvailableViaNpx(PathBuf),
     /// Tool was not found in PATH or configured location
     #[default]
     NotFound,
@@ -92,13 +94,17 @@ pub enum ToolStatus {
 impl ToolStatus {
     /// Check if the tool is available
     pub fn is_available(&self) -> bool {
-        matches!(self, ToolStatus::Available(_))
+        matches!(
+            self,
+            ToolStatus::Available(_) | ToolStatus::AvailableViaNpx(_)
+        )
     }
 
     /// Get the path if available
     pub fn path(&self) -> Option<&PathBuf> {
         match self {
             ToolStatus::Available(p) => Some(p),
+            ToolStatus::AvailableViaNpx(_) => None,
             _ => None,
         }
     }
@@ -174,7 +180,14 @@ impl ToolAvailability {
         // Otherwise, try to find it in PATH using `which`
         match which::which(tool.binary_name()) {
             Ok(path) => ToolStatus::Available(path),
-            Err(_) => ToolStatus::NotFound,
+            Err(_) => {
+                if matches!(tool, Tool::Codex) {
+                    if let Ok(npx_path) = which::which("npx") {
+                        return ToolStatus::AvailableViaNpx(npx_path);
+                    }
+                }
+                ToolStatus::NotFound
+            }
         }
     }
 
@@ -334,6 +347,7 @@ mod tests {
     #[test]
     fn test_tool_status_is_available() {
         assert!(ToolStatus::Available(PathBuf::from("/bin/test")).is_available());
+        assert!(ToolStatus::AvailableViaNpx(PathBuf::from("/bin/npx")).is_available());
         assert!(!ToolStatus::NotFound.is_available());
         assert!(!ToolStatus::ConfiguredPathInvalid(PathBuf::from("/bad")).is_available());
     }
