@@ -100,7 +100,10 @@ pub enum ToolStatus {
 impl ToolStatus {
     /// Check if the tool is available
     pub fn is_available(&self) -> bool {
-        matches!(self, ToolStatus::Available(_) | ToolStatus::AvailableViaNpx(_))
+        matches!(
+            self,
+            ToolStatus::Available(_) | ToolStatus::AvailableViaNpx(_)
+        )
     }
 
     /// Get the path if available

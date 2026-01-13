@@ -22,7 +22,7 @@ use crate::agent::events::{
     AgentEvent, AssistantMessageEvent, ErrorEvent, ReasoningEvent, SessionInitEvent,
     ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent,
 };
-use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType};
+use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
 
 const CACHE_TTL_SECS: u64 = 60 * 60 * 24 * 7;
@@ -757,7 +757,11 @@ impl AgentRunner for GeminiCliRunner {
         Ok(AgentHandle::new(rx, pid, None))
     }
 
-    async fn send_input(&self, _handle: &AgentHandle, _input: &str) -> Result<(), AgentError> {
+    async fn send_input(
+        &self,
+        _handle: &AgentHandle,
+        _input: AgentInput,
+    ) -> Result<(), AgentError> {
         Err(AgentError::NotSupported(
             "Gemini CLI runner does not support interactive input".into(),
         ))
