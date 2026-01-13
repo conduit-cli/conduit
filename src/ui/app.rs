@@ -132,6 +132,8 @@ const AGENT_TERMINATION_GRACE: Duration = Duration::from_millis(500);
 const AGENT_TERMINATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 // Limit shell output to keep memory bounded.
 const SHELL_COMMAND_OUTPUT_LIMIT: usize = 1024 * 1024;
+// Bound process reaping after a timeout.
+const SHELL_COMMAND_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Main application state
 pub struct App {
@@ -3331,6 +3333,7 @@ impl App {
                             };
                             let mut cmd = tokio::process::Command::new(shell);
                             cmd.arg(flag).arg(&command);
+                            cmd.kill_on_drop(true);
                             cmd.stdout(Stdio::piped());
                             cmd.stderr(Stdio::piped());
                             if let Some(dir) = working_dir.as_ref() {
@@ -3367,11 +3370,26 @@ impl App {
                                                 "Failed to kill timed out shell command"
                                             );
                                         }
-                                        if let Err(err) = child.wait().await {
-                                            tracing::debug!(
-                                                error = %err,
-                                                "Failed to reap timed out shell command"
-                                            );
+                                        match tokio::time::timeout(
+                                            SHELL_COMMAND_REAP_TIMEOUT,
+                                            child.wait(),
+                                        )
+                                        .await
+                                        {
+                                            Ok(Ok(_)) => {}
+                                            Ok(Err(err)) => {
+                                                tracing::debug!(
+                                                    error = %err,
+                                                    "Failed to reap timed out shell command"
+                                                );
+                                            }
+                                            Err(_) => {
+                                                tracing::debug!(
+                                                    timeout_secs =
+                                                        SHELL_COMMAND_REAP_TIMEOUT.as_secs(),
+                                                    "Timed out waiting to reap shell command"
+                                                );
+                                            }
                                         }
                                         stdout_task.abort();
                                         stderr_task.abort();
