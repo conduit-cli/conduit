@@ -1586,7 +1586,10 @@ impl App {
         // Esc exits shell mode back to normal input
         if key.code == KeyCode::Esc
             && !self.has_active_dialog()
-            && self.state.input_mode == InputMode::Normal
+            && matches!(
+                self.state.input_mode,
+                InputMode::Normal | InputMode::Scrolling
+            )
         {
             if let Some(session) = self.state.tab_manager.active_session_mut() {
                 if session.input_box.is_shell_mode() {
@@ -3324,8 +3327,18 @@ impl App {
                     working_dir,
                 } => {
                     let event_tx = self.event_tx.clone();
+                    let config_working_dir = self.config.working_dir.clone();
                     tokio::spawn(async move {
                         let result = async {
+                            let effective_working_dir =
+                                working_dir.as_ref().or(Some(&config_working_dir));
+                            let effective_working_dir = match effective_working_dir {
+                                Some(dir) => dir,
+                                None => {
+                                    return Err("No working directory available for shell command"
+                                        .to_string())
+                                }
+                            };
                             let (shell, flag) = if cfg!(windows) {
                                 ("cmd", "/C")
                             } else {
@@ -3337,9 +3350,7 @@ impl App {
                             cmd.stdin(Stdio::null());
                             cmd.stdout(Stdio::piped());
                             cmd.stderr(Stdio::piped());
-                            if let Some(dir) = working_dir.as_ref() {
-                                cmd.current_dir(dir);
-                            }
+                            cmd.current_dir(effective_working_dir);
 
                             let mut child = cmd
                                 .spawn()
