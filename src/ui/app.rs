@@ -3334,6 +3334,7 @@ impl App {
                             let mut cmd = tokio::process::Command::new(shell);
                             cmd.arg(flag).arg(&command);
                             cmd.kill_on_drop(true);
+                            cmd.stdin(Stdio::null());
                             cmd.stdout(Stdio::piped());
                             cmd.stderr(Stdio::piped());
                             if let Some(dir) = working_dir.as_ref() {
@@ -3412,14 +3413,21 @@ impl App {
                                     }
                                 };
 
-                            let (stdout_bytes, stdout_truncated) = stdout_task
-                                .await
-                                .map_err(|e| format!("Failed to run shell command: {e}"))?
-                                .map_err(|e| format!("Failed to run shell command: {e}"))?;
-                            let (stderr_bytes, stderr_truncated) = stderr_task
-                                .await
-                                .map_err(|e| format!("Failed to run shell command: {e}"))?
-                                .map_err(|e| format!("Failed to run shell command: {e}"))?;
+                            let (stdout_bytes, stdout_truncated, stdout_timed_out) =
+                                App::join_reader_with_timeout(stdout_task, "stdout").await?;
+                            let (stderr_bytes, stderr_truncated, _stderr_timed_out) =
+                                if stdout_timed_out {
+                                    stderr_task.abort();
+                                    if let Err(err) = stderr_task.await {
+                                        tracing::debug!(
+                                            error = %err,
+                                            "Failed to abort stderr reader task"
+                                        );
+                                    }
+                                    (Vec::new(), true, true)
+                                } else {
+                                    App::join_reader_with_timeout(stderr_task, "stderr").await?
+                                };
                             let stdout = String::from_utf8_lossy(&stdout_bytes);
                             let stderr = String::from_utf8_lossy(&stderr_bytes);
                             let mut combined = String::new();
@@ -4209,6 +4217,31 @@ impl App {
         }
 
         Ok((buf, truncated))
+    }
+
+    async fn join_reader_with_timeout(
+        mut task: tokio::task::JoinHandle<io::Result<(Vec<u8>, bool)>>,
+        label: &'static str,
+    ) -> Result<(Vec<u8>, bool, bool), String> {
+        tokio::select! {
+            res = &mut task => {
+                let (bytes, truncated) = res
+                    .map_err(|e| format!("Failed to run shell command: {e}"))?
+                    .map_err(|e| format!("Failed to run shell command: {e}"))?;
+                Ok((bytes, truncated, false))
+            }
+            _ = tokio::time::sleep(SHELL_COMMAND_REAP_TIMEOUT) => {
+                task.abort();
+                if let Err(err) = task.await {
+                    tracing::debug!(
+                        error = %err,
+                        reader = label,
+                        "Failed to abort reader task"
+                    );
+                }
+                Ok((Vec::new(), true, true))
+            }
+        }
     }
 
     fn confirm_theme_picker(&mut self) -> anyhow::Result<Vec<Effect>> {
