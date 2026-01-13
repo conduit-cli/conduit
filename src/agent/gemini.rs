@@ -1,9 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agent_client_protocol as acp;
 use agent_client_protocol::Agent as _;
@@ -25,6 +26,9 @@ use crate::agent::runner::{AgentHandle, AgentRunner, AgentStartConfig, AgentType
 use crate::agent::session::SessionId;
 
 const CACHE_TTL_SECS: u64 = 60 * 60 * 24 * 7;
+const INIT_TIMEOUT: Duration = Duration::from_secs(10);
+const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct GeminiCliRunner {
     binary_path: Option<PathBuf>,
@@ -408,6 +412,35 @@ impl GeminiCliRunner {
             }
         }
     }
+
+    fn env_var_present(key: &str) -> bool {
+        env::var(key)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    fn select_auth_method(auth_methods: &[acp::AuthMethod]) -> Option<String> {
+        let has_method = |id: &str| auth_methods.iter().any(|m| m.id.0.as_ref() == id);
+
+        let has_api_key = Self::env_var_present("GEMINI_API_KEY");
+        let has_vertex_creds = Self::env_var_present("GOOGLE_APPLICATION_CREDENTIALS")
+            || Self::env_var_present("GOOGLE_CLOUD_PROJECT")
+            || Self::env_var_present("GOOGLE_CLOUD_PROJECT_ID");
+
+        if has_api_key && has_method("gemini-api-key") {
+            return Some("gemini-api-key".to_string());
+        }
+        if has_vertex_creds && has_method("vertex-ai") {
+            return Some("vertex-ai".to_string());
+        }
+        if has_method("oauth-personal") {
+            return Some("oauth-personal".to_string());
+        }
+
+        auth_methods
+            .first()
+            .map(|method| method.id.0.as_ref().to_string())
+    }
 }
 
 impl Default for GeminiCliRunner {
@@ -515,31 +548,99 @@ impl AgentRunner for GeminiCliRunner {
                             let _ = io_fut.await;
                         });
 
-                        if let Err(err) = conn
-                            .initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1))
-                            .await
+                        let init_response = match tokio::time::timeout(
+                            INIT_TIMEOUT,
+                            conn.initialize(acp::InitializeRequest::new(
+                                acp::ProtocolVersion::V1,
+                            )),
+                        )
+                        .await
                         {
-                            let _ = tx_for_session
-                                .send(AgentEvent::Error(ErrorEvent {
-                                    message: format!("Failed to initialize Gemini ACP: {}", err),
-                                    is_fatal: true,
-                                }))
-                                .await;
-                            return;
+                            Ok(Ok(response)) => response,
+                            Ok(Err(err)) => {
+                                let _ = tx_for_session
+                                    .send(AgentEvent::Error(ErrorEvent {
+                                        message: format!(
+                                            "Failed to initialize Gemini ACP: {}",
+                                            err
+                                        ),
+                                        is_fatal: true,
+                                    }))
+                                    .await;
+                                return;
+                            }
+                            Err(_) => {
+                                let _ = tx_for_session
+                                    .send(AgentEvent::Error(ErrorEvent {
+                                        message: "Timed out initializing Gemini ACP. Ensure gemini CLI is installed and authenticated.".to_string(),
+                                        is_fatal: true,
+                                    }))
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        if !init_response.auth_methods.is_empty() {
+                            if let Some(method_id) =
+                                Self::select_auth_method(&init_response.auth_methods)
+                            {
+                                match tokio::time::timeout(
+                                    AUTH_TIMEOUT,
+                                    conn.authenticate(acp::AuthenticateRequest::new(
+                                        method_id.clone(),
+                                    )),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(_)) => {}
+                                    Ok(Err(err)) => {
+                                        let _ = tx_for_session
+                                            .send(AgentEvent::Error(ErrorEvent {
+                                                message: format!(
+                                                    "Gemini CLI authentication failed ({}): {}",
+                                                    method_id, err
+                                                ),
+                                                is_fatal: true,
+                                            }))
+                                            .await;
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        let _ = tx_for_session
+                                            .send(AgentEvent::Error(ErrorEvent {
+                                                message: "Gemini CLI authentication timed out. Run `gemini` once to log in or set GEMINI_API_KEY.".to_string(),
+                                                is_fatal: true,
+                                            }))
+                                            .await;
+                                        return;
+                                    }
+                                }
+                            }
                         }
 
-                        let session_id = match conn
-                            .new_session(acp::NewSessionRequest::new(working_dir))
-                            .await
+                        let session_id = match tokio::time::timeout(
+                            SESSION_TIMEOUT,
+                            conn.new_session(acp::NewSessionRequest::new(working_dir)),
+                        )
+                        .await
                         {
-                            Ok(resp) => resp.session_id,
-                            Err(err) => {
+                            Ok(Ok(response)) => response.session_id,
+                            Ok(Err(err)) => {
                                 let _ = tx_for_session
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message: format!(
                                             "Failed to create Gemini session: {}",
                                             err
                                         ),
+                                        is_fatal: true,
+                                    }))
+                                    .await;
+                                return;
+                            }
+                            Err(_) => {
+                                let _ = tx_for_session
+                                    .send(AgentEvent::Error(ErrorEvent {
+                                        message: "Timed out creating Gemini session. Ensure gemini CLI is authenticated.".to_string(),
                                         is_fatal: true,
                                     }))
                                     .await;
