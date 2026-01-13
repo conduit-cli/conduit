@@ -62,6 +62,7 @@ use crate::util::ToolAvailability;
 mod app_actions_list;
 mod app_actions_pr;
 mod app_actions_queue;
+mod app_actions_raw_events;
 mod app_actions_scroll;
 mod app_actions_sidebar;
 mod app_actions_tabs;
@@ -2197,97 +2198,19 @@ impl App {
             }
 
             // ========== Raw Events View ==========
-            Action::RawEventsSelectNext => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.select_next();
-                }
-            }
-            Action::RawEventsSelectPrev => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.select_prev();
-                }
-            }
-            Action::RawEventsToggleExpand => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.toggle_expand();
-                }
-            }
-            Action::RawEventsCollapse => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.collapse();
-                }
-            }
-            // ========== Event Detail Panel ==========
-            Action::EventDetailToggle => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.toggle_detail();
-                }
-            }
-            Action::EventDetailScrollUp => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.event_detail.scroll_up(1);
-                }
-            }
-            Action::EventDetailScrollDown => {
-                let detail_height = self.raw_events_detail_visible_height();
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    let content_height = session.raw_events_view.detail_content_height();
-                    session.raw_events_view.event_detail.scroll_down(
-                        1,
-                        content_height,
-                        detail_height,
-                    );
-                }
-            }
-            Action::EventDetailPageUp => {
-                let list_height = self.raw_events_list_visible_height();
-                let detail_height = self.raw_events_detail_visible_height();
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    if session.raw_events_view.is_detail_visible() {
-                        session.raw_events_view.event_detail.page_up(detail_height);
-                    } else {
-                        let amount = list_height.saturating_sub(2).max(1);
-                        session.raw_events_view.scroll_up(amount);
-                    }
-                }
-            }
-            Action::EventDetailPageDown => {
-                let list_height = self.raw_events_list_visible_height();
-                let detail_height = self.raw_events_detail_visible_height();
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    let content_height = session.raw_events_view.detail_content_height();
-                    if session.raw_events_view.is_detail_visible() {
-                        session
-                            .raw_events_view
-                            .event_detail
-                            .page_down(detail_height, content_height);
-                    } else {
-                        let amount = list_height.saturating_sub(2).max(1);
-                        session.raw_events_view.scroll_down(amount, list_height);
-                    }
-                }
-            }
-            Action::EventDetailScrollToTop => {
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.raw_events_view.event_detail.scroll_to_top();
-                }
-            }
-            Action::EventDetailScrollToBottom => {
-                let detail_height = self.raw_events_detail_visible_height();
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    let content_height = session.raw_events_view.detail_content_height();
-                    session
-                        .raw_events_view
-                        .event_detail
-                        .scroll_to_bottom(content_height, detail_height);
-                }
-            }
-            Action::EventDetailCopy => {
-                if let Some(session) = self.state.tab_manager.active_session() {
-                    if let Some(json) = session.raw_events_view.get_selected_json() {
-                        effects.push(Effect::CopyToClipboard(json));
-                    }
-                }
+            Action::RawEventsSelectNext
+            | Action::RawEventsSelectPrev
+            | Action::RawEventsToggleExpand
+            | Action::RawEventsCollapse
+            | Action::EventDetailToggle
+            | Action::EventDetailScrollUp
+            | Action::EventDetailScrollDown
+            | Action::EventDetailPageUp
+            | Action::EventDetailPageDown
+            | Action::EventDetailScrollToTop
+            | Action::EventDetailScrollToBottom
+            | Action::EventDetailCopy => {
+                self.handle_raw_events_action(action, &mut effects);
             }
 
             // ========== Confirmation Dialog ==========
@@ -9120,6 +9043,7 @@ mod tests {
     use crate::ui::components::MessageRole;
     use crate::ui::session::AgentSession;
     use crate::util::ToolAvailability;
+    use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -9567,5 +9491,72 @@ mod tests {
 
         app.handle_list_action(Action::SelectPageUp);
         assert_eq!(app.state.session_import_state.list.selected, 0);
+    }
+
+    #[test]
+    fn test_handle_raw_events_toggle_expand_and_collapse() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.raw_events_view.push_event(
+                EventDirection::Received,
+                "test_event",
+                json!({ "ok": true }),
+            );
+            assert!(!session.raw_events_view.is_expanded());
+        }
+
+        let mut effects = Vec::new();
+        app.handle_raw_events_action(Action::RawEventsToggleExpand, &mut effects);
+        assert!(app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing")
+            .raw_events_view
+            .is_expanded());
+
+        app.handle_raw_events_action(Action::RawEventsCollapse, &mut effects);
+        assert!(!app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing")
+            .raw_events_view
+            .is_expanded());
+    }
+
+    #[test]
+    fn test_handle_raw_events_copy_selected_json() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.raw_events_view.push_event(
+                EventDirection::Received,
+                "test_event",
+                json!({ "foo": "bar" }),
+            );
+        }
+
+        let mut effects = Vec::new();
+        app.handle_raw_events_action(Action::EventDetailCopy, &mut effects);
+
+        let expected = serde_json::to_string_pretty(&json!({ "foo": "bar" })).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::CopyToClipboard(content)] if content == &expected
+        ));
     }
 }
