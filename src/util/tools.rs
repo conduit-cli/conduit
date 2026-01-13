@@ -110,6 +110,7 @@ impl ToolStatus {
     pub fn path(&self) -> Option<&PathBuf> {
         match self {
             ToolStatus::Available(p) => Some(p),
+            // AvailableViaNpx intentionally returns None; runners resolve npx usage internally.
             _ => None,
         }
     }
@@ -198,7 +199,7 @@ impl ToolAvailability {
                     }
                 } else if tool == Tool::Gemini {
                     match which::which("npx") {
-                        Ok(path) => ToolStatus::Available(path),
+                        Ok(path) => ToolStatus::AvailableViaNpx(path),
                         Err(_) => ToolStatus::NotFound,
                     }
                 } else {

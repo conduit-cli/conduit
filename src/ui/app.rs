@@ -5825,10 +5825,23 @@ impl App {
                         .unwrap_or("Raw");
                     (event_type.to_string(), data.clone())
                 }
-                _ => (
-                    event.event_type_name().to_string(),
-                    serde_json::to_value(&event).unwrap_or_default(),
-                ),
+                _ => match serde_json::to_value(&event) {
+                    Ok(raw_json) => (event.event_type_name().to_string(), raw_json),
+                    Err(error) => {
+                        let event_type = event.event_type_name();
+                        tracing::warn!(
+                            event_type,
+                            error = %error,
+                            "Failed to serialize agent event for raw events view"
+                        );
+                        let fallback = serde_json::json!({
+                            "type": event_type,
+                            "serialize_failed": true,
+                            "error": error.to_string(),
+                        });
+                        (event_type.to_string(), fallback)
+                    }
+                },
             };
             session.record_raw_event(EventDirection::Received, event_type, raw_json);
 

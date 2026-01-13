@@ -731,7 +731,8 @@ impl AgentRunner for CodexCliRunner {
                                 }
                             }
                             Ok(JSONRPCMessage::Error(err)) => {
-                                let message = format!("[Error] {}", err.error.message);
+                                let message =
+                                    format!("[Error {}] {}", err.error.code, err.error.message);
                                 if let Err(err) = tx_for_events
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message,
