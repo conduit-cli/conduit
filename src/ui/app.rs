@@ -59,6 +59,7 @@ use crate::ui::session::AgentSession;
 use crate::ui::terminal_guard::TerminalGuard;
 use crate::util::ToolAvailability;
 
+mod app_actions_confirmation;
 mod app_actions_list;
 mod app_actions_pr;
 mod app_actions_queue;
@@ -2214,68 +2215,8 @@ impl App {
             }
 
             // ========== Confirmation Dialog ==========
-            Action::ConfirmYes => {
-                if self.state.input_mode == InputMode::Confirming {
-                    if let Some(context) = self.state.confirmation_dialog_state.context.clone() {
-                        match context {
-                            ConfirmationContext::ArchiveWorkspace(id) => {
-                                effects.push(self.execute_archive_workspace(id));
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::SidebarNavigation;
-                            }
-                            ConfirmationContext::RemoveProject(id) => {
-                                effects.push(self.execute_remove_project(id));
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::SidebarNavigation;
-                            }
-                            ConfirmationContext::CreatePullRequest {
-                                tab_index,
-                                working_dir,
-                                preflight,
-                            } => {
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::Normal;
-                                effects.extend(self.submit_pr_workflow(
-                                    tab_index,
-                                    working_dir,
-                                    preflight,
-                                )?);
-                            }
-                            ConfirmationContext::OpenExistingPr { working_dir, .. } => {
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::Normal;
-                                effects.push(Effect::OpenPrInBrowser { working_dir });
-                            }
-                            ConfirmationContext::SteerFallback { message_id } => {
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::Normal;
-                                effects.extend(self.confirm_steer_fallback(message_id)?);
-                            }
-                            ConfirmationContext::ForkSession {
-                                parent_workspace_id,
-                                base_branch,
-                            } => {
-                                self.state.confirmation_dialog_state.hide();
-                                self.state.input_mode = InputMode::Normal;
-                                if let Some(effect) =
-                                    self.execute_fork_session(parent_workspace_id, base_branch)
-                                {
-                                    effects.push(effect);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Action::ConfirmNo => {
-                if self.state.input_mode == InputMode::Confirming {
-                    self.state.input_mode = self.dismiss_confirmation_dialog();
-                }
-            }
-            Action::ConfirmToggle => {
-                if self.state.input_mode == InputMode::Confirming {
-                    self.state.confirmation_dialog_state.toggle_selection();
-                }
+            Action::ConfirmYes | Action::ConfirmNo | Action::ConfirmToggle => {
+                self.handle_confirmation_action(action, &mut effects)?;
             }
             Action::ToggleDetails => {
                 if self.state.input_mode == InputMode::ShowingError {
@@ -9558,5 +9499,45 @@ mod tests {
             effects.as_slice(),
             [Effect::CopyToClipboard(content)] if content == &expected
         ));
+    }
+
+    #[test]
+    fn test_handle_confirmation_action_archive_workspace() {
+        let mut app = build_test_app_with_sessions(&[]);
+        let workspace_id = Uuid::new_v4();
+        app.state.input_mode = InputMode::Confirming;
+        app.state.confirmation_dialog_state.visible = true;
+        app.state.confirmation_dialog_state.context =
+            Some(ConfirmationContext::ArchiveWorkspace(workspace_id));
+
+        let mut effects = Vec::new();
+        app.handle_confirmation_action(Action::ConfirmYes, &mut effects)
+            .unwrap();
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ArchiveWorkspace { workspace_id: id }] if *id == workspace_id
+        ));
+        assert_eq!(app.state.input_mode, InputMode::SidebarNavigation);
+        assert!(!app.state.confirmation_dialog_state.visible);
+    }
+
+    #[test]
+    fn test_handle_confirmation_action_cancel_archive_workspace() {
+        let mut app = build_test_app_with_sessions(&[]);
+        let workspace_id = Uuid::new_v4();
+        app.state.input_mode = InputMode::Confirming;
+        app.state.confirmation_dialog_state.visible = true;
+        app.state.confirmation_dialog_state.context =
+            Some(ConfirmationContext::ArchiveWorkspace(workspace_id));
+
+        let mut effects = Vec::new();
+        app.handle_confirmation_action(Action::ConfirmNo, &mut effects)
+            .unwrap();
+
+        assert!(effects.is_empty());
+        assert_eq!(app.state.input_mode, InputMode::SidebarNavigation);
+        assert!(!app.state.confirmation_dialog_state.visible);
+        assert!(app.state.confirmation_dialog_state.context.is_none());
     }
 }
