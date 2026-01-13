@@ -192,12 +192,7 @@ impl ToolAvailability {
         match which::which(tool.binary_name()) {
             Ok(path) => ToolStatus::Available(path),
             Err(_) => {
-                if tool == Tool::Codex {
-                    match which::which("npx") {
-                        Ok(path) => ToolStatus::AvailableViaNpx(path),
-                        Err(_) => ToolStatus::NotFound,
-                    }
-                } else if tool == Tool::Gemini {
+                if matches!(tool, Tool::Codex | Tool::Gemini) {
                     match which::which("npx") {
                         Ok(path) => ToolStatus::AvailableViaNpx(path),
                         Err(_) => ToolStatus::NotFound,
