@@ -59,6 +59,7 @@ use crate::ui::session::AgentSession;
 use crate::ui::terminal_guard::TerminalGuard;
 use crate::util::ToolAvailability;
 
+mod app_actions_list;
 mod app_actions_pr;
 mod app_actions_queue;
 mod app_actions_scroll;
@@ -1826,85 +1827,11 @@ impl App {
             }
 
             // ========== List/Tree Navigation ==========
-            Action::SelectNext => match self.state.input_mode {
-                InputMode::SidebarNavigation => {
-                    let visible_count = self.state.sidebar_data.visible_nodes().len();
-                    self.state
-                        .sidebar_state
-                        .tree_state
-                        .select_next(visible_count);
-                }
-                InputMode::SelectingModel => {
-                    self.state.model_selector_state.select_next();
-                }
-                InputMode::SelectingTheme => {
-                    self.state.theme_picker_state.select_next();
-                }
-                InputMode::SelectingAgent => {
-                    self.state.agent_selector_state.select_next();
-                }
-                InputMode::PickingProject => {
-                    self.state.project_picker_state.select_next();
-                }
-                InputMode::ImportingSession => {
-                    self.state.session_import_state.select_next();
-                }
-                InputMode::CommandPalette => {
-                    self.state.command_palette_state.select_next();
-                }
-                InputMode::QueueEditing => {
-                    if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        session.select_queue_next();
-                    }
-                }
-                _ => {}
-            },
-            Action::SelectPrev => match self.state.input_mode {
-                InputMode::SidebarNavigation => {
-                    let visible_count = self.state.sidebar_data.visible_nodes().len();
-                    self.state
-                        .sidebar_state
-                        .tree_state
-                        .select_previous(visible_count);
-                }
-                InputMode::SelectingModel => {
-                    self.state.model_selector_state.select_previous();
-                }
-                InputMode::SelectingTheme => {
-                    self.state.theme_picker_state.select_prev();
-                }
-                InputMode::SelectingAgent => {
-                    self.state.agent_selector_state.select_previous();
-                }
-                InputMode::PickingProject => {
-                    self.state.project_picker_state.select_prev();
-                }
-                InputMode::ImportingSession => {
-                    self.state.session_import_state.select_prev();
-                }
-                InputMode::CommandPalette => {
-                    self.state.command_palette_state.select_prev();
-                }
-                InputMode::QueueEditing => {
-                    if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        session.select_queue_prev();
-                    }
-                }
-                _ => {}
-            },
-            Action::SelectPageDown => {
-                if self.state.input_mode == InputMode::PickingProject {
-                    self.state.project_picker_state.page_down();
-                } else if self.state.input_mode == InputMode::ImportingSession {
-                    self.state.session_import_state.page_down();
-                }
-            }
-            Action::SelectPageUp => {
-                if self.state.input_mode == InputMode::PickingProject {
-                    self.state.project_picker_state.page_up();
-                } else if self.state.input_mode == InputMode::ImportingSession {
-                    self.state.session_import_state.page_up();
-                }
+            Action::SelectNext
+            | Action::SelectPrev
+            | Action::SelectPageDown
+            | Action::SelectPageUp => {
+                self.handle_list_action(action);
             }
             Action::Confirm => match self.state.input_mode {
                 InputMode::SidebarNavigation => {
@@ -9610,5 +9537,35 @@ mod tests {
             assert!(session.chat_view.streaming_buffer().is_none());
             assert!(session.chat_view.messages().is_empty());
         }
+    }
+
+    #[test]
+    fn test_handle_list_action_select_next_for_project_picker() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::PickingProject;
+        app.state
+            .project_picker_state
+            .list
+            .set_filtered(vec![0, 1, 2]);
+        app.state.project_picker_state.list.selected = 0;
+
+        app.handle_list_action(Action::SelectNext);
+
+        assert_eq!(app.state.project_picker_state.list.selected, 1);
+    }
+
+    #[test]
+    fn test_handle_list_action_page_down_up_for_session_import() {
+        let mut app = build_test_app_with_sessions(&[]);
+        app.state.input_mode = InputMode::ImportingSession;
+        let filtered: Vec<usize> = (0..15).collect();
+        app.state.session_import_state.list.set_filtered(filtered);
+        app.state.session_import_state.list.selected = 0;
+
+        app.handle_list_action(Action::SelectPageDown);
+        assert_eq!(app.state.session_import_state.list.selected, 10);
+
+        app.handle_list_action(Action::SelectPageUp);
+        assert_eq!(app.state.session_import_state.list.selected, 0);
     }
 }
