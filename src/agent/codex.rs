@@ -25,10 +25,11 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use crate::agent::error::AgentError;
 use crate::agent::events::{
     AgentEvent, AssistantMessageEvent, CommandOutputEvent, ContextCompactionEvent, ErrorEvent,
-    FileChangedEvent, FileOperation, ReasoningEvent, TokenUsage, TokenUsageEvent,
+    FileChangedEvent, FileOperation, ReasoningEvent, SessionInitEvent, TokenUsage, TokenUsageEvent,
     ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent, TurnFailedEvent,
 };
 use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
+use crate::agent::session::SessionId;
 
 const CODEX_NPX_PACKAGE: &str = "@openai/codex";
 const CODEX_NPX_VERSION_ENV: &str = "CODEX_NPX_VERSION";
@@ -106,6 +107,21 @@ struct CodexEventState {
     last_usage: Option<TokenUsage>,
     last_total_tokens: Option<i64>,
     pending_compaction: bool,
+    message_stream_source: Option<MessageStreamSource>,
+    reasoning_stream_source: Option<ReasoningStreamSource>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MessageStreamSource {
+    LegacyDelta,
+    ContentDelta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReasoningStreamSource {
+    LegacyDelta,
+    SummaryDelta,
+    RawDelta,
 }
 
 // ============================================================================
@@ -216,34 +232,111 @@ impl CodexCliRunner {
 
     fn convert_event(event: &EventMsg, state: &mut CodexEventState) -> Vec<AgentEvent> {
         match event {
-            EventMsg::TurnStarted(_) => vec![AgentEvent::TurnStarted],
+            EventMsg::TurnStarted(_) => {
+                state.message_stream_source = None;
+                state.reasoning_stream_source = None;
+                vec![AgentEvent::TurnStarted]
+            }
             EventMsg::TurnComplete(_) => {
                 let usage = state.last_usage.clone().unwrap_or_default();
+                state.message_stream_source = None;
+                state.reasoning_stream_source = None;
                 vec![AgentEvent::TurnCompleted(TurnCompletedEvent { usage })]
             }
             EventMsg::TurnAborted(ev) => vec![AgentEvent::TurnFailed(TurnFailedEvent {
                 error: format!("Turn aborted: {:?}", ev.reason),
             })],
-            EventMsg::AgentMessageDelta(msg) => {
-                vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
-                    text: msg.delta.clone(),
-                    is_final: false,
-                })]
-            }
+            EventMsg::AgentMessageDelta(msg) => match state.message_stream_source {
+                None | Some(MessageStreamSource::LegacyDelta) => {
+                    state.message_stream_source = Some(MessageStreamSource::LegacyDelta);
+                    vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: msg.delta.clone(),
+                        is_final: false,
+                    })]
+                }
+                Some(MessageStreamSource::ContentDelta) => Vec::new(),
+            },
             EventMsg::AgentMessage(msg) => {
-                vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
-                    text: msg.message.clone(),
-                    is_final: true,
-                })]
+                let had_stream = state.message_stream_source.is_some();
+                state.message_stream_source = None;
+                if had_stream {
+                    vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: String::new(),
+                        is_final: true,
+                    })]
+                } else {
+                    vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: msg.message.clone(),
+                        is_final: true,
+                    })]
+                }
             }
-            EventMsg::AgentReasoningDelta(r) => {
-                vec![AgentEvent::AssistantReasoning(ReasoningEvent {
-                    text: r.delta.clone(),
-                })]
+            EventMsg::AgentMessageContentDelta(msg) => match state.message_stream_source {
+                None | Some(MessageStreamSource::ContentDelta) => {
+                    state.message_stream_source = Some(MessageStreamSource::ContentDelta);
+                    vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: msg.delta.clone(),
+                        is_final: false,
+                    })]
+                }
+                Some(MessageStreamSource::LegacyDelta) => Vec::new(),
+            },
+            EventMsg::AgentReasoningDelta(r) => match state.reasoning_stream_source {
+                None | Some(ReasoningStreamSource::LegacyDelta) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::LegacyDelta);
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.delta.clone(),
+                    })]
+                }
+                _ => Vec::new(),
+            },
+            EventMsg::AgentReasoning(r) => {
+                if state.reasoning_stream_source.is_some() {
+                    state.reasoning_stream_source = None;
+                    Vec::new()
+                } else {
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.text.clone(),
+                    })]
+                }
             }
-            EventMsg::AgentReasoning(r) => vec![AgentEvent::AssistantReasoning(ReasoningEvent {
-                text: r.text.clone(),
-            })],
+            EventMsg::AgentReasoningRawContent(r) => {
+                if state.reasoning_stream_source.is_some() {
+                    state.reasoning_stream_source = None;
+                    Vec::new()
+                } else {
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.text.clone(),
+                    })]
+                }
+            }
+            EventMsg::AgentReasoningRawContentDelta(r) => match state.reasoning_stream_source {
+                None | Some(ReasoningStreamSource::LegacyDelta) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::LegacyDelta);
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.delta.clone(),
+                    })]
+                }
+                _ => Vec::new(),
+            },
+            EventMsg::ReasoningContentDelta(r) => match state.reasoning_stream_source {
+                None | Some(ReasoningStreamSource::SummaryDelta) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::SummaryDelta);
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.delta.clone(),
+                    })]
+                }
+                _ => Vec::new(),
+            },
+            EventMsg::ReasoningRawContentDelta(r) => match state.reasoning_stream_source {
+                None | Some(ReasoningStreamSource::RawDelta) => {
+                    state.reasoning_stream_source = Some(ReasoningStreamSource::RawDelta);
+                    vec![AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: r.delta.clone(),
+                    })]
+                }
+                _ => Vec::new(),
+            },
             EventMsg::ExecCommandBegin(cmd) => {
                 let command_str = cmd.command.join(" ");
                 state
@@ -516,6 +609,7 @@ impl AgentRunner for CodexCliRunner {
 
         let (tx, rx) = mpsc::channel::<AgentEvent>(256);
         let tx_for_monitor = tx.clone();
+        let tx_for_events = tx.clone();
 
         // Spawn JSON-RPC read loop
         let reader_peer = peer.clone();
@@ -552,7 +646,7 @@ impl AgentRunner for CodexCliRunner {
                                                     &mut state,
                                                 );
                                                 for event in events {
-                                                    if tx.send(event).await.is_err() {
+                                                    if tx_for_events.send(event).await.is_err() {
                                                         return;
                                                     }
                                                 }
@@ -614,7 +708,7 @@ impl AgentRunner for CodexCliRunner {
                             }
                             Ok(JSONRPCMessage::Error(err)) => {
                                 let message = format!("[Error] {}", err.error.message);
-                                if let Err(err) = tx
+                                if let Err(err) = tx_for_events
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message,
                                         is_fatal: true,
@@ -656,6 +750,7 @@ impl AgentRunner for CodexCliRunner {
         peer.send(&ClientNotification::Initialized).await?;
 
         let mut conversation_id = None;
+        let mut session_model: Option<String> = None;
 
         if let Some(resume_session) = &config.resume_session {
             let thread_id = codex_protocol::ThreadId::from_string(resume_session.as_str())
@@ -683,6 +778,7 @@ impl AgentRunner for CodexCliRunner {
             };
             let response: ResumeConversationResponse = peer.request(&request).await?;
             conversation_id = Some(response.conversation_id);
+            session_model = Some(response.model);
         }
 
         if conversation_id.is_none() {
@@ -704,11 +800,22 @@ impl AgentRunner for CodexCliRunner {
             };
             let response: NewConversationResponse = peer.request(&conv_request).await?;
             conversation_id = Some(response.conversation_id);
+            session_model = Some(response.model);
         }
 
         let conversation_id = conversation_id.ok_or_else(|| {
             AgentError::Config("Failed to establish Codex conversation".to_string())
         })?;
+
+        if let Err(err) = tx
+            .send(AgentEvent::SessionInit(SessionInitEvent {
+                session_id: SessionId::from_string(conversation_id.to_string()),
+                model: session_model,
+            }))
+            .await
+        {
+            tracing::debug!(error = ?err, "Failed to send Codex SessionInit event");
+        }
 
         // Subscribe to conversation events
         let listen_request = ClientRequest::AddConversationListener {

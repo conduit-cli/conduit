@@ -7296,8 +7296,15 @@ Acknowledge that you have received this context by replying ONLY with the single
             }
 
             // Record raw event for debug view
-            let event_type = event.event_type_name();
             let raw_json = serde_json::to_value(&event).unwrap_or_default();
+            let event_type = match &event {
+                AgentEvent::Raw { .. } => raw_json
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Raw")
+                    .to_string(),
+                _ => event.event_type_name().to_string(),
+            };
             session.record_raw_event(EventDirection::Received, event_type, raw_json);
 
             match event {
