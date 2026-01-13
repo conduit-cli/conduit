@@ -183,9 +183,7 @@ async fn call_codex(
         match event {
             AgentEvent::AssistantMessage(msg) => {
                 response.push_str(&msg.text);
-                if msg.is_final {
-                    // Continue; we still wait for TurnCompleted to avoid truncation.
-                }
+                // Continue accumulating; wait for TurnCompleted to avoid truncation.
             }
             AgentEvent::TurnCompleted(_) => break,
             AgentEvent::Error(err) => {
