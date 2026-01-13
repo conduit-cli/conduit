@@ -22,6 +22,7 @@ use crate::ui::components::{ChatMessage, TurnSummary};
 struct FunctionCallInfo {
     name: String,
     command: String,
+    session_id: Option<i64>,
 }
 
 /// Info extracted from a Claude tool_use block for later lookup
@@ -45,6 +46,10 @@ struct CodexTurnTracker {
     last_usage: Option<(u64, u64)>,
     last_usage_at: Option<DateTime<Utc>>,
     has_turn: bool,
+}
+
+struct PendingExecOutput {
+    message_index: usize,
 }
 
 impl CodexTurnTracker {
@@ -205,6 +210,24 @@ fn extract_codex_usage(entry: &Value) -> Option<(u64, u64)> {
     let input = usage.get("input_tokens").and_then(|v| v.as_u64())?;
     let output = usage.get("output_tokens").and_then(|v| v.as_u64())?;
     Some((input, output))
+}
+
+fn parse_running_session_id(raw_output: &str) -> Option<i64> {
+    let marker = "Process running with session ID ";
+    let start = raw_output.find(marker)?;
+    let after = &raw_output[start + marker.len()..];
+    let end = after.find('\n').unwrap_or(after.len());
+    after[..end].trim().parse::<i64>().ok()
+}
+
+fn append_output(target: &mut String, addition: &str) {
+    if addition.is_empty() {
+        return;
+    }
+    if !target.is_empty() && !target.ends_with('\n') && !addition.starts_with('\n') {
+        target.push('\n');
+    }
+    target.push_str(addition);
 }
 
 fn is_claude_user_prompt(entry: &Value) -> bool {
@@ -971,6 +994,7 @@ pub fn parse_codex_history_file_with_debug(
     let mut messages = Vec::new();
     let mut debug_entries = Vec::new();
     let mut tracker = CodexTurnTracker::new();
+    let mut pending_exec_output: HashMap<i64, PendingExecOutput> = HashMap::new();
 
     for (line_num, line) in lines.iter().enumerate() {
         if line.trim().is_empty() {
@@ -1056,6 +1080,91 @@ pub fn parse_codex_history_file_with_debug(
                     }
                 }
 
+                if entry_type == "response_item" {
+                    if let Some(payload) = entry.get("payload") {
+                        if payload.get("type").and_then(|t| t.as_str())
+                            == Some("function_call_output")
+                        {
+                            let call_id = payload
+                                .get("call_id")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("");
+                            let raw_output =
+                                payload.get("output").and_then(|o| o.as_str()).unwrap_or("");
+                            let call_info = function_calls.get(call_id);
+                            let raw_name =
+                                call_info.map(|info| info.name.as_str()).unwrap_or("shell");
+
+                            if raw_name == "exec_command" {
+                                if let Some(session_id) = parse_running_session_id(raw_output) {
+                                    let (output, exit_code) =
+                                        MessageDisplay::parse_codex_tool_output(raw_output);
+                                    let command = call_info
+                                        .map(|info| info.command.clone())
+                                        .unwrap_or_default();
+                                    let display = MessageDisplay::Tool {
+                                        name: MessageDisplay::tool_display_name_owned(raw_name),
+                                        args: command,
+                                        output,
+                                        exit_code,
+                                        file_size: None,
+                                    };
+                                    messages.push(display.to_chat_message());
+                                    pending_exec_output.insert(
+                                        session_id,
+                                        PendingExecOutput {
+                                            message_index: messages.len().saturating_sub(1),
+                                        },
+                                    );
+                                    debug_entries.push(HistoryDebugEntry {
+                                        line_number: line_num,
+                                        entry_type,
+                                        status: "INCLUDE".to_string(),
+                                        reason: format!(
+                                            "exec_command output pending session {}",
+                                            session_id
+                                        ),
+                                        raw_json: entry,
+                                    });
+                                    continue;
+                                }
+                            }
+
+                            if raw_name == "write_stdin" {
+                                if let Some(session_id) = call_info.and_then(|info| info.session_id)
+                                {
+                                    if let Some(pending) = pending_exec_output.get(&session_id) {
+                                        let (output, exit_code) =
+                                            MessageDisplay::parse_codex_tool_output(raw_output);
+                                        if let Some(message) =
+                                            messages.get_mut(pending.message_index)
+                                        {
+                                            append_output(&mut message.content, &output);
+                                            if message.exit_code.is_none() {
+                                                message.exit_code = exit_code;
+                                            }
+                                        }
+                                        if exit_code.is_some() {
+                                            pending_exec_output.remove(&session_id);
+                                        }
+                                        debug_entries.push(HistoryDebugEntry {
+                                            line_number: line_num,
+                                            entry_type,
+                                            status: "SKIP".to_string(),
+                                            reason: format!(
+                                                "coalesced write_stdin for session {}",
+                                                session_id
+                                            ),
+                                            raw_json: entry,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let (msg, status, reason) = convert_codex_entry_with_debug(&entry, &function_calls);
                 if let Some(payload) = entry.get("payload") {
                     if payload.get("type").and_then(|t| t.as_str()) == Some("message") {
@@ -1099,6 +1208,14 @@ pub fn parse_codex_history_file_with_debug(
         messages.push(ChatMessage::turn_summary(summary));
     }
 
+    for pending in pending_exec_output.values() {
+        if let Some(message) = messages.get_mut(pending.message_index) {
+            if message.content.is_empty() {
+                message.content = "Process still running.".to_string();
+            }
+        }
+    }
+
     Ok((messages, debug_entries))
 }
 
@@ -1127,8 +1244,16 @@ fn extract_function_call_info(entry: &Value) -> Option<(String, FunctionCallInfo
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    let session_id = args.get("session_id").and_then(|v| v.as_i64());
 
-    Some((call_id, FunctionCallInfo { name, command }))
+    Some((
+        call_id,
+        FunctionCallInfo {
+            name,
+            command,
+            session_id,
+        },
+    ))
 }
 
 /// Load Codex CLI history with debug information
@@ -1438,6 +1563,7 @@ mod tests {
             FunctionCallInfo {
                 name: "exec_command".to_string(),
                 command: "git log -1 --stat".to_string(),
+                session_id: None,
             },
         );
 
@@ -1586,6 +1712,79 @@ mod tests {
         );
 
         assert_eq!(messages[2].role, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn test_codex_coalesces_write_stdin_output() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let entries = vec![
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Run check"}]
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"cargo check --all\"}",
+                    "call_id": "call_exec"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_exec",
+                    "output": "Chunk ID: abc123\nProcess running with session ID 42\nOutput:\nfirst line\n"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "write_stdin",
+                    "arguments": "{\"session_id\":42,\"chars\":\"\"}",
+                    "call_id": "call_write"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_write",
+                    "output": "Chunk ID: def456\nProcess exited with code 0\nOutput:\nsecond line\n"
+                }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Done"}]
+                }
+            }),
+        ];
+
+        let mut file = NamedTempFile::new().expect("create temp file");
+        for entry in &entries {
+            let line = serde_json::to_string(entry).expect("serialize entry");
+            writeln!(file, "{}", line).expect("write line");
+        }
+
+        let (messages, _) =
+            parse_codex_history_file_with_debug(&file.path().to_path_buf()).expect("parse file");
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1].role, MessageRole::Tool);
+        assert!(messages[1].content.contains("first line"));
+        assert!(messages[1].content.contains("second line"));
+        assert_eq!(messages[1].exit_code, Some(0));
     }
 
     /// Test parsing the fixture file - verifies function_call_output creates Tool messages

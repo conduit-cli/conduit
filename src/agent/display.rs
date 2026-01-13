@@ -65,7 +65,7 @@ impl MessageDisplay {
     /// Map raw tool names to display names
     pub fn tool_display_name(raw_name: &str) -> &'static str {
         match raw_name {
-            "exec_command" | "shell" | "shell_command" | "local_shell_call"
+            "exec_command" | "write_stdin" | "shell" | "shell_command" | "local_shell_call"
             | "command_execution" | "Bash" => "Bash",
             "read_file" | "Read" => "Read",
             "write_file" | "Write" => "Write",
@@ -82,7 +82,7 @@ impl MessageDisplay {
     /// Map raw tool names to display names, returning owned String for unknown names
     pub fn tool_display_name_owned(raw_name: &str) -> String {
         match raw_name {
-            "exec_command" | "shell" | "shell_command" | "local_shell_call"
+            "exec_command" | "write_stdin" | "shell" | "shell_command" | "local_shell_call"
             | "command_execution" | "Bash" => "Bash".to_string(),
             "read_file" | "Read" => "Read".to_string(),
             "write_file" | "Write" => "Write".to_string(),
