@@ -6,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Widget},
 };
+use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{
@@ -276,6 +277,187 @@ fn truncate_to_width_exact(s: &str, max_width: usize) -> String {
     }
 
     result
+}
+
+/// Normalize carriage returns and backspaces while preserving ANSI sequences.
+fn normalize_tool_output_line(line: &str) -> Cow<'_, str> {
+    let bytes = line.as_bytes();
+    let has_cr = bytes.contains(&b'\r');
+    let has_bs = bytes.contains(&b'\x08');
+
+    if !has_cr && !has_bs {
+        return Cow::Borrowed(line);
+    }
+
+    let mut current: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut visible_stack: Vec<usize> = Vec::new();
+    let mut sgr_state: Vec<u8> = Vec::new();
+    let mut prefix_ansi: Vec<u8> = Vec::new();
+    let mut saw_cr = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\x1b' {
+            if i + 1 >= bytes.len() {
+                break;
+            }
+
+            let start = i;
+            let next = bytes[i + 1];
+            match next {
+                b'[' => {
+                    let mut j = i + 2;
+                    while j < bytes.len() {
+                        let b = bytes[j];
+                        if (0x40..=0x7E).contains(&b) {
+                            j += 1;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let seq = &bytes[start..j];
+                    current.extend_from_slice(seq);
+                    if seq.last() == Some(&b'm') {
+                        sgr_state.extend_from_slice(seq);
+                    }
+                    i = j;
+                    continue;
+                }
+                b']' => {
+                    let mut j = i + 2;
+                    while j < bytes.len() {
+                        if bytes[j] == b'\x07' {
+                            j += 1;
+                            break;
+                        }
+                        if bytes[j] == b'\x1b' && j + 1 < bytes.len() && bytes[j + 1] == b'\\' {
+                            j += 2;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    current.extend_from_slice(&bytes[start..j]);
+                    i = j;
+                    continue;
+                }
+                _ => {
+                    let end = (i + 2).min(bytes.len());
+                    current.extend_from_slice(&bytes[start..end]);
+                    i = end;
+                    continue;
+                }
+            }
+        }
+
+        if bytes[i] == b'\r' {
+            saw_cr = true;
+            prefix_ansi = sgr_state.clone();
+            current.clear();
+            visible_stack.clear();
+            i += 1;
+            continue;
+        }
+
+        if bytes[i] == b'\x08' {
+            if let Some(len) = visible_stack.pop() {
+                let new_len = current.len().saturating_sub(len);
+                current.truncate(new_len);
+            }
+            i += 1;
+            continue;
+        }
+
+        if bytes[i].is_ascii_control() && bytes[i] != b'\t' {
+            i += 1;
+            continue;
+        }
+
+        let b = bytes[i];
+        let char_len = if b < 0x80 {
+            1
+        } else if (b & 0xE0) == 0xC0 {
+            2
+        } else if (b & 0xF0) == 0xE0 {
+            3
+        } else if (b & 0xF8) == 0xF0 {
+            4
+        } else {
+            1
+        };
+        let end = (i + char_len).min(bytes.len());
+        current.extend_from_slice(&bytes[i..end]);
+        visible_stack.push(end - i);
+        i = end;
+    }
+
+    if !saw_cr {
+        return Cow::Owned(String::from_utf8_lossy(&current).into_owned());
+    }
+
+    let mut out = prefix_ansi;
+    out.extend_from_slice(&current);
+    Cow::Owned(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Strip ANSI escape sequences that `ansi_to_tui` doesn't consume (e.g. ESC ( B).
+fn sanitize_tool_output_line(line: &str) -> Cow<'_, str> {
+    if !line.as_bytes().contains(&b'\x1b') {
+        return Cow::Borrowed(line);
+    }
+
+    let bytes = line.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] != b'\x1b' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+
+        if i + 1 >= bytes.len() {
+            break;
+        }
+
+        match bytes[i + 1] {
+            // Charset designation (SCS): ESC ( B or ESC ) 0
+            b'(' | b')' => {
+                i += 2;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+            // DCS/APC/PM/SOS: ESC P ... ESC \
+            b'P' | b'_' | b'^' | b'X' => {
+                i += 2;
+                while i < bytes.len() {
+                    if bytes[i] == b'\x1b' && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            // ESC % @ / ESC % G
+            b'%' => {
+                i += 2;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+            // Keep CSI/OSC for ansi_to_tui; drop other single-char escapes.
+            b'[' | b']' => {
+                out.push(b'\x1b');
+                i += 1;
+            }
+            _ => {
+                i += 2;
+            }
+        }
+    }
+
+    Cow::Owned(String::from_utf8_lossy(&out).into_owned())
 }
 
 /// Chat view component displaying message history
@@ -1325,16 +1507,21 @@ impl ChatView {
             };
 
             for line in display_lines {
+                let normalized = normalize_tool_output_line(line);
+                let sanitized = sanitize_tool_output_line(normalized.as_ref());
+                let display_line = sanitized.as_ref();
                 // Check for diff-style lines
-                let (line_color, line_text) = if line.starts_with('+') && !line.starts_with("+++") {
-                    (diff_add(), line.to_string())
-                } else if line.starts_with('-') && !line.starts_with("---") {
-                    (diff_remove(), line.to_string())
-                } else if line.starts_with("Error:") || line.contains("error:") {
-                    (accent_error(), line.to_string())
+                let (line_color, line_text) = if display_line.starts_with('+')
+                    && !display_line.starts_with("+++")
+                {
+                    (diff_add(), sanitized.to_string())
+                } else if display_line.starts_with('-') && !display_line.starts_with("---") {
+                    (diff_remove(), sanitized.to_string())
+                } else if display_line.starts_with("Error:") || display_line.contains("error:") {
+                    (accent_error(), sanitized.to_string())
                 } else {
                     // Parse ANSI escape codes
-                    let parsed = line.as_bytes().into_text();
+                    let parsed = sanitized.as_ref().as_bytes().into_text();
                     match parsed {
                         Ok(text) => {
                             // If ANSI parsed successfully, add spans with background
@@ -1359,7 +1546,7 @@ impl ChatView {
                             }
                             continue;
                         }
-                        Err(_) => (tool_output(), line.to_string()),
+                        Err(_) => (tool_output(), sanitized.to_string()),
                     }
                 };
 
