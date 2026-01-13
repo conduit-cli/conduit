@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use conduit::agent::events::{AgentEvent, AssistantMessageEvent, SessionInitEvent};
 use conduit::agent::mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
-use conduit::agent::runner::{AgentRunner, AgentStartConfig, AgentType};
+use conduit::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use conduit::agent::session::SessionId;
 
 /// Test that the mock agent correctly emits a session init event
@@ -164,18 +164,30 @@ async fn test_mock_captures_user_inputs() {
 
     // Simulate user sending follow-up messages
     runner
-        .send_input(&handle, "Please also check the tests")
+        .send_input(
+            &handle,
+            AgentInput::ClaudeJsonl("Please also check the tests".to_string()),
+        )
         .await
         .unwrap();
     runner
-        .send_input(&handle, "And run cargo build")
+        .send_input(
+            &handle,
+            AgentInput::ClaudeJsonl("And run cargo build".to_string()),
+        )
         .await
         .unwrap();
 
     let inputs = runner.captured_inputs();
     assert_eq!(inputs.len(), 2);
-    assert_eq!(inputs[0], "Please also check the tests");
-    assert_eq!(inputs[1], "And run cargo build");
+    assert_eq!(
+        inputs[0],
+        AgentInput::ClaudeJsonl("Please also check the tests".to_string())
+    );
+    assert_eq!(
+        inputs[1],
+        AgentInput::ClaudeJsonl("And run cargo build".to_string())
+    );
 }
 
 /// Test that the mock agent can simulate failures
@@ -239,7 +251,10 @@ async fn test_mock_reset() {
     // Start a session and capture some data
     let config = AgentStartConfig::new("first test", PathBuf::from("/tmp"));
     let handle = runner.start(config).await.unwrap();
-    runner.send_input(&handle, "some input").await.unwrap();
+    runner
+        .send_input(&handle, AgentInput::ClaudeJsonl("some input".to_string()))
+        .await
+        .unwrap();
     runner.stop(&handle).await.unwrap();
 
     // Verify data was captured
