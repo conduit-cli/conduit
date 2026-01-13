@@ -612,6 +612,7 @@ dependencies = [
  "arboard",
  "assert_cmd",
  "async-trait",
+ "base64",
  "chrono",
  "clap",
  "codex-app-server-protocol",
