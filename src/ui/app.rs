@@ -43,11 +43,11 @@ use crate::ui::app_prompt;
 use crate::ui::app_queue;
 use crate::ui::app_state::{AppState, PendingForkRequest};
 use crate::ui::components::{
-    AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage, CommandPalette, ConfirmationContext,
-    ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog, EventDirection,
-    GlobalFooter, HelpDialog, InlinePromptState, InlinePromptType, MessageRole, MissingToolDialog,
-    ModelSelector, ProcessingState, ProjectPicker, PromptAnswer, RawEventsClick, SessionHeader,
-    SessionImportPicker, Sidebar, SidebarData, TabBar, TabBarHitTarget, ThemePicker,
+    dialog_content_area, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage, CommandPalette,
+    ConfirmationContext, ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog,
+    EventDirection, GlobalFooter, HelpDialog, InlinePromptState, InlinePromptType, MessageRole,
+    MissingToolDialog, ModelSelector, ProcessingState, ProjectPicker, PromptAnswer, RawEventsClick,
+    SessionHeader, SessionImportPicker, Sidebar, SidebarData, TabBar, TabBarHitTarget, ThemePicker,
     SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
@@ -4102,7 +4102,7 @@ impl App {
     /// Handle click in model selector dialog
     fn handle_model_selector_click(&mut self, x: u16, y: u16) -> Option<Effect> {
         const DIALOG_WIDTH: u16 = 60;
-        const DIALOG_HEIGHT: u16 = 18;
+        const DIALOG_HEIGHT: u16 = 20;
 
         let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
         let screen = Rect::new(0, 0, terminal_size.0, terminal_size.1);
@@ -4129,12 +4129,7 @@ impl App {
             return None;
         }
 
-        let inner = Rect {
-            x: dialog_area.x + 2,
-            y: dialog_area.y + 1,
-            width: dialog_area.width.saturating_sub(4),
-            height: dialog_area.height.saturating_sub(2),
-        };
+        let inner = dialog_content_area(dialog_area);
 
         if inner.height < 4 {
             return None;
@@ -4194,25 +4189,29 @@ impl App {
 
         let dialog_width: u16 = 60;
         let list_height = self.state.project_picker_state.list.visible_len() as u16;
-        let dialog_height = 7 + list_height;
+        let dialog_height = 9 + list_height;
 
         // Calculate dialog position (centered)
         let dialog_x = screen_width.saturating_sub(dialog_width) / 2;
         let dialog_y = screen_height.saturating_sub(dialog_height) / 2;
 
-        // Inner area is dialog minus border (1 on each side)
-        let inner_x = dialog_x + 1;
-        let inner_y = dialog_y + 1;
-        let inner_width = dialog_width.saturating_sub(2);
+        let dialog_area = Rect {
+            x: dialog_x,
+            y: dialog_y,
+            width: dialog_width,
+            height: dialog_height,
+        };
+
+        let inner = dialog_content_area(dialog_area);
 
         // List area starts at row 3 within inner area (after search, search input, separator)
         // Layout: [0] search label, [1] search input, [2] separator, [3..] list
-        let list_y = inner_y + 3;
-        let list_height_actual = dialog_height.saturating_sub(7); // Same as list_height
+        let list_y = inner.y + 3;
+        let list_height_actual = inner.height.saturating_sub(5);
 
         // Check if click is in the list area
-        if x >= inner_x
-            && x < inner_x + inner_width
+        if x >= inner.x
+            && x < inner.x + inner.width
             && y >= list_y
             && y < list_y + list_height_actual
         {

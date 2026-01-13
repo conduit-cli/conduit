@@ -139,7 +139,7 @@ impl<'a> ErrorDialog<'a> {
         let message_lines = self.calculate_message_lines(dialog_width);
         let details_toggle_height = if self.state.details.is_some() { 1 } else { 0 };
         let details_content_height = self.calculate_details_lines(dialog_width);
-        let base_height: u16 = 10; // borders + padding + button + instructions
+        let base_height: u16 = 12; // borders + padding + button + instructions
         base_height + message_lines + details_toggle_height + details_content_height
     }
 }

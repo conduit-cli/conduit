@@ -239,7 +239,7 @@ impl<'a> ConfirmationDialog<'a> {
         } else {
             self.state.warnings.len() as u16 + 1 // warnings + spacing before them
         };
-        let base_height: u16 = 10; // borders + padding + buttons + instructions
+        let base_height: u16 = 12; // borders + padding + buttons + instructions
         base_height + message_lines + warnings_height
     }
 }
@@ -256,7 +256,7 @@ impl Widget for ConfirmationDialog<'_> {
         // Loading state - show compact dialog with spinner
         if self.state.loading {
             let dialog_width: u16 = 50;
-            let dialog_height: u16 = 7; // Compact: border + padding + spinner + padding + instructions + border
+            let dialog_height: u16 = 9; // Compact: border + padding + spinner + padding + instructions + border
 
             // Render dialog frame
             let frame = DialogFrame::new(&self.state.title, dialog_width, dialog_height)

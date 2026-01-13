@@ -163,7 +163,7 @@ impl BaseDirDialog {
         }
 
         // Render dialog frame
-        let frame = DialogFrame::new("Set Projects Directory", 56, 11);
+        let frame = DialogFrame::new("Set Projects Directory", 56, 13);
         let inner = frame.render(area, buf);
 
         // Layout inside dialog

@@ -10,9 +10,9 @@ use ratatui::{
 };
 
 use super::{
-    agent_claude, agent_codex, agent_gemini, bg_highlight, dialog_bg, ensure_contrast_bg,
-    ensure_contrast_fg, render_minimal_scrollbar, selected_bg, text_muted, text_primary,
-    DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
+    agent_claude, agent_codex, agent_gemini, bg_highlight, dialog_bg, dialog_content_area,
+    ensure_contrast_bg, ensure_contrast_fg, render_minimal_scrollbar, selected_bg, text_muted,
+    text_primary, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
 };
 use crate::agent::AgentType;
 use crate::session::ExternalSession;
@@ -86,24 +86,27 @@ fn calculate_picker_layout(area: Rect) -> Option<PickerLayout> {
     let dialog_x = area.width.saturating_sub(dialog_width) / 2;
     let dialog_y = area.height.saturating_sub(dialog_height) / 2;
 
-    // Inner area after dialog border (2 chars each side, 1 top/bottom)
-    let inner_x = dialog_x + 2;
-    let inner_y = dialog_y + 1;
-    let inner_width = dialog_width.saturating_sub(4);
+    let dialog_area = Rect {
+        x: dialog_x,
+        y: dialog_y,
+        width: dialog_width,
+        height: dialog_height,
+    };
+
+    let inner = dialog_content_area(dialog_area);
 
     // List starts after: tab bar (1) + search (1) + separator (1) = 3 rows
-    // Bottom has: spacing (1) + instructions (1) + border (1) = 3 rows
-    // Total vertical overhead from dialog_height: 3 top + 3 bottom + 1 top border = 7
-    let list_height = dialog_height.saturating_sub(7);
+    // Bottom has: spacing (1) + instructions (1) = 2 rows
+    let list_height = inner.height.saturating_sub(5);
     if list_height == 0 {
         return None;
     }
 
     Some(PickerLayout {
         list_area: Rect {
-            x: inner_x,
-            y: inner_y + 3,
-            width: inner_width,
+            x: inner.x,
+            y: inner.y + 3,
+            width: inner.width,
             height: list_height,
         },
     })

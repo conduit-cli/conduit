@@ -222,7 +222,7 @@ impl Widget for MissingToolDialog<'_> {
         }
 
         let dialog_width: u16 = 60;
-        let dialog_height: u16 = 18;
+        let dialog_height: u16 = 20;
 
         // Choose border color based on severity
         let border_color = if self.state.is_required {

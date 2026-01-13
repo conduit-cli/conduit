@@ -45,7 +45,10 @@ pub use command_palette::{CommandPalette, CommandPaletteEntry, CommandPaletteSta
 pub use confirmation_dialog::{
     ConfirmationContext, ConfirmationDialog, ConfirmationDialogState, ConfirmationType,
 };
-pub use dialog::{DialogFrame, InstructionBar, StatusLine};
+pub use dialog::{
+    dialog_content_area, DialogFrame, InstructionBar, StatusLine, DIALOG_CONTENT_PADDING_X,
+    DIALOG_CONTENT_PADDING_Y,
+};
 pub use error_dialog::{ErrorDialog, ErrorDialogState};
 pub use global_footer::{FooterContext, GlobalFooter};
 pub use help_dialog::{HelpCategory, HelpDialog, HelpDialogState, KeybindingEntry};

@@ -9,8 +9,9 @@ use ratatui::{
 use std::path::PathBuf;
 
 use super::{
-    dialog_bg, ensure_contrast_bg, ensure_contrast_fg, render_minimal_scrollbar, selected_bg,
-    text_primary, DialogFrame, InstructionBar, ScrollbarMetrics, SearchableListState,
+    dialog_bg, dialog_content_area, ensure_contrast_bg, ensure_contrast_fg,
+    render_minimal_scrollbar, selected_bg, text_primary, DialogFrame, InstructionBar,
+    ScrollbarMetrics, SearchableListState,
 };
 
 /// A project entry (directory with .git)
@@ -71,7 +72,7 @@ impl ProjectPickerState {
         }
 
         let list_height = self.list.visible_len() as u16;
-        let dialog_height = 7 + list_height;
+        let dialog_height = 9 + list_height;
         let dialog_width: u16 = 60;
 
         let dialog_width = dialog_width.min(area.width.saturating_sub(4));
@@ -80,20 +81,25 @@ impl ProjectPickerState {
         let dialog_x = area.width.saturating_sub(dialog_width) / 2;
         let dialog_y = area.height.saturating_sub(dialog_height) / 2;
 
-        let inner_x = dialog_x + 2;
-        let inner_y = dialog_y + 1;
-        let inner_width = dialog_width.saturating_sub(4);
+        let dialog_area = Rect {
+            x: dialog_x,
+            y: dialog_y,
+            width: dialog_width,
+            height: dialog_height,
+        };
 
-        let list_y = inner_y + 3;
-        let list_height_actual = dialog_height.saturating_sub(7);
+        let inner = dialog_content_area(dialog_area);
+
+        let list_y = inner.y + 3;
+        let list_height_actual = inner.height.saturating_sub(5);
         if list_height_actual == 0 {
             return None;
         }
 
         let list_area = Rect {
-            x: inner_x,
+            x: inner.x,
             y: list_y,
-            width: inner_width,
+            width: inner.width,
             height: list_height_actual,
         };
 
@@ -264,7 +270,7 @@ impl ProjectPicker {
 
         // Calculate dialog size
         let list_height = state.list.visible_len() as u16;
-        let dialog_height = 7 + list_height; // header + search + separator + list + footer
+        let dialog_height = 9 + list_height; // header + search + separator + list + footer
 
         // Render dialog frame
         let frame = DialogFrame::new("Select Project", 60, dialog_height);

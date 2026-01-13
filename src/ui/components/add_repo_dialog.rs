@@ -165,7 +165,7 @@ impl AddRepoDialog {
         }
 
         // Render dialog frame
-        let frame = DialogFrame::new("Add Custom Project", 60, 11);
+        let frame = DialogFrame::new("Add Custom Project", 60, 13);
         let inner = frame.render(area, buf);
 
         // Layout inside dialog

@@ -13,9 +13,9 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::agent::{AgentType, ModelInfo, ModelRegistry};
 use crate::ui::components::{
-    accent_primary, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
-    render_minimal_scrollbar, text_muted, text_primary, text_secondary, DialogFrame,
-    InstructionBar, TextInputState,
+    accent_primary, bg_highlight, dialog_bg, dialog_content_area, ensure_contrast_bg,
+    ensure_contrast_fg, render_minimal_scrollbar, text_muted, text_primary, text_secondary,
+    DialogFrame, InstructionBar, TextInputState,
 };
 
 /// Represents an item in the model selector (either a section header or a model)
@@ -45,7 +45,7 @@ impl DefaultModelSelection {
 }
 
 const DIALOG_WIDTH: u16 = 60;
-const DIALOG_HEIGHT: u16 = 18;
+const DIALOG_HEIGHT: u16 = 20;
 
 /// State for the model selector dialog
 #[derive(Debug, Clone)]
@@ -210,6 +210,17 @@ impl ModelSelectorState {
                 }
 
                 render_idx += 1;
+
+                if let Some(&next_idx) = self.filtered.get(filter_idx + 1) {
+                    if let ModelSelectorItem::Model(ref next_model) = self.items[next_idx] {
+                        if next_model.agent_type != model.agent_type {
+                            if render_idx == target_render {
+                                return false;
+                            }
+                            render_idx += 1;
+                        }
+                    }
+                }
             }
         }
 
@@ -356,6 +367,14 @@ impl ModelSelectorState {
                 }
 
                 render_index += 1;
+
+                if let Some(&next_idx) = self.filtered.get(filter_idx + 1) {
+                    if let ModelSelectorItem::Model(ref next_model) = self.items[next_idx] {
+                        if next_model.agent_type != model.agent_type {
+                            render_index += 1;
+                        }
+                    }
+                }
             }
         }
 
@@ -378,14 +397,24 @@ impl ModelSelectorState {
     fn render_len(&self) -> usize {
         let mut seen_headers: HashSet<AgentType> = HashSet::new();
         let mut count = 0usize;
-        for &item_idx in &self.filtered {
+
+        for (filter_idx, &item_idx) in self.filtered.iter().enumerate() {
             if let ModelSelectorItem::Model(ref model) = self.items[item_idx] {
                 if seen_headers.insert(model.agent_type) {
                     count += 1;
                 }
                 count += 1;
+
+                if let Some(&next_idx) = self.filtered.get(filter_idx + 1) {
+                    if let ModelSelectorItem::Model(ref next_model) = self.items[next_idx] {
+                        if next_model.agent_type != model.agent_type {
+                            count += 1;
+                        }
+                    }
+                }
             }
         }
+
         count
     }
 
@@ -407,13 +436,7 @@ impl ModelSelectorState {
             height: dialog_height,
         };
 
-        // DialogFrame adds 1 char padding on each side horizontally.
-        let inner = Rect {
-            x: dialog_area.x.saturating_add(2),
-            y: dialog_area.y.saturating_add(1),
-            width: dialog_area.width.saturating_sub(4),
-            height: dialog_area.height.saturating_sub(2),
-        };
+        let inner = dialog_content_area(dialog_area);
 
         if inner.height < 4 {
             return None;
@@ -587,76 +610,94 @@ impl ModelSelector {
                 render_index += 1;
             }
 
-            if render_index < scroll {
-                render_index += 1;
-                continue;
-            }
+            if render_index >= scroll {
+                if visible_index >= area.height as usize {
+                    break;
+                }
 
-            if visible_index >= area.height as usize {
-                break;
-            }
+                let is_selected = filter_idx == state.selected;
+                let is_current = state
+                    .current_model_id
+                    .as_ref()
+                    .map(|id| id == &model.id)
+                    .unwrap_or(false);
+                let is_default = state.default_model.is_default(model);
 
-            let is_selected = filter_idx == state.selected;
-            let is_current = state
-                .current_model_id
-                .as_ref()
-                .map(|id| id == &model.id)
-                .unwrap_or(false);
-            let is_default = state.default_model.is_default(model);
-
-            let row_rect = Rect {
-                x: area.x,
-                y: area.y + visible_index as u16,
-                width: line_width,
-                height: 1,
-            };
-
-            if is_selected {
-                buf.set_style(row_rect, Style::default().bg(selected_bg_color));
-            }
-
-            let icon = ModelRegistry::agent_icon(model.agent_type);
-            let mut spans = vec![
-                Span::styled(format!("  {} ", icon), Style::default().fg(text_primary())),
-                Span::styled(
-                    &model.display_name,
-                    if is_selected {
-                        Style::default()
-                            .fg(selected_fg_color)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(text_primary())
-                    },
-                ),
-            ];
-
-            if is_default {
-                spans.push(Span::raw("  "));
-                spans.push(Span::styled("DEFAULT", Style::default().fg(text_muted())));
-            }
-
-            let content_len: usize = spans
-                .iter()
-                .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
-                .sum();
-            let checkmark_col = line_width.saturating_sub(2) as usize;
-
-            if is_current && content_len < checkmark_col {
-                let padding = checkmark_col.saturating_sub(content_len);
-                spans.push(Span::raw(" ".repeat(padding)));
-                let checkmark_fg = if is_selected {
-                    selected_fg_color
-                } else {
-                    text_primary()
+                let row_rect = Rect {
+                    x: area.x,
+                    y: area.y + visible_index as u16,
+                    width: line_width,
+                    height: 1,
                 };
-                spans.push(Span::styled("✓", Style::default().fg(checkmark_fg)));
-            }
 
-            let line = Line::from(spans);
-            Paragraph::new(line).render(row_rect, buf);
+                if is_selected {
+                    buf.set_style(row_rect, Style::default().bg(selected_bg_color));
+                }
+
+                let icon = ModelRegistry::agent_icon(model.agent_type);
+                let mut spans = vec![
+                    Span::styled(format!("  {} ", icon), Style::default().fg(text_primary())),
+                    Span::styled(
+                        &model.display_name,
+                        if is_selected {
+                            Style::default()
+                                .fg(selected_fg_color)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(text_primary())
+                        },
+                    ),
+                ];
+
+                if is_default {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled("DEFAULT", Style::default().fg(text_muted())));
+                }
+
+                let content_len: usize = spans
+                    .iter()
+                    .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum();
+                let checkmark_col = line_width.saturating_sub(2) as usize;
+
+                if is_current && content_len < checkmark_col {
+                    let padding = checkmark_col.saturating_sub(content_len);
+                    spans.push(Span::raw(" ".repeat(padding)));
+                    let checkmark_fg = if is_selected {
+                        selected_fg_color
+                    } else {
+                        text_primary()
+                    };
+                    spans.push(Span::styled("✓", Style::default().fg(checkmark_fg)));
+                }
+
+                let line = Line::from(spans);
+                Paragraph::new(line).render(row_rect, buf);
+
+                visible_index += 1;
+            }
 
             render_index += 1;
-            visible_index += 1;
+
+            let has_spacer = state
+                .filtered
+                .get(filter_idx + 1)
+                .and_then(|&next_idx| match &state.items[next_idx] {
+                    ModelSelectorItem::Model(next_model) => Some(next_model.agent_type),
+                    _ => None,
+                })
+                .map(|next_agent| next_agent != model.agent_type)
+                .unwrap_or(false);
+
+            if has_spacer {
+                if render_index >= scroll {
+                    if visible_index >= area.height as usize {
+                        break;
+                    }
+                    visible_index += 1;
+                }
+                render_index += 1;
+            }
         }
 
         // Empty state

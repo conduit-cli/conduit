@@ -21,6 +21,33 @@ pub struct DialogFrame<'a> {
     border_color: Color,
 }
 
+pub const DIALOG_CONTENT_PADDING_X: u16 = 1;
+pub const DIALOG_CONTENT_PADDING_Y: u16 = 1;
+
+pub fn dialog_content_area(dialog_area: Rect) -> Rect {
+    let inner = Rect {
+        x: dialog_area.x.saturating_add(1),
+        y: dialog_area.y.saturating_add(1),
+        width: dialog_area.width.saturating_sub(2),
+        height: dialog_area.height.saturating_sub(2),
+    };
+
+    apply_dialog_padding(inner)
+}
+
+fn apply_dialog_padding(inner: Rect) -> Rect {
+    Rect {
+        x: inner.x.saturating_add(DIALOG_CONTENT_PADDING_X),
+        y: inner.y.saturating_add(DIALOG_CONTENT_PADDING_Y),
+        width: inner
+            .width
+            .saturating_sub(DIALOG_CONTENT_PADDING_X.saturating_mul(2)),
+        height: inner
+            .height
+            .saturating_sub(DIALOG_CONTENT_PADDING_Y.saturating_mul(2)),
+    }
+}
+
 impl<'a> DialogFrame<'a> {
     pub fn new(title: &'a str, width: u16, height: u16) -> Self {
         Self {
@@ -73,13 +100,7 @@ impl<'a> DialogFrame<'a> {
         let inner = block.inner(dialog_area);
         block.render(dialog_area, buf);
 
-        // Add horizontal padding (1 char on each side)
-        Rect {
-            x: inner.x.saturating_add(1),
-            y: inner.y,
-            width: inner.width.saturating_sub(2),
-            height: inner.height,
-        }
+        apply_dialog_padding(inner)
     }
 }
 

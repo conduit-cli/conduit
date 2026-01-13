@@ -15,7 +15,8 @@ use crate::config::{KeyContext, KeybindingConfig};
 use crate::ui::action::Action;
 
 use super::{
-    render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics, TextInputState,
+    dialog_content_area, render_minimal_scrollbar, DialogFrame, InstructionBar, ScrollbarMetrics,
+    TextInputState,
 };
 
 /// A keybinding entry for display
@@ -137,18 +138,7 @@ impl HelpDialogState {
             height: dialog_height,
         };
 
-        let block = Block::default()
-            .title(" Help - Keybindings ")
-            .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Rgb(130, 170, 255)));
-        let inner = block.inner(dialog_area);
-        let inner = Rect {
-            x: inner.x.saturating_add(1),
-            y: inner.y,
-            width: inner.width.saturating_sub(2),
-            height: inner.height,
-        };
+        let inner = dialog_content_area(dialog_area);
 
         if inner.height < 5 {
             return None;

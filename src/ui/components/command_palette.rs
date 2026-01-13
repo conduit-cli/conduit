@@ -269,7 +269,7 @@ impl CommandPalette {
         // Calculate dialog dimensions
         let dialog_width = 60u16.min(area.width.saturating_sub(4));
         let list_height = state.list.filtered.len().min(12) as u16;
-        let dialog_height = 5 + list_height.max(1); // search + separator + list + separator + instructions
+        let dialog_height = 7 + list_height.max(1); // search + separator + list + separator + instructions
 
         // Use DialogFrame for consistent styling
         let frame = DialogFrame::new("Command Palette", dialog_width, dialog_height);
