@@ -229,7 +229,7 @@ impl ThinkingIndicator {
     /// Render as a Line for display in chat view
     pub fn render(&self) -> Line<'static> {
         let elapsed = self.elapsed();
-        let seconds = elapsed.as_secs();
+        let duration_str = format_duration(elapsed);
 
         let spinner = SPINNER_FRAMES[self.spinner_frame];
         let state = self.state.as_str();
@@ -243,7 +243,7 @@ impl ThinkingIndicator {
             Span::styled("(", Style::default().fg(Color::DarkGray)),
             Span::styled("esc", Style::default().fg(Color::Gray)),
             Span::styled(" to interrupt · ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}s", seconds), Style::default().fg(Color::Gray)),
+            Span::styled(duration_str, Style::default().fg(Color::Gray)),
             Span::styled(" · ↓ ", Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}", self.tokens), Style::default().fg(Color::Gray)),
             Span::styled(" tokens · ", Style::default().fg(Color::DarkGray)),
@@ -259,6 +259,37 @@ impl ThinkingIndicator {
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
     let t = t.clamp(0.0, 1.0);
     (a as f32 + (b as f32 - a as f32) * t) as u8
+}
+
+/// Format duration in human-readable format (e.g., "1h 23m 45s")
+fn format_duration(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+
+    if total_secs < 60 {
+        return format!("{}s", total_secs);
+    }
+
+    let days = total_secs / 86400;
+    let hours = (total_secs % 86400) / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    let mut parts = Vec::new();
+
+    if days > 0 {
+        parts.push(format!("{}d", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}h", hours));
+    }
+    if minutes > 0 {
+        parts.push(format!("{}m", minutes));
+    }
+    if seconds > 0 || parts.is_empty() {
+        parts.push(format!("{}s", seconds));
+    }
+
+    parts.join(" ")
 }
 
 impl Default for ThinkingIndicator {
