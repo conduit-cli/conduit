@@ -706,6 +706,11 @@ impl App {
                     }
                     return Ok(effects);
                 }
+                // No selection was active - still check for file path clicks
+                // (e.g., clicking in prompt areas where selection isn't started)
+                if let Some(path_effects) = self.handle_file_path_click(x, y) {
+                    return Ok(path_effects);
+                }
                 Ok(Vec::new())
             }
             MouseEventKind::Moved => {

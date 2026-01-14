@@ -496,6 +496,10 @@ pub struct ChatView {
     last_render_extra_lines: usize,
     /// Currently hovered file path (for underline highlighting)
     hovered_file_path: Option<HoveredFilePath>,
+    /// Extra lines from last render (prompts, indicators) for hover detection
+    last_extra_lines: Vec<Line<'static>>,
+    /// Starting line index for extra lines (cached_len + streaming_len)
+    last_extra_lines_start: usize,
 }
 
 /// Information about a hovered file path for rendering
@@ -531,6 +535,8 @@ impl ChatView {
             theme_revision: theme_revision(),
             last_render_extra_lines: 0,
             hovered_file_path: None,
+            last_extra_lines: Vec::new(),
+            last_extra_lines_start: 0,
         }
     }
 
@@ -1053,7 +1059,8 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let total_lines = cached_len + streaming_len;
+        let extra_len = self.last_extra_lines.len();
+        let total_lines = cached_len + streaming_len + extra_len;
         if total_lines == 0 {
             return None;
         }
@@ -1066,12 +1073,16 @@ impl ChatView {
             return None;
         }
 
-        // Get the line text
+        // Get the line text - check flat_cache, streaming_cache, then extra_lines
         let line = if line_index < cached_len {
             self.flat_cache.get(line_index)?
-        } else {
+        } else if line_index < cached_len + streaming_len {
             let idx = line_index.saturating_sub(cached_len);
             self.streaming_cache.as_ref()?.get(idx)?
+        } else {
+            // Check extra lines (prompts, indicators)
+            let idx = line_index.saturating_sub(cached_len + streaming_len);
+            self.last_extra_lines.get(idx)?
         };
 
         // Extract text content from the line spans
@@ -1136,7 +1147,8 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let total_lines = cached_len + streaming_len;
+        let extra_len = self.last_extra_lines.len();
+        let total_lines = cached_len + streaming_len + extra_len;
         if total_lines == 0 {
             let changed = self.hovered_file_path.is_some();
             self.hovered_file_path = None;
@@ -1153,7 +1165,7 @@ impl ChatView {
             return changed;
         }
 
-        // Get the line text
+        // Get the line text - check flat_cache, streaming_cache, then extra_lines
         let line = if line_index < cached_len {
             match self.flat_cache.get(line_index) {
                 Some(l) => l,
@@ -1163,9 +1175,20 @@ impl ChatView {
                     return changed;
                 }
             }
-        } else {
+        } else if line_index < cached_len + streaming_len {
             let idx = line_index.saturating_sub(cached_len);
             match self.streaming_cache.as_ref().and_then(|c| c.get(idx)) {
+                Some(l) => l,
+                None => {
+                    let changed = self.hovered_file_path.is_some();
+                    self.hovered_file_path = None;
+                    return changed;
+                }
+            }
+        } else {
+            // Check extra lines (prompts, indicators)
+            let idx = line_index.saturating_sub(cached_len + streaming_len);
+            match self.last_extra_lines.get(idx) {
                 Some(l) => l,
                 None => {
                     let changed = self.hovered_file_path.is_some();
@@ -2195,6 +2218,9 @@ impl ChatView {
 
         let extra_len = extra_lines.len();
         self.last_render_extra_lines = extra_len;
+        // Store extra lines for file path hover detection in prompts
+        self.last_extra_lines = extra_lines.clone();
+        self.last_extra_lines_start = cached_len + streaming_len;
         let total_lines = cached_len + streaming_len + extra_len;
         let visible_height = content.height as usize;
 
@@ -2246,15 +2272,21 @@ impl ChatView {
             }
         }
 
-        // Extra lines (thinking indicator, queued messages, spacing)
+        // Extra lines (thinking indicator, queued messages, prompts, spacing)
         if extra_len > 0 {
             let extra_start = streaming_end;
             let extra_end = streaming_end + extra_len;
             if start_line < extra_end && end_line > extra_start {
                 let range_start = start_line.max(extra_start) - extra_start;
                 let range_end = end_line.min(extra_end) - extra_start;
-                for line in extra_lines[range_start..range_end].iter().cloned() {
-                    visible_lines.push((line, None));
+                for (idx, line) in extra_lines[range_start..range_end]
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                {
+                    // Include line_index for hover detection on file paths in prompts
+                    let line_index = extra_start + range_start + idx;
+                    visible_lines.push((line, Some(line_index)));
                 }
             }
         }
