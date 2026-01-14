@@ -494,6 +494,21 @@ pub struct ChatView {
     theme_revision: u64,
     /// Extra lines appended in the last render (thinking/queue/prompt + spacing)
     last_render_extra_lines: usize,
+    /// Currently hovered file path (for underline highlighting)
+    hovered_file_path: Option<HoveredFilePath>,
+}
+
+/// Information about a hovered file path for rendering
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoveredFilePath {
+    /// The line index in the flat cache where the path is located
+    pub line_index: usize,
+    /// The start column (display position) of the path
+    pub start_col: usize,
+    /// The end column (display position) of the path
+    pub end_col: usize,
+    /// The actual file path string
+    pub path: String,
 }
 
 impl ChatView {
@@ -515,6 +530,7 @@ impl ChatView {
             selection_scroll_lock: None,
             theme_revision: theme_revision(),
             last_render_extra_lines: 0,
+            hovered_file_path: None,
         }
     }
 
@@ -1082,28 +1098,163 @@ impl ChatView {
         None
     }
 
+    /// Update hover state for file paths at the given mouse position.
+    /// Returns true if the hover state changed.
+    pub fn update_file_path_hover(&mut self, mouse_x: u16, mouse_y: u16, area: Rect) -> bool {
+        use super::file_path_detector::{detect_existing_paths, expand_tilde};
+
+        let content = match Self::content_area(area) {
+            Some(c) => c,
+            None => {
+                let changed = self.hovered_file_path.is_some();
+                self.hovered_file_path = None;
+                return changed;
+            }
+        };
+
+        // Check if mouse is within content area
+        if mouse_x < content.x
+            || mouse_y < content.y
+            || mouse_x >= content.x + content.width
+            || mouse_y >= content.y + content.height
+        {
+            let changed = self.hovered_file_path.is_some();
+            self.hovered_file_path = None;
+            return changed;
+        }
+
+        let rel_x = mouse_x.saturating_sub(content.x) as usize;
+        let rel_y = mouse_y.saturating_sub(content.y) as usize;
+
+        self.ensure_cache(content.width);
+        self.ensure_flat_cache();
+        self.ensure_streaming_cache(content.width);
+
+        let cached_len = self.flat_cache.len();
+        let streaming_len = self
+            .streaming_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let total_lines = cached_len + streaming_len;
+        if total_lines == 0 {
+            let changed = self.hovered_file_path.is_some();
+            self.hovered_file_path = None;
+            return changed;
+        }
+
+        let visible_height = content.height as usize;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
+        let line_index = scroll_from_top.saturating_add(rel_y);
+        if line_index >= total_lines {
+            let changed = self.hovered_file_path.is_some();
+            self.hovered_file_path = None;
+            return changed;
+        }
+
+        // Get the line text
+        let line = if line_index < cached_len {
+            match self.flat_cache.get(line_index) {
+                Some(l) => l,
+                None => {
+                    let changed = self.hovered_file_path.is_some();
+                    self.hovered_file_path = None;
+                    return changed;
+                }
+            }
+        } else {
+            let idx = line_index.saturating_sub(cached_len);
+            match self.streaming_cache.as_ref().and_then(|c| c.get(idx)) {
+                Some(l) => l,
+                None => {
+                    let changed = self.hovered_file_path.is_some();
+                    self.hovered_file_path = None;
+                    return changed;
+                }
+            }
+        };
+
+        // Extract text content from the line spans
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        // Detect existing file paths in the line
+        let paths = detect_existing_paths(&line_text);
+
+        // Check if mouse position is within any detected path
+        for path_match in paths {
+            let prefix_text = &line_text[..path_match.start];
+            let start_col = UnicodeWidthStr::width(prefix_text);
+            let end_col = start_col + UnicodeWidthStr::width(path_match.path.as_str());
+
+            if rel_x >= start_col && rel_x < end_col {
+                let new_hover = HoveredFilePath {
+                    line_index,
+                    start_col,
+                    end_col,
+                    path: expand_tilde(&path_match.path),
+                };
+                let changed = self.hovered_file_path.as_ref() != Some(&new_hover);
+                self.hovered_file_path = Some(new_hover);
+                return changed;
+            }
+        }
+
+        // No path under cursor
+        let changed = self.hovered_file_path.is_some();
+        self.hovered_file_path = None;
+        changed
+    }
+
+    /// Clear the file path hover state
+    pub fn clear_file_path_hover(&mut self) {
+        self.hovered_file_path = None;
+    }
+
+    /// Check if there's a file path being hovered
+    pub fn is_file_path_hovered(&self) -> bool {
+        self.hovered_file_path.is_some()
+    }
+
+    /// Get the currently hovered file path
+    pub fn hovered_file_path(&self) -> Option<&HoveredFilePath> {
+        self.hovered_file_path.as_ref()
+    }
+
     fn apply_selection_highlight(
         &self,
         visible_lines: Vec<(Line<'static>, Option<usize>)>,
         width: u16,
     ) -> Vec<Line<'static>> {
-        let Some((start, end)) = self.selection_ordered() else {
-            return visible_lines.into_iter().map(|(line, _)| line).collect();
-        };
+        let selection = self.selection_ordered();
 
         let mut out = Vec::with_capacity(visible_lines.len());
         for (line, line_index) in visible_lines {
-            if let Some(idx) = line_index {
+            let mut result_line = line.clone();
+
+            // Apply selection highlight if applicable
+            if let (Some((start, end)), Some(idx)) = (selection, line_index) {
                 if idx >= start.line_index && idx <= end.line_index {
                     if let Some((start_col, end_col)) =
-                        self.selection_bounds_for_line(idx, &line, start, end, width)
+                        self.selection_bounds_for_line(idx, &result_line, start, end, width)
                     {
-                        out.push(highlight_line_by_cols(&line, start_col, end_col));
-                        continue;
+                        result_line = highlight_line_by_cols(&result_line, start_col, end_col);
                     }
                 }
             }
-            out.push(line);
+
+            // Apply hover underline if this line contains the hovered file path
+            if let (Some(hover), Some(idx)) = (&self.hovered_file_path, line_index) {
+                if idx == hover.line_index {
+                    result_line = underline_line_by_cols(
+                        &result_line,
+                        hover.start_col as u16,
+                        hover.end_col as u16,
+                    );
+                }
+            }
+
+            out.push(result_line);
         }
         out
     }
@@ -2295,6 +2446,52 @@ fn highlight_line_by_cols(line: &Line<'static>, start_col: u16, end_col: u16) ->
             let in_selection = end >= start_col && col <= end_col;
             let style = if in_selection {
                 base_style.bg(bg_highlight())
+            } else {
+                base_style
+            };
+
+            if current_style.map(|s| s == style).unwrap_or(false) {
+                buffer.push(ch);
+            } else {
+                if !buffer.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut buffer),
+                        current_style.unwrap_or_default(),
+                    ));
+                }
+                current_style = Some(style);
+                buffer.push(ch);
+            }
+
+            col = col.saturating_add(w);
+        }
+    }
+
+    if !buffer.is_empty() {
+        spans.push(Span::styled(buffer, current_style.unwrap_or_default()));
+    }
+
+    Line::from(spans).style(line.style)
+}
+
+/// Apply underline styling to characters in the specified column range (for hover highlighting)
+fn underline_line_by_cols(line: &Line<'static>, start_col: u16, end_col: u16) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buffer = String::new();
+    let mut current_style: Option<Style> = None;
+    let mut col: u16 = 0;
+
+    for span in &line.spans {
+        let base_style = span.style;
+        for ch in span.content.chars() {
+            let w = UnicodeWidthChar::width(ch).unwrap_or(0) as u16;
+            let end = col.saturating_add(w.saturating_sub(1));
+            let in_range = end >= start_col && col < end_col;
+            let style = if in_range {
+                // Add underline and accent color for hovered file paths
+                base_style
+                    .add_modifier(Modifier::UNDERLINED)
+                    .fg(accent_primary())
             } else {
                 base_style
             };

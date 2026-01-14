@@ -43,7 +43,7 @@ pub use add_repo_dialog::{AddRepoDialog, AddRepoDialogState};
 pub use agent_selector::{AgentSelector, AgentSelectorState};
 pub use base_dir_dialog::{BaseDirDialog, BaseDirDialogState};
 pub use chat_message::{ChatMessage, MessageRole};
-pub use chat_view::ChatView;
+pub use chat_view::{ChatView, HoveredFilePath};
 pub use command_palette::{CommandPalette, CommandPaletteEntry, CommandPaletteState};
 pub use confirmation_dialog::{
     ConfirmationContext, ConfirmationDialog, ConfirmationDialogState, ConfirmationType,

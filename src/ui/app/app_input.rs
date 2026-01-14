@@ -766,6 +766,28 @@ impl App {
                         }
                     }
                 }
+
+                // Update hover state for clickable file paths in chat view
+                if self.state.view_mode == ViewMode::Chat {
+                    if let Some(chat_area) = self.state.chat_area {
+                        if let Some(session) = self.state.tab_manager.active_session_mut() {
+                            let hover_changed =
+                                session.chat_view.update_file_path_hover(x, y, chat_area);
+
+                            if hover_changed {
+                                let is_hovered = session.chat_view.is_file_path_hovered();
+                                if is_hovered {
+                                    self.state.set_footer_message(Some(
+                                        "Click to open file in new tab".to_string(),
+                                    ));
+                                } else {
+                                    // Clear the hint message when no longer hovering
+                                    self.state.set_footer_message(None);
+                                }
+                            }
+                        }
+                    }
+                }
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
