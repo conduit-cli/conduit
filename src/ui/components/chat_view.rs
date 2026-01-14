@@ -492,6 +492,8 @@ pub struct ChatView {
     selection_scroll_lock: Option<usize>,
     /// Theme revision used for cached lines (invalidate on change)
     theme_revision: u64,
+    /// Extra lines appended in the last render (thinking/queue/prompt + spacing)
+    last_render_extra_lines: usize,
 }
 
 impl ChatView {
@@ -512,6 +514,7 @@ impl ChatView {
             streaming_joiner_before: None,
             selection_scroll_lock: None,
             theme_revision: theme_revision(),
+            last_render_extra_lines: 0,
         }
     }
 
@@ -672,6 +675,7 @@ impl ChatView {
         self.streaming_buffer = None;
         self.scroll_offset = 0;
         self.clear_selection();
+        self.last_render_extra_lines = 0;
         // Clear all caches
         self.line_cache = LineCache::default();
         self.flat_cache.clear();
@@ -875,11 +879,11 @@ impl ChatView {
                 .as_ref()
                 .map(|lines| lines.len())
                 .unwrap_or(0);
-            let total_lines = cached_len + streaming_len;
+            let total_lines = cached_len + streaming_len + self.last_render_extra_lines;
             let visible_height = content.height as usize;
             let max_scroll = total_lines.saturating_sub(visible_height);
             if self.scroll_offset == 0 && total_lines > visible_height {
-                let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset);
+                let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
                 self.selection_scroll_lock = Some(scroll_from_top);
             }
         }
@@ -963,7 +967,7 @@ impl ChatView {
             .as_ref()
             .map(|lines| lines.len())
             .unwrap_or(0);
-        let total_lines = cached_len + streaming_len;
+        let total_lines = cached_len + streaming_len + self.last_render_extra_lines;
         if total_lines == 0 {
             return None;
         }
@@ -971,8 +975,12 @@ impl ChatView {
         let visible_height = content.height as usize;
         let max_scroll = total_lines.saturating_sub(visible_height);
         let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
-        let line_index = scroll_from_top.saturating_add(rel_y);
-        if line_index >= total_lines {
+        let top_offset = visible_height.saturating_sub(total_lines);
+        if rel_y < top_offset {
+            return None;
+        }
+        let line_index = scroll_from_top.saturating_add(rel_y.saturating_sub(top_offset));
+        if line_index >= cached_len + streaming_len {
             return None;
         }
 
@@ -1958,6 +1966,7 @@ impl ChatView {
         }
 
         let extra_len = extra_lines.len();
+        self.last_render_extra_lines = extra_len;
         let total_lines = cached_len + streaming_len + extra_len;
         let visible_height = content.height as usize;
 
@@ -2256,7 +2265,6 @@ fn selection_to_copy_text(
     let max_x = width.saturating_sub(1);
     let mut out = String::new();
     let mut prev_selected_line: Option<usize> = None;
-    let mut in_code_run = false;
     let mut wrote_any = false;
 
     for line_index in start.line_index..=end.line_index {
@@ -2316,34 +2324,6 @@ fn selection_to_copy_text(
 
         let line_text = line_to_markdown(&selected_line, is_code_block_line);
 
-        if is_code_block_line && !in_code_run {
-            if wrote_any {
-                out.push('\n');
-            }
-            out.push_str("```");
-            out.push('\n');
-            in_code_run = true;
-            prev_selected_line = None;
-            wrote_any = true;
-        } else if !is_code_block_line && in_code_run {
-            out.push('\n');
-            out.push_str("```");
-            out.push('\n');
-            in_code_run = false;
-            prev_selected_line = None;
-            wrote_any = true;
-        }
-
-        if in_code_run {
-            if wrote_any && (!out.ends_with('\n') || prev_selected_line.is_some()) {
-                out.push('\n');
-            }
-            out.push_str(line_text.as_str());
-            prev_selected_line = Some(line_index);
-            wrote_any = true;
-            continue;
-        }
-
         if wrote_any {
             let joiner = joiner_before.get(line_index).cloned().unwrap_or(None);
             if prev_selected_line == Some(line_index.saturating_sub(1)) {
@@ -2360,11 +2340,6 @@ fn selection_to_copy_text(
         out.push_str(line_text.as_str());
         prev_selected_line = Some(line_index);
         wrote_any = true;
-    }
-
-    if in_code_run {
-        out.push('\n');
-        out.push_str("```");
     }
 
     (!out.is_empty()).then_some(out)
@@ -2741,7 +2716,7 @@ mod tests {
     }
 
     #[test]
-    fn test_selection_to_copy_text_wraps_code_blocks() {
+    fn test_selection_to_copy_text_flattens_code_blocks() {
         let lines = vec![
             line("before"),
             code_line("code1"),
@@ -2758,7 +2733,7 @@ mod tests {
             column: 10,
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
-        assert_eq!(out, "before\n```\ncode1\ncode2\n```\n\nafter");
+        assert_eq!(out, "before\ncode1\ncode2\nafter");
     }
 
     #[test]
@@ -2832,7 +2807,7 @@ mod tests {
             column: 3,
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
-        assert_eq!(out, "```\nbcd\n```");
+        assert_eq!(out, "bcd");
     }
 
     #[test]
@@ -2854,6 +2829,6 @@ mod tests {
             column: 10,
         };
         let out = selection_to_copy_text(&lines, &joiners, start, end, 80).unwrap();
-        assert_eq!(out, "para1\n\n```\ncode\n```\n\n\npara2");
+        assert_eq!(out, "para1\n\ncode\n\npara2");
     }
 }
