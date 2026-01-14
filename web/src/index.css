@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/* Theme CSS variables - these are set dynamically by the theme system */
+/* Default values below are overridden when a theme is applied */
+@theme {
+  /* Background layers */
+  --color-background: #16161e;
+  --color-surface: #1e1e28;
+  --color-surface-elevated: #282834;
+  --color-bg-highlight: #373746;
+
+  /* Text hierarchy */
+  --color-text: #dcdce6;
+  --color-text-bright: #fafaff;
+  --color-text-muted: #646478;
+  --color-text-secondary: #a0a0b4;
+  --color-text-faint: #46465555;
+
+  /* Accent colors */
+  --color-accent: #82aaff;
+  --color-accent-hover: #b48cff;
+  --color-success: #82c88c;
+  --color-warning: #e6b464;
+  --color-error: #e67878;
+
+  /* Agent colors */
+  --color-agent-claude: #82b4dc;
+  --color-agent-codex: #b48cc8;
+
+  /* PR state colors */
+  --color-pr-open: #238636;
+  --color-pr-merged: #8250df;
+  --color-pr-closed: #da3633;
+  --color-pr-draft: #6e7681;
+
+  /* Border colors */
+  --color-border: #323241;
+  --color-border-subtle: #23232d;
+  --color-border-focused: #82aaff;
+
+  /* Diff colors */
+  --color-diff-add: #82c88c;
+  --color-diff-remove: #e67878;
+
+  /* Scrollbar colors */
+  --color-scrollbar-thumb: #282834;
+  --color-scrollbar-thumb-hover: #373746;
+
+  /* Font families */
+  --font-family-sans: 'Inter', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Menlo', monospace;
+}
+
+/* Base styles */
+html,
+body {
+  margin: 0;
+  min-width: 320px;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--color-background);
+  color: var(--color-text);
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}
+
+/* Code blocks */
+pre {
+  font-family: 'IBM Plex Mono', 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+code {
+  font-family: 'IBM Plex Mono', 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+/* Prose overrides for markdown content */
+.prose pre {
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+}
+
+.prose code {
+  color: var(--color-text-bright);
+}
+
+.prose a {
+  color: var(--color-accent);
+}
