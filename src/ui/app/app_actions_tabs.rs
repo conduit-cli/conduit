@@ -1,9 +1,33 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
 use crate::ui::action::Action;
 use crate::ui::app::App;
 use crate::ui::effect::Effect;
 use crate::ui::events::InputMode;
 
 impl App {
+    /// Handle opening a file in a new tab
+    pub(super) fn handle_open_file(&mut self, path: PathBuf, effects: &mut Vec<Effect>) {
+        match self.state.tab_manager.open_file(path.clone()) {
+            Ok(_) => {
+                self.state.set_timed_footer_message(
+                    format!("Opened: {}", path.display()),
+                    Duration::from_secs(2),
+                );
+                self.state.input_mode = InputMode::Normal;
+                self.state.sidebar_state.set_focused(false);
+                effects.push(Effect::SaveSessionState);
+            }
+            Err(e) => {
+                self.state
+                    .error_dialog_state
+                    .show("Failed to open file", format!("{}: {}", path.display(), e));
+                self.state.input_mode = InputMode::ShowingError;
+            }
+        }
+    }
+
     pub(super) fn handle_tab_action(&mut self, action: Action, effects: &mut Vec<Effect>) {
         match action {
             Action::CloseTab => {

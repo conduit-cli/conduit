@@ -7,6 +7,8 @@ mod command_palette;
 mod confirmation_dialog;
 mod dialog;
 mod error_dialog;
+pub mod file_path_detector;
+mod file_viewer_view;
 mod global_footer;
 mod help_dialog;
 mod inline_prompt;
@@ -51,6 +53,7 @@ pub use dialog::{
     DIALOG_CONTENT_PADDING_Y,
 };
 pub use error_dialog::{ErrorDialog, ErrorDialogState};
+pub use file_viewer_view::FileViewerView;
 pub use global_footer::{FooterContext, GlobalFooter};
 pub use help_dialog::{HelpCategory, HelpDialog, HelpDialogState, KeybindingEntry};
 pub use inline_prompt::{

@@ -3,6 +3,8 @@
 //! This module defines all the actions that can be bound to keys.
 //! Each action represents a single, atomic operation in the UI.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 /// All mappable UI actions
@@ -50,6 +52,10 @@ pub enum Action {
     PrevTab,
     /// Switch to tab by number (1-9)
     SwitchToTab(u8),
+
+    // ========== File Viewer ==========
+    /// Open a file in a new tab
+    OpenFile(PathBuf),
 
     // ========== Chat Scrolling ==========
     /// Scroll chat up by N lines
@@ -246,6 +252,9 @@ impl Action {
             Action::NextTab => "Next tab",
             Action::PrevTab => "Previous tab",
             Action::SwitchToTab(_) => "Switch to tab",
+
+            // File viewer
+            Action::OpenFile(_) => "Open file",
 
             // Scrolling
             Action::ScrollUp(_) => "Scroll up",

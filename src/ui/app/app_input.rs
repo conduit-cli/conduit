@@ -697,7 +697,13 @@ impl App {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.state.scroll_drag = None;
-                if let Some(effects) = self.handle_selection_end() {
+                if let Some(mut effects) = self.handle_selection_end() {
+                    // If no selection was made (simple click), check for clickable file paths
+                    if effects.is_empty() {
+                        if let Some(path_effects) = self.handle_file_path_click(x, y) {
+                            effects.extend(path_effects);
+                        }
+                    }
                     return Ok(effects);
                 }
                 Ok(Vec::new())
@@ -763,6 +769,46 @@ impl App {
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
+        }
+    }
+
+    /// Handle click on a file path in the chat area
+    /// Returns Some(effects) if a file path was clicked and opened
+    fn handle_file_path_click(&mut self, x: u16, y: u16) -> Option<Vec<Effect>> {
+        // Only handle in chat view mode
+        if self.state.view_mode != ViewMode::Chat {
+            return None;
+        }
+
+        // Get the chat area
+        let chat_area = self.state.chat_area?;
+
+        // Check if click is in chat area
+        if !Self::point_in_rect(x, y, chat_area) {
+            return None;
+        }
+
+        // Get the active session and check for file path at click position
+        let session = self.state.tab_manager.active_session_mut()?;
+        let path = session.chat_view.file_path_at_position(x, y, chat_area)?;
+
+        // Try to open the file in a new tab
+        let path_buf = std::path::PathBuf::from(&path);
+        match self.state.tab_manager.open_file(path_buf.clone()) {
+            Ok(_) => {
+                self.state.set_timed_footer_message(
+                    format!("Opened: {}", path),
+                    std::time::Duration::from_secs(2),
+                );
+                Some(vec![Effect::SaveSessionState])
+            }
+            Err(e) => {
+                self.state.set_timed_footer_message(
+                    format!("Failed to open {}: {}", path, e),
+                    std::time::Duration::from_secs(3),
+                );
+                None
+            }
         }
     }
 }

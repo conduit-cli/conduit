@@ -5,6 +5,12 @@ use crate::ui::events::InputMode;
 
 impl App {
     pub(super) fn handle_scroll_action(&mut self, action: Action) {
+        // Handle file viewer scrolling if active tab is a file
+        if self.state.tab_manager.active_is_file() {
+            self.handle_file_viewer_scroll(&action);
+            return;
+        }
+
         match action {
             Action::ScrollUp(n) => {
                 if self.state.input_mode == InputMode::ShowingHelp {
@@ -114,6 +120,45 @@ impl App {
                     }
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// Handle scroll actions for file viewer
+    fn handle_file_viewer_scroll(&mut self, action: &Action) {
+        match action {
+            Action::ScrollUp(n) => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.scroll_up(*n as usize);
+                }
+            }
+            Action::ScrollDown(n) => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.scroll_down(*n as usize);
+                }
+            }
+            Action::ScrollPageUp => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.page_up();
+                }
+            }
+            Action::ScrollPageDown => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.page_down();
+                }
+            }
+            Action::ScrollToTop => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.scroll_to_top();
+                }
+            }
+            Action::ScrollToBottom => {
+                if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
+                    file_session.scroll_to_bottom();
+                }
+            }
+            // User message navigation doesn't apply to file viewer
+            Action::ScrollPrevUserMessage | Action::ScrollNextUserMessage => {}
             _ => {}
         }
     }

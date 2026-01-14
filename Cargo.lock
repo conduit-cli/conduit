@@ -683,6 +683,7 @@ dependencies = [
  "pulldown-cmark",
  "rand 0.9.2",
  "ratatui",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

@@ -21,6 +21,8 @@ pub enum FooterContext {
     Sidebar,
     /// Raw events view mode
     RawEvents,
+    /// File viewer mode
+    FileViewer,
 }
 
 impl FooterContext {
@@ -68,10 +70,16 @@ impl<'a> GlobalFooter<'a> {
                 FooterContext::Chat => Self::chat_hints(),
                 FooterContext::Sidebar => Self::sidebar_hints(),
                 FooterContext::RawEvents => Self::raw_events_hints(),
+                FooterContext::FileViewer => Self::file_viewer_hints(),
             },
             spinner: None,
             message: None,
         }
+    }
+
+    /// Create footer for file viewer context
+    pub fn file_viewer_context() -> Self {
+        Self::for_context(FooterContext::FileViewer)
     }
 
     /// Create footer from app state
@@ -135,6 +143,17 @@ impl<'a> GlobalFooter<'a> {
             ("C-j/k", "panel"),
             ("c", "copy"),
             ("C-g", "chat"),
+        ]
+    }
+
+    /// Get hints for file viewer mode
+    pub fn file_viewer_hints() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("j/k", "scroll"),
+            ("g/G", "top/bottom"),
+            ("C-d/u", "page"),
+            ("tab", "next tab"),
+            ("M-S-w", "close"),
         ]
     }
 

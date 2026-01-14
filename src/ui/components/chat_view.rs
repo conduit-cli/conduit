@@ -1005,6 +1005,83 @@ impl ChatView {
         Some(SelectionPoint { line_index, column })
     }
 
+    /// Find a clickable file path at the given mouse position.
+    /// Returns the file path if one exists at that position and it exists on disk.
+    pub fn file_path_at_position(
+        &mut self,
+        click_x: u16,
+        click_y: u16,
+        area: Rect,
+    ) -> Option<String> {
+        use super::file_path_detector::{detect_existing_paths, expand_tilde};
+
+        let content = Self::content_area(area)?;
+        if click_x < content.x
+            || click_y < content.y
+            || click_x >= content.x + content.width
+            || click_y >= content.y + content.height
+        {
+            return None;
+        }
+
+        let rel_x = click_x.saturating_sub(content.x) as usize;
+        let rel_y = click_y.saturating_sub(content.y) as usize;
+
+        self.ensure_cache(content.width);
+        self.ensure_flat_cache();
+        self.ensure_streaming_cache(content.width);
+
+        let cached_len = self.flat_cache.len();
+        let streaming_len = self
+            .streaming_cache
+            .as_ref()
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let total_lines = cached_len + streaming_len;
+        if total_lines == 0 {
+            return None;
+        }
+
+        let visible_height = content.height as usize;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll_from_top = max_scroll.saturating_sub(self.scroll_offset.min(max_scroll));
+        let line_index = scroll_from_top.saturating_add(rel_y);
+        if line_index >= total_lines {
+            return None;
+        }
+
+        // Get the line text
+        let line = if line_index < cached_len {
+            self.flat_cache.get(line_index)?
+        } else {
+            let idx = line_index.saturating_sub(cached_len);
+            self.streaming_cache.as_ref()?.get(idx)?
+        };
+
+        // Extract text content from the line spans
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        // Detect existing file paths in the line
+        let paths = detect_existing_paths(&line_text);
+
+        // Check if click position is within any detected path
+        for path_match in paths {
+            // Calculate the display column for the path's start/end positions
+            // We need to convert byte positions to display columns
+            let prefix_text = &line_text[..path_match.start];
+            let start_col = UnicodeWidthStr::width(prefix_text);
+            let end_col = start_col + UnicodeWidthStr::width(path_match.path.as_str());
+
+            // Check if click is within this path's region
+            if rel_x >= start_col && rel_x < end_col {
+                // Return the expanded path
+                return Some(expand_tilde(&path_match.path));
+            }
+        }
+
+        None
+    }
+
     fn apply_selection_highlight(
         &self,
         visible_lines: Vec<(Line<'static>, Option<usize>)>,

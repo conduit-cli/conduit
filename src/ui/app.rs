@@ -1457,6 +1457,11 @@ impl App {
                 self.handle_tab_action(action, &mut effects);
             }
 
+            // ========== File Viewer ==========
+            Action::OpenFile(path) => {
+                self.handle_open_file(path, &mut effects);
+            }
+
             // ========== Chat Scrolling ==========
             Action::ScrollUp(_)
             | Action::ScrollDown(_)
@@ -2667,12 +2672,37 @@ impl App {
     /// Execute a command from command mode
     /// Returns an action to execute if the command maps to one
     fn execute_command(&mut self) -> Option<Action> {
-        let command = self.state.command_buffer.trim().to_lowercase();
-        self.state.command_buffer.clear();
+        let command = std::mem::take(&mut self.state.command_buffer);
+        let command = command.trim();
         self.state.input_mode = InputMode::Normal;
 
+        // Check for :open command first (preserve path case)
+        if let Some(path) = command
+            .strip_prefix("open ")
+            .or_else(|| command.strip_prefix("o "))
+        {
+            let path = path.trim();
+            if !path.is_empty() {
+                // Expand tilde to home directory
+                let expanded_path = if let Some(stripped) = path.strip_prefix('~') {
+                    if let Some(home) = dirs::home_dir() {
+                        // Handle both "~" and "~/path" cases
+                        let rest = stripped.strip_prefix('/').unwrap_or(stripped);
+                        home.join(rest)
+                    } else {
+                        std::path::PathBuf::from(path)
+                    }
+                } else {
+                    std::path::PathBuf::from(path)
+                };
+                return Some(Action::OpenFile(expanded_path));
+            }
+        }
+
+        let command_lower = command.to_lowercase();
+
         // First check for built-in command aliases
-        match command.as_str() {
+        match command_lower.as_str() {
             "help" | "h" | "?" => {
                 self.state.close_overlays();
                 self.state.help_dialog_state.show(&self.config.keybindings);
@@ -2686,7 +2716,7 @@ impl App {
         }
 
         // Try to parse as an action name
-        parse_action(&command)
+        parse_action(&command_lower)
     }
 
     /// Autocomplete the command buffer
@@ -3610,7 +3640,7 @@ impl App {
         new_session.init_context_for_model();
         new_session.update_status();
 
-        if let Some(session) = self.state.tab_manager.sessions_mut().get_mut(active_index) {
+        if let Some(session) = self.state.tab_manager.session_mut(active_index) {
             *session = new_session;
         }
 
@@ -7426,483 +7456,492 @@ impl App {
             );
         }
 
-        match self.state.view_mode {
-            ViewMode::Chat => {
-                // Handle empty state - no tabs open
-                if self.state.tab_manager.is_empty() {
-                    use crate::ui::components::{text_muted, FooterContext};
-                    use ratatui::style::Style;
-                    use ratatui::text::{Line, Span};
-                    use ratatui::widgets::{Paragraph, Widget};
+        // Check if active tab is a file viewer - render it separately
+        if self.state.tab_manager.active_is_file() {
+            self.render_file_viewer_tab(content_area, footer_area, f);
+        } else {
+            match self.state.view_mode {
+                ViewMode::Chat => {
+                    // Handle empty state - no tabs open
+                    if self.state.tab_manager.is_empty() {
+                        use crate::ui::components::{text_muted, FooterContext};
+                        use ratatui::style::Style;
+                        use ratatui::text::{Line, Span};
+                        use ratatui::widgets::{Paragraph, Widget};
 
-                    // Layout with tab bar, content, and footer
+                        // Layout with tab bar, content, and footer
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(1), // Tab bar
+                                Constraint::Min(5),    // Content area
+                                Constraint::Length(1), // Footer
+                            ])
+                            .split(content_area);
+
+                        // Store areas for mouse hit-testing
+                        self.state.tab_bar_area = Some(chunks[0]);
+                        self.state.chat_area = None;
+                        self.state.raw_events_area = None;
+                        self.state.input_area = None;
+                        self.state.status_bar_area = None;
+                        self.state.footer_area = Some(chunks[2]);
+
+                        // Render tab bar
+                        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+                        self.ensure_tab_bar_scroll(chunks[0].width, tabs_focused);
+                        let tab_bar = self.build_tab_bar(tabs_focused);
+                        tab_bar.render(chunks[0], f.buffer_mut());
+
+                        // Empty state message - different for first-time users vs returning users
+                        let is_first_time = self.state.show_first_time_splash;
+
+                        // Render animated logo with shine effect
+                        let mut lines = self.state.logo_shine.render_logo_lines();
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(""));
+
+                        if is_first_time {
+                            // First-time user - simpler message
+                            lines.push(Line::from(Span::styled(
+                                "Add your first project with Ctrl+N",
+                                Style::default().fg(text_muted()),
+                            )));
+                        } else {
+                            // Returning user - full message
+                            lines.push(Line::from(Span::styled(
+                                "Add a new project with Ctrl+N",
+                                Style::default().fg(text_muted()),
+                            )));
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(Span::styled(
+                                "- or -",
+                                Style::default().fg(text_muted()),
+                            )));
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(Span::styled(
+                                "Select a project from the sidebar",
+                                Style::default().fg(text_muted()),
+                            )));
+                        }
+
+                        let paragraph =
+                            Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
+
+                        // Center vertically in the content area (chunks[1])
+                        let message_area = chunks[1];
+                        // First-time: 7 logo + 3 blank + 1 message = 11 lines
+                        // Returning: 7 logo + 3 blank + 5 message = 15 lines
+                        let text_height = if is_first_time { 11u16 } else { 15u16 };
+                        let vertical_offset = message_area.height.saturating_sub(text_height) / 2;
+                        let centered_area = Rect {
+                            x: message_area.x,
+                            y: message_area.y + vertical_offset,
+                            width: message_area.width,
+                            height: text_height,
+                        };
+
+                        paragraph.render(centered_area, f.buffer_mut());
+
+                        // Render dialogs over empty state
+                        if self.state.base_dir_dialog_state.is_visible() {
+                            let dialog = BaseDirDialog::new();
+                            dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
+                        } else if self.state.project_picker_state.is_visible() {
+                            let picker = ProjectPicker::new();
+                            picker.render(size, f.buffer_mut(), &self.state.project_picker_state);
+                        } else if self.state.add_repo_dialog_state.is_visible() {
+                            let dialog = AddRepoDialog::new();
+                            dialog.render(size, f.buffer_mut(), &self.state.add_repo_dialog_state);
+                        } else if self.state.session_import_state.is_visible() {
+                            let picker = SessionImportPicker::new();
+                            picker.render(size, f.buffer_mut(), &self.state.session_import_state);
+                        } else if self.state.model_selector_state.is_visible() {
+                            self.state.model_selector_state.update_viewport(size);
+                            let selector = ModelSelector::new();
+                            selector.render(size, f.buffer_mut(), &self.state.model_selector_state);
+                        } else if self.state.theme_picker_state.is_visible() {
+                            self.render_theme_picker(size, f.buffer_mut());
+                        }
+
+                        // Draw agent selector dialog if needed
+                        if self.state.agent_selector_state.is_visible() {
+                            let selector = AgentSelector::new();
+                            selector.render(size, f.buffer_mut(), &self.state.agent_selector_state);
+                        }
+
+                        // Draw confirmation dialog if open
+                        if self.state.confirmation_dialog_state.visible {
+                            use ratatui::widgets::Widget;
+                            let dialog =
+                                ConfirmationDialog::new(&self.state.confirmation_dialog_state);
+                            dialog.render(size, f.buffer_mut());
+                        }
+
+                        // Draw error dialog if open
+                        if self.state.error_dialog_state.visible {
+                            use ratatui::widgets::Widget;
+                            let dialog = ErrorDialog::new(&self.state.error_dialog_state);
+                            dialog.render(size, f.buffer_mut());
+                        }
+
+                        // Draw missing tool dialog if open
+                        if self.state.missing_tool_dialog_state.is_visible() {
+                            use ratatui::widgets::Widget;
+                            let dialog =
+                                MissingToolDialog::new(&self.state.missing_tool_dialog_state);
+                            dialog.render(size, f.buffer_mut());
+                        }
+
+                        // Draw help dialog if open
+                        if self.state.help_dialog_state.is_visible() {
+                            HelpDialog::new().render(
+                                size,
+                                f.buffer_mut(),
+                                &mut self.state.help_dialog_state,
+                            );
+                        }
+
+                        // Draw command palette (on top of everything)
+                        if self.state.command_palette_state.is_visible() {
+                            CommandPalette::new().render(
+                                size,
+                                f.buffer_mut(),
+                                &self.state.command_palette_state,
+                            );
+                        }
+
+                        // Draw footer for empty state (sidebar-aware)
+                        let footer_context =
+                            if self.state.input_mode == InputMode::SidebarNavigation {
+                                FooterContext::Sidebar
+                            } else {
+                                FooterContext::Empty
+                            };
+                        let footer = GlobalFooter::for_context(footer_context)
+                            .with_spinner(self.state.footer_spinner.as_ref())
+                            .with_message(self.state.footer_message.as_deref());
+                        footer.render(chunks[2], f.buffer_mut());
+
+                        return;
+                    }
+
+                    // Margins for input area (constants to avoid duplication)
+                    const INPUT_MARGIN_LEFT: u16 = 2;
+                    const INPUT_MARGIN_RIGHT: u16 = 2;
+                    let input_total_margin = INPUT_MARGIN_LEFT + INPUT_MARGIN_RIGHT;
+
+                    // Calculate dynamic input height (max 30% of screen)
+                    // When inline prompt is active, set to 0 so chat area expands
+                    let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
+                    let input_width = content_area.width.saturating_sub(input_total_margin);
+                    let has_inline_prompt = self
+                        .state
+                        .tab_manager
+                        .active_session()
+                        .map(|s| s.inline_prompt.is_some())
+                        .unwrap_or(false);
+
+                    let input_height = if has_inline_prompt {
+                        0 // No input box when inline prompt is active
+                    } else if let Some(session) = self.state.tab_manager.active_session() {
+                        session
+                            .input_box
+                            .desired_height(max_input_height, input_width)
+                    } else {
+                        3 // Minimum height
+                    };
+
+                    // When inline prompt is active, hide status bar and gap too
+                    let status_bar_height = if has_inline_prompt { 0 } else { 1 };
+                    let gap_height = if has_inline_prompt { 0 } else { 1 };
+
+                    // Chat layout with session header, input box, status bar, and gap
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(1),                 // Tab bar
+                            Constraint::Length(1),                 // Session header
+                            Constraint::Min(5),                    // Chat view
+                            Constraint::Length(input_height),      // Input box (dynamic)
+                            Constraint::Length(status_bar_height), // Status bar (hidden during inline prompt)
+                            Constraint::Length(gap_height),        // Gap row before footer
+                        ])
+                        .split(content_area);
+
+                    // Extract named areas to avoid brittle numeric indices
+                    let tab_bar_chunk = chunks[0];
+                    let header_chunk = chunks[1];
+                    let chat_chunk = chunks[2];
+                    let input_chunk = chunks[3];
+                    let status_bar_chunk = chunks[4];
+                    let gap_chunk = chunks[5];
+
+                    // Create margin-adjusted areas for input, status bar, and gap rows
+                    let input_area_inner = Rect {
+                        x: input_chunk.x + INPUT_MARGIN_LEFT,
+                        y: input_chunk.y,
+                        width: input_chunk.width.saturating_sub(input_total_margin),
+                        height: input_chunk.height,
+                    };
+                    let status_bar_area_inner = Rect {
+                        x: status_bar_chunk.x + INPUT_MARGIN_LEFT,
+                        y: status_bar_chunk.y,
+                        width: status_bar_chunk.width.saturating_sub(input_total_margin),
+                        height: status_bar_chunk.height,
+                    };
+                    let gap_area_inner = Rect {
+                        x: gap_chunk.x + INPUT_MARGIN_LEFT,
+                        y: gap_chunk.y,
+                        width: gap_chunk.width.saturating_sub(input_total_margin),
+                        height: gap_chunk.height,
+                    };
+
+                    // Fill margin areas so they match the app background.
+                    let buf = f.buffer_mut();
+                    let fill_margins = |buf: &mut ratatui::buffer::Buffer, row_area: Rect, bg| {
+                        let style = ratatui::style::Style::default().bg(bg);
+                        let left_width = INPUT_MARGIN_LEFT.min(row_area.width);
+                        if left_width > 0 {
+                            buf.set_style(
+                                Rect {
+                                    x: row_area.x,
+                                    y: row_area.y,
+                                    width: left_width,
+                                    height: row_area.height,
+                                },
+                                style,
+                            );
+                        }
+                        let right_width =
+                            INPUT_MARGIN_RIGHT.min(row_area.width.saturating_sub(left_width));
+                        if right_width > 0 {
+                            let right_start =
+                                row_area.x + row_area.width.saturating_sub(right_width);
+                            buf.set_style(
+                                Rect {
+                                    x: right_start,
+                                    y: row_area.y,
+                                    width: right_width,
+                                    height: row_area.height,
+                                },
+                                style,
+                            );
+                        }
+                    };
+
+                    use crate::ui::components::bg_base;
+                    let margin_bg = bg_base();
+                    fill_margins(buf, input_chunk, margin_bg);
+                    fill_margins(buf, status_bar_chunk, margin_bg);
+                    fill_margins(buf, gap_chunk, margin_bg);
+
+                    // Draw separator line in the gap row (▀ characters)
+                    // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
+                    // Skip when inline prompt is active (gap row is hidden)
+                    if !has_inline_prompt {
+                        use crate::ui::components::status_bar_bg;
+                        for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
+                            buf[(x, gap_area_inner.y)]
+                                .set_char('▀')
+                                .set_fg(status_bar_bg());
+                        }
+                    }
+
+                    // Store layout areas for mouse hit-testing
+                    // Set hidden areas to None when inline prompt is active to avoid hit-testing confusion
+                    self.state.tab_bar_area = Some(tab_bar_chunk);
+                    self.state.chat_area = Some(chat_chunk);
+                    self.state.raw_events_area = None;
+                    self.state.input_area = if has_inline_prompt {
+                        None
+                    } else {
+                        Some(input_area_inner)
+                    };
+                    self.state.status_bar_area = if has_inline_prompt {
+                        None
+                    } else {
+                        Some(status_bar_area_inner)
+                    };
+                    self.state.footer_area = Some(footer_area);
+
+                    // Draw tab bar (unfocused when sidebar is focused)
+                    let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+                    self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
+                    let tab_bar = self.build_tab_bar(tabs_focused);
+                    tab_bar.render(tab_bar_chunk, f.buffer_mut());
+
+                    // Draw session header (below tab bar)
+                    let session_title = self
+                        .state
+                        .tab_manager
+                        .active_session()
+                        .and_then(|s| s.title.as_deref());
+                    SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
+
+                    // Draw active session components
+                    let is_command_mode = self.state.input_mode == InputMode::Command;
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
+                        // Use full chat area - prompt is now rendered as part of scrollable content
+                        let chat_area = chat_chunk;
+
+                        self.state.chat_area = if chat_area.height == 0 {
+                            None
+                        } else {
+                            Some(chat_area)
+                        };
+
+                        // Render chat with thinking indicator if processing (but not during inline prompt)
+                        let thinking_line =
+                            if session.is_processing && session.inline_prompt.is_none() {
+                                Some(session.thinking_indicator.render())
+                            } else {
+                                None
+                            };
+                        let input_mode = self.state.input_mode;
+                        let queue_lines =
+                            app_queue::build_queue_lines(session, chat_area.width, input_mode);
+
+                        // Build prompt lines from inline_prompt (renders as part of scrollable chat)
+                        let prompt_lines = session
+                            .inline_prompt
+                            .as_ref()
+                            .map(|p| p.render_as_lines(chat_area.width as usize));
+
+                        session.chat_view.render_with_indicator(
+                            chat_area,
+                            f.buffer_mut(),
+                            thinking_line,
+                            queue_lines,
+                            prompt_lines,
+                        );
+
+                        // Check if inline prompt is active
+                        let has_inline_prompt = session.inline_prompt.is_some();
+
+                        // Render input box (not in command mode, not when inline prompt active)
+                        if !is_command_mode && !has_inline_prompt {
+                            session.input_box.render(input_area_inner, f.buffer_mut());
+                        }
+                        // Update and render status bar (skip when inline prompt is active)
+                        if !has_inline_prompt {
+                            session.status_bar.set_metrics(
+                                self.state.show_metrics,
+                                self.state.metrics.draw_time,
+                                self.state.metrics.event_time,
+                                self.state.metrics.fps,
+                                self.state.metrics.scroll_latency,
+                                self.state.metrics.scroll_latency_avg,
+                                self.state.metrics.scroll_lines_per_sec,
+                                self.state.metrics.scroll_events_per_sec,
+                                self.state.metrics.scroll_active,
+                            );
+                            session
+                                .status_bar
+                                .set_spinner_frame(self.state.spinner_frame);
+                            session
+                                .status_bar
+                                .render(status_bar_area_inner, f.buffer_mut());
+                        }
+
+                        // Set cursor position (accounting for scroll)
+                        if self.state.input_mode == InputMode::Normal {
+                            // Inline prompt uses visual cursor (reversed style) in the rendered lines,
+                            // so no cursor positioning needed. Only set cursor for normal input box.
+                            if !has_inline_prompt {
+                                let scroll_offset = session.input_box.scroll_offset();
+                                let (cx, cy) = session
+                                    .input_box
+                                    .cursor_position(input_area_inner, scroll_offset);
+                                f.set_cursor_position((cx, cy));
+                            }
+                        }
+                    }
+
+                    // Render command prompt if in command mode (outside session borrow)
+                    if is_command_mode {
+                        self.render_command_prompt(input_area_inner, f.buffer_mut());
+                        // Cursor at end of command buffer (after prompt in padded area)
+                        let prompt = format!("  cmd › {}", self.state.command_buffer);
+                        let prompt_width = prompt.width() as u16;
+                        let max_x = input_area_inner.x + input_area_inner.width.saturating_sub(1);
+                        let cx = (input_area_inner.x + prompt_width).min(max_x);
+                        let cy = input_area_inner.y + 1; // top padding
+                        f.set_cursor_position((cx, cy));
+                    }
+
+                    if self.state.slash_menu_state.is_visible() && !has_inline_prompt {
+                        self.render_slash_menu(chat_chunk, input_area_inner, f.buffer_mut());
+                    }
+
+                    // Draw footer (full width) - context-aware based on input mode
+                    let footer = GlobalFooter::from_state(
+                        self.state.view_mode,
+                        self.state.input_mode,
+                        !self.state.tab_manager.is_empty(),
+                    )
+                    .with_spinner(self.state.footer_spinner.as_ref())
+                    .with_message(self.state.footer_message.as_deref());
+                    footer.render(footer_area, f.buffer_mut());
+                }
+                ViewMode::RawEvents => {
+                    // Raw events layout - no input box, full height for events
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Length(1), // Tab bar
-                            Constraint::Min(5),    // Content area
-                            Constraint::Length(1), // Footer
+                            Constraint::Length(1), // Session header
+                            Constraint::Min(5),    // Raw events view (full height)
                         ])
                         .split(content_area);
 
-                    // Store areas for mouse hit-testing
-                    self.state.tab_bar_area = Some(chunks[0]);
+                    // Extract named areas to avoid brittle numeric indices
+                    let tab_bar_chunk = chunks[0];
+                    let header_chunk = chunks[1];
+                    let raw_events_chunk = chunks[2];
+
+                    // Store layout areas for mouse hit-testing (no input/status in this mode)
+                    self.state.tab_bar_area = Some(tab_bar_chunk);
                     self.state.chat_area = None;
-                    self.state.raw_events_area = None;
+                    self.state.raw_events_area = Some(raw_events_chunk);
                     self.state.input_area = None;
                     self.state.status_bar_area = None;
-                    self.state.footer_area = Some(chunks[2]);
+                    self.state.footer_area = Some(footer_area);
 
-                    // Render tab bar
+                    // Draw tab bar (unfocused when sidebar is focused)
                     let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                    self.ensure_tab_bar_scroll(chunks[0].width, tabs_focused);
+                    self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
                     let tab_bar = self.build_tab_bar(tabs_focused);
-                    tab_bar.render(chunks[0], f.buffer_mut());
+                    tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
-                    // Empty state message - different for first-time users vs returning users
-                    let is_first_time = self.state.show_first_time_splash;
+                    // Draw session header (below tab bar) - consistent with Chat view
+                    let session_title = self
+                        .state
+                        .tab_manager
+                        .active_session()
+                        .and_then(|s| s.title.as_deref());
+                    SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
 
-                    // Render animated logo with shine effect
-                    let mut lines = self.state.logo_shine.render_logo_lines();
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(""));
-
-                    if is_first_time {
-                        // First-time user - simpler message
-                        lines.push(Line::from(Span::styled(
-                            "Add your first project with Ctrl+N",
-                            Style::default().fg(text_muted()),
-                        )));
-                    } else {
-                        // Returning user - full message
-                        lines.push(Line::from(Span::styled(
-                            "Add a new project with Ctrl+N",
-                            Style::default().fg(text_muted()),
-                        )));
-                        lines.push(Line::from(""));
-                        lines.push(Line::from(Span::styled(
-                            "- or -",
-                            Style::default().fg(text_muted()),
-                        )));
-                        lines.push(Line::from(""));
-                        lines.push(Line::from(Span::styled(
-                            "Select a project from the sidebar",
-                            Style::default().fg(text_muted()),
-                        )));
-                    }
-
-                    let paragraph =
-                        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
-
-                    // Center vertically in the content area (chunks[1])
-                    let message_area = chunks[1];
-                    // First-time: 7 logo + 3 blank + 1 message = 11 lines
-                    // Returning: 7 logo + 3 blank + 5 message = 15 lines
-                    let text_height = if is_first_time { 11u16 } else { 15u16 };
-                    let vertical_offset = message_area.height.saturating_sub(text_height) / 2;
-                    let centered_area = Rect {
-                        x: message_area.x,
-                        y: message_area.y + vertical_offset,
-                        width: message_area.width,
-                        height: text_height,
-                    };
-
-                    paragraph.render(centered_area, f.buffer_mut());
-
-                    // Render dialogs over empty state
-                    if self.state.base_dir_dialog_state.is_visible() {
-                        let dialog = BaseDirDialog::new();
-                        dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
-                    } else if self.state.project_picker_state.is_visible() {
-                        let picker = ProjectPicker::new();
-                        picker.render(size, f.buffer_mut(), &self.state.project_picker_state);
-                    } else if self.state.add_repo_dialog_state.is_visible() {
-                        let dialog = AddRepoDialog::new();
-                        dialog.render(size, f.buffer_mut(), &self.state.add_repo_dialog_state);
-                    } else if self.state.session_import_state.is_visible() {
-                        let picker = SessionImportPicker::new();
-                        picker.render(size, f.buffer_mut(), &self.state.session_import_state);
-                    } else if self.state.model_selector_state.is_visible() {
-                        self.state.model_selector_state.update_viewport(size);
-                        let selector = ModelSelector::new();
-                        selector.render(size, f.buffer_mut(), &self.state.model_selector_state);
-                    } else if self.state.theme_picker_state.is_visible() {
-                        self.render_theme_picker(size, f.buffer_mut());
-                    }
-
-                    // Draw agent selector dialog if needed
-                    if self.state.agent_selector_state.is_visible() {
-                        let selector = AgentSelector::new();
-                        selector.render(size, f.buffer_mut(), &self.state.agent_selector_state);
-                    }
-
-                    // Draw confirmation dialog if open
-                    if self.state.confirmation_dialog_state.visible {
-                        use ratatui::widgets::Widget;
-                        let dialog = ConfirmationDialog::new(&self.state.confirmation_dialog_state);
-                        dialog.render(size, f.buffer_mut());
-                    }
-
-                    // Draw error dialog if open
-                    if self.state.error_dialog_state.visible {
-                        use ratatui::widgets::Widget;
-                        let dialog = ErrorDialog::new(&self.state.error_dialog_state);
-                        dialog.render(size, f.buffer_mut());
-                    }
-
-                    // Draw missing tool dialog if open
-                    if self.state.missing_tool_dialog_state.is_visible() {
-                        use ratatui::widgets::Widget;
-                        let dialog = MissingToolDialog::new(&self.state.missing_tool_dialog_state);
-                        dialog.render(size, f.buffer_mut());
-                    }
-
-                    // Draw help dialog if open
-                    if self.state.help_dialog_state.is_visible() {
-                        HelpDialog::new().render(
-                            size,
-                            f.buffer_mut(),
-                            &mut self.state.help_dialog_state,
-                        );
-                    }
-
-                    // Draw command palette (on top of everything)
-                    if self.state.command_palette_state.is_visible() {
-                        CommandPalette::new().render(
-                            size,
-                            f.buffer_mut(),
-                            &self.state.command_palette_state,
-                        );
-                    }
-
-                    // Draw footer for empty state (sidebar-aware)
-                    let footer_context = if self.state.input_mode == InputMode::SidebarNavigation {
-                        FooterContext::Sidebar
-                    } else {
-                        FooterContext::Empty
-                    };
-                    let footer = GlobalFooter::for_context(footer_context)
-                        .with_spinner(self.state.footer_spinner.as_ref())
-                        .with_message(self.state.footer_message.as_deref());
-                    footer.render(chunks[2], f.buffer_mut());
-
-                    return;
-                }
-
-                // Margins for input area (constants to avoid duplication)
-                const INPUT_MARGIN_LEFT: u16 = 2;
-                const INPUT_MARGIN_RIGHT: u16 = 2;
-                let input_total_margin = INPUT_MARGIN_LEFT + INPUT_MARGIN_RIGHT;
-
-                // Calculate dynamic input height (max 30% of screen)
-                // When inline prompt is active, set to 0 so chat area expands
-                let max_input_height = (content_area.height as f32 * 0.30).ceil() as u16;
-                let input_width = content_area.width.saturating_sub(input_total_margin);
-                let has_inline_prompt = self
-                    .state
-                    .tab_manager
-                    .active_session()
-                    .map(|s| s.inline_prompt.is_some())
-                    .unwrap_or(false);
-
-                let input_height = if has_inline_prompt {
-                    0 // No input box when inline prompt is active
-                } else if let Some(session) = self.state.tab_manager.active_session() {
-                    session
-                        .input_box
-                        .desired_height(max_input_height, input_width)
-                } else {
-                    3 // Minimum height
-                };
-
-                // When inline prompt is active, hide status bar and gap too
-                let status_bar_height = if has_inline_prompt { 0 } else { 1 };
-                let gap_height = if has_inline_prompt { 0 } else { 1 };
-
-                // Chat layout with session header, input box, status bar, and gap
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),                 // Tab bar
-                        Constraint::Length(1),                 // Session header
-                        Constraint::Min(5),                    // Chat view
-                        Constraint::Length(input_height),      // Input box (dynamic)
-                        Constraint::Length(status_bar_height), // Status bar (hidden during inline prompt)
-                        Constraint::Length(gap_height),        // Gap row before footer
-                    ])
-                    .split(content_area);
-
-                // Extract named areas to avoid brittle numeric indices
-                let tab_bar_chunk = chunks[0];
-                let header_chunk = chunks[1];
-                let chat_chunk = chunks[2];
-                let input_chunk = chunks[3];
-                let status_bar_chunk = chunks[4];
-                let gap_chunk = chunks[5];
-
-                // Create margin-adjusted areas for input, status bar, and gap rows
-                let input_area_inner = Rect {
-                    x: input_chunk.x + INPUT_MARGIN_LEFT,
-                    y: input_chunk.y,
-                    width: input_chunk.width.saturating_sub(input_total_margin),
-                    height: input_chunk.height,
-                };
-                let status_bar_area_inner = Rect {
-                    x: status_bar_chunk.x + INPUT_MARGIN_LEFT,
-                    y: status_bar_chunk.y,
-                    width: status_bar_chunk.width.saturating_sub(input_total_margin),
-                    height: status_bar_chunk.height,
-                };
-                let gap_area_inner = Rect {
-                    x: gap_chunk.x + INPUT_MARGIN_LEFT,
-                    y: gap_chunk.y,
-                    width: gap_chunk.width.saturating_sub(input_total_margin),
-                    height: gap_chunk.height,
-                };
-
-                // Fill margin areas so they match the app background.
-                let buf = f.buffer_mut();
-                let fill_margins = |buf: &mut ratatui::buffer::Buffer, row_area: Rect, bg| {
-                    let style = ratatui::style::Style::default().bg(bg);
-                    let left_width = INPUT_MARGIN_LEFT.min(row_area.width);
-                    if left_width > 0 {
-                        buf.set_style(
-                            Rect {
-                                x: row_area.x,
-                                y: row_area.y,
-                                width: left_width,
-                                height: row_area.height,
-                            },
-                            style,
-                        );
-                    }
-                    let right_width =
-                        INPUT_MARGIN_RIGHT.min(row_area.width.saturating_sub(left_width));
-                    if right_width > 0 {
-                        let right_start = row_area.x + row_area.width.saturating_sub(right_width);
-                        buf.set_style(
-                            Rect {
-                                x: right_start,
-                                y: row_area.y,
-                                width: right_width,
-                                height: row_area.height,
-                            },
-                            style,
-                        );
-                    }
-                };
-
-                use crate::ui::components::bg_base;
-                let margin_bg = bg_base();
-                fill_margins(buf, input_chunk, margin_bg);
-                fill_margins(buf, status_bar_chunk, margin_bg);
-                fill_margins(buf, gap_chunk, margin_bg);
-
-                // Draw separator line in the gap row (▀ characters)
-                // Foreground = status bar bg, background = base bg (creates rounded bottom edge)
-                // Skip when inline prompt is active (gap row is hidden)
-                if !has_inline_prompt {
-                    use crate::ui::components::status_bar_bg;
-                    for x in gap_area_inner.x..gap_area_inner.x + gap_area_inner.width {
-                        buf[(x, gap_area_inner.y)]
-                            .set_char('▀')
-                            .set_fg(status_bar_bg());
-                    }
-                }
-
-                // Store layout areas for mouse hit-testing
-                // Set hidden areas to None when inline prompt is active to avoid hit-testing confusion
-                self.state.tab_bar_area = Some(tab_bar_chunk);
-                self.state.chat_area = Some(chat_chunk);
-                self.state.raw_events_area = None;
-                self.state.input_area = if has_inline_prompt {
-                    None
-                } else {
-                    Some(input_area_inner)
-                };
-                self.state.status_bar_area = if has_inline_prompt {
-                    None
-                } else {
-                    Some(status_bar_area_inner)
-                };
-                self.state.footer_area = Some(footer_area);
-
-                // Draw tab bar (unfocused when sidebar is focused)
-                let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
-                let tab_bar = self.build_tab_bar(tabs_focused);
-                tab_bar.render(tab_bar_chunk, f.buffer_mut());
-
-                // Draw session header (below tab bar)
-                let session_title = self
-                    .state
-                    .tab_manager
-                    .active_session()
-                    .and_then(|s| s.title.as_deref());
-                SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
-
-                // Draw active session components
-                let is_command_mode = self.state.input_mode == InputMode::Command;
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    // Use full chat area - prompt is now rendered as part of scrollable content
-                    let chat_area = chat_chunk;
-
-                    self.state.chat_area = if chat_area.height == 0 {
-                        None
-                    } else {
-                        Some(chat_area)
-                    };
-
-                    // Render chat with thinking indicator if processing (but not during inline prompt)
-                    let thinking_line = if session.is_processing && session.inline_prompt.is_none()
-                    {
-                        Some(session.thinking_indicator.render())
-                    } else {
-                        None
-                    };
-                    let input_mode = self.state.input_mode;
-                    let queue_lines =
-                        app_queue::build_queue_lines(session, chat_area.width, input_mode);
-
-                    // Build prompt lines from inline_prompt (renders as part of scrollable chat)
-                    let prompt_lines = session
-                        .inline_prompt
-                        .as_ref()
-                        .map(|p| p.render_as_lines(chat_area.width as usize));
-
-                    session.chat_view.render_with_indicator(
-                        chat_area,
-                        f.buffer_mut(),
-                        thinking_line,
-                        queue_lines,
-                        prompt_lines,
-                    );
-
-                    // Check if inline prompt is active
-                    let has_inline_prompt = session.inline_prompt.is_some();
-
-                    // Render input box (not in command mode, not when inline prompt active)
-                    if !is_command_mode && !has_inline_prompt {
-                        session.input_box.render(input_area_inner, f.buffer_mut());
-                    }
-                    // Update and render status bar (skip when inline prompt is active)
-                    if !has_inline_prompt {
-                        session.status_bar.set_metrics(
-                            self.state.show_metrics,
-                            self.state.metrics.draw_time,
-                            self.state.metrics.event_time,
-                            self.state.metrics.fps,
-                            self.state.metrics.scroll_latency,
-                            self.state.metrics.scroll_latency_avg,
-                            self.state.metrics.scroll_lines_per_sec,
-                            self.state.metrics.scroll_events_per_sec,
-                            self.state.metrics.scroll_active,
-                        );
+                    // Draw raw events view
+                    if let Some(session) = self.state.tab_manager.active_session_mut() {
                         session
-                            .status_bar
-                            .set_spinner_frame(self.state.spinner_frame);
-                        session
-                            .status_bar
-                            .render(status_bar_area_inner, f.buffer_mut());
+                            .raw_events_view
+                            .render(raw_events_chunk, f.buffer_mut());
                     }
 
-                    // Set cursor position (accounting for scroll)
-                    if self.state.input_mode == InputMode::Normal {
-                        // Inline prompt uses visual cursor (reversed style) in the rendered lines,
-                        // so no cursor positioning needed. Only set cursor for normal input box.
-                        if !has_inline_prompt {
-                            let scroll_offset = session.input_box.scroll_offset();
-                            let (cx, cy) = session
-                                .input_box
-                                .cursor_position(input_area_inner, scroll_offset);
-                            f.set_cursor_position((cx, cy));
-                        }
-                    }
+                    // Draw footer (full width) - context-aware based on input mode
+                    let footer = GlobalFooter::from_state(
+                        self.state.view_mode,
+                        self.state.input_mode,
+                        !self.state.tab_manager.is_empty(),
+                    )
+                    .with_spinner(self.state.footer_spinner.as_ref())
+                    .with_message(self.state.footer_message.as_deref());
+                    footer.render(footer_area, f.buffer_mut());
                 }
-
-                // Render command prompt if in command mode (outside session borrow)
-                if is_command_mode {
-                    self.render_command_prompt(input_area_inner, f.buffer_mut());
-                    // Cursor at end of command buffer (after prompt in padded area)
-                    let prompt = format!("  cmd › {}", self.state.command_buffer);
-                    let prompt_width = prompt.width() as u16;
-                    let max_x = input_area_inner.x + input_area_inner.width.saturating_sub(1);
-                    let cx = (input_area_inner.x + prompt_width).min(max_x);
-                    let cy = input_area_inner.y + 1; // top padding
-                    f.set_cursor_position((cx, cy));
-                }
-
-                if self.state.slash_menu_state.is_visible() && !has_inline_prompt {
-                    self.render_slash_menu(chat_chunk, input_area_inner, f.buffer_mut());
-                }
-
-                // Draw footer (full width) - context-aware based on input mode
-                let footer = GlobalFooter::from_state(
-                    self.state.view_mode,
-                    self.state.input_mode,
-                    !self.state.tab_manager.is_empty(),
-                )
-                .with_spinner(self.state.footer_spinner.as_ref())
-                .with_message(self.state.footer_message.as_deref());
-                footer.render(footer_area, f.buffer_mut());
             }
-            ViewMode::RawEvents => {
-                // Raw events layout - no input box, full height for events
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1), // Tab bar
-                        Constraint::Length(1), // Session header
-                        Constraint::Min(5),    // Raw events view (full height)
-                    ])
-                    .split(content_area);
-
-                // Extract named areas to avoid brittle numeric indices
-                let tab_bar_chunk = chunks[0];
-                let header_chunk = chunks[1];
-                let raw_events_chunk = chunks[2];
-
-                // Store layout areas for mouse hit-testing (no input/status in this mode)
-                self.state.tab_bar_area = Some(tab_bar_chunk);
-                self.state.chat_area = None;
-                self.state.raw_events_area = Some(raw_events_chunk);
-                self.state.input_area = None;
-                self.state.status_bar_area = None;
-                self.state.footer_area = Some(footer_area);
-
-                // Draw tab bar (unfocused when sidebar is focused)
-                let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
-                self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
-                let tab_bar = self.build_tab_bar(tabs_focused);
-                tab_bar.render(tab_bar_chunk, f.buffer_mut());
-
-                // Draw session header (below tab bar) - consistent with Chat view
-                let session_title = self
-                    .state
-                    .tab_manager
-                    .active_session()
-                    .and_then(|s| s.title.as_deref());
-                SessionHeader::new(session_title).render(header_chunk, f.buffer_mut());
-
-                // Draw raw events view
-                if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session
-                        .raw_events_view
-                        .render(raw_events_chunk, f.buffer_mut());
-                }
-
-                // Draw footer (full width) - context-aware based on input mode
-                let footer = GlobalFooter::from_state(
-                    self.state.view_mode,
-                    self.state.input_mode,
-                    !self.state.tab_manager.is_empty(),
-                )
-                .with_spinner(self.state.footer_spinner.as_ref())
-                .with_message(self.state.footer_message.as_deref());
-                footer.render(footer_area, f.buffer_mut());
-            }
-        }
+        } // end of else block for agent tab rendering
 
         // Draw agent selector dialog if needed
         if self.state.agent_selector_state.is_visible() {
@@ -8015,6 +8054,74 @@ impl App {
             let para = Paragraph::new(line).alignment(Alignment::Center);
             para.render(inner, f.buffer_mut());
         }
+    }
+
+    /// Render file viewer tab content
+    fn render_file_viewer_tab(
+        &mut self,
+        content_area: Rect,
+        footer_area: Rect,
+        f: &mut ratatui::Frame<'_>,
+    ) {
+        use crate::ui::components::{
+            bg_base, text_muted, text_primary, FileViewerView, GlobalFooter,
+        };
+        use ratatui::style::Style;
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Paragraph, Widget};
+
+        // Layout: tab bar, file header, content, footer
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Tab bar
+                Constraint::Length(1), // File header (path + line count)
+                Constraint::Min(5),    // File content
+            ])
+            .split(content_area);
+
+        let tab_bar_chunk = chunks[0];
+        let header_chunk = chunks[1];
+        let content_chunk = chunks[2];
+
+        // Store areas for mouse hit-testing
+        self.state.tab_bar_area = Some(tab_bar_chunk);
+        self.state.chat_area = None;
+        self.state.raw_events_area = None;
+        self.state.input_area = None;
+        self.state.status_bar_area = None;
+        self.state.footer_area = Some(footer_area);
+
+        // Render tab bar
+        let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
+        self.ensure_tab_bar_scroll(tab_bar_chunk.width, tabs_focused);
+        let tab_bar = self.build_tab_bar(tabs_focused);
+        tab_bar.render(tab_bar_chunk, f.buffer_mut());
+
+        // Render file header with path and line count
+        if let Some(file_session) = self.state.tab_manager.active_file_viewer() {
+            let path_str = file_session.file_path.display().to_string();
+            let line_info = format!(" ({} lines)", file_session.total_lines);
+
+            let header_line = Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg_base())),
+                Span::styled(path_str, Style::default().fg(text_primary()).bg(bg_base())),
+                Span::styled(line_info, Style::default().fg(text_muted()).bg(bg_base())),
+            ]);
+
+            let header_para = Paragraph::new(header_line).style(Style::default().bg(bg_base()));
+            header_para.render(header_chunk, f.buffer_mut());
+        }
+
+        // Render file content with line numbers and scrollbar
+        if let Some(file_session) = self.state.tab_manager.active_file_viewer() {
+            FileViewerView::new(file_session).render(content_chunk, f.buffer_mut());
+        }
+
+        // Render footer with file viewer hints
+        let footer =
+            GlobalFooter::file_viewer_context().with_message(self.state.footer_message.as_deref());
+        footer.render(footer_area, f.buffer_mut());
     }
 
     fn render_theme_picker(&mut self, size: Rect, buf: &mut ratatui::buffer::Buffer) {
