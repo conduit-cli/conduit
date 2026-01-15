@@ -2700,15 +2700,25 @@ impl App {
             if !path.is_empty() {
                 // Expand tilde to home directory
                 // Only expand ~ or ~/path (not ~username which would require system lookup)
+                let needs_home = path == "~" || path.starts_with("~/") || path.starts_with("~\\");
+
+                if needs_home && dirs::home_dir().is_none() {
+                    self.state.set_timed_footer_message(
+                        "Home directory not found; cannot expand ~".to_string(),
+                        Duration::from_secs(3),
+                    );
+                    return None;
+                }
+
                 let mut expanded_path = match path {
-                    "~" => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(path)),
+                    "~" => dirs::home_dir().expect("checked above"),
                     _ => {
                         if let Some(rest) =
                             path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
                         {
                             dirs::home_dir()
                                 .map(|home| home.join(rest))
-                                .unwrap_or_else(|| std::path::PathBuf::from(path))
+                                .expect("checked above")
                         } else {
                             std::path::PathBuf::from(path)
                         }
