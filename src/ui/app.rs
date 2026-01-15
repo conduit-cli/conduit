@@ -2691,7 +2691,7 @@ impl App {
 
             if !path.is_empty() {
                 // Expand tilde to home directory
-                let expanded_path = if let Some(stripped) = path.strip_prefix('~') {
+                let mut expanded_path = if let Some(stripped) = path.strip_prefix('~') {
                     if let Some(home) = dirs::home_dir() {
                         // Handle both "~" and "~/path" or "~\path" (Windows) cases
                         let rest = stripped.trim_start_matches(['/', '\\']);
@@ -2702,6 +2702,18 @@ impl App {
                 } else {
                     std::path::PathBuf::from(path)
                 };
+
+                // Resolve relative paths against the active workspace (fallback to config working dir)
+                if expanded_path.is_relative() {
+                    let base_dir = self
+                        .state
+                        .tab_manager
+                        .active_session()
+                        .and_then(|s| s.working_dir.clone())
+                        .unwrap_or_else(|| self.config.working_dir.clone());
+                    expanded_path = base_dir.join(expanded_path);
+                }
+
                 return Some(Action::OpenFile(expanded_path));
             }
         }
