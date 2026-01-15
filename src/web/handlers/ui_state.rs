@@ -59,12 +59,12 @@ impl From<WebUiState> for WebUiStateResponse {
     }
 }
 
-fn state_store(core: &crate::core::ConduitCore) -> Result<&AppStateStore, WebError> {
+pub(crate) fn state_store(core: &crate::core::ConduitCore) -> Result<&AppStateStore, WebError> {
     core.app_state_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))
 }
 
-fn load_ui_state(store: &AppStateStore) -> Result<WebUiState, WebError> {
+pub(crate) fn load_ui_state(store: &AppStateStore) -> Result<WebUiState, WebError> {
     let raw = store.get(WEB_UI_STATE_KEY)?;
     match raw {
         Some(value) => match serde_json::from_str::<WebUiState>(&value) {

@@ -7,7 +7,7 @@ export type ClientMessage =
   | { type: 'unsubscribe'; session_id: string }
   | { type: 'start_session'; session_id: string; prompt: string; working_dir: string; model?: string }
   | { type: 'send_input'; session_id: string; input: string }
-  | { type: 'respond_to_control'; session_id: string; request_id: string; allow: boolean }
+  | { type: 'respond_to_control'; session_id: string; request_id: string; response: unknown }
   | { type: 'stop_session'; session_id: string };
 
 // Server -> Client messages
@@ -43,4 +43,16 @@ export interface TokenUsage {
   output_tokens: number;
   cached_tokens: number;
   total_tokens: number;
+}
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface UserQuestion {
+  header: string;
+  question: string;
+  options: QuestionOption[];
+  multiSelect?: boolean;
 }

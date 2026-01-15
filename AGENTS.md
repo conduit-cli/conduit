@@ -10,6 +10,7 @@ Project-specific instructions for agents working in this repo.
 
 - Based on complexity and affected surface, decide whether to follow the TDD red-green approach or not.
 - Always run `cargo check --all` after making changes and before the last test cycle.
+- Ensure `cargo build` succeeds (including the web build step) before handing off changes.
 
 ## Error handling
 

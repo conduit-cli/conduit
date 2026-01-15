@@ -100,6 +100,14 @@ export interface ListSessionEventsResponse {
   events: SessionEvent[];
 }
 
+export interface BootstrapResponse {
+  ui_state: UiState;
+  sessions: Session[];
+  workspaces: Workspace[];
+  active_session: Session | null;
+  active_workspace: Workspace | null;
+}
+
 export interface GitDiffStats {
   additions: number;
   deletions: number;

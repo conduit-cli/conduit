@@ -1,11 +1,14 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { useRef, useEffect, type KeyboardEvent } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
+  value: string;
+  onChange: (value: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  focusKey?: string | null;
   // Session/workspace info for status line
   modelDisplayName?: string | null;
   agentType?: 'claude' | 'codex' | 'gemini' | null;
@@ -24,16 +27,23 @@ function formatBranch(branch: string): string {
 
 export function ChatInput({
   onSend,
+  value,
+  onChange,
   disabled = false,
   placeholder = 'Type a message...',
+  focusKey,
   modelDisplayName,
   agentType,
   agentMode,
   gitStats,
   branch,
 }: ChatInputProps) {
-  const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!textareaRef.current) return;
+    textareaRef.current.focus();
+  }, [focusKey]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -42,13 +52,12 @@ export function ChatInput({
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
     }
-  }, [message]);
+  }, [value]);
 
   const handleSubmit = () => {
-    const trimmed = message.trim();
+    const trimmed = value.trim();
     if (trimmed && !disabled) {
       onSend(trimmed);
-      setMessage('');
     }
   };
 
@@ -65,8 +74,8 @@ export function ChatInput({
         <div className="relative flex-1">
           <textarea
             ref={textareaRef}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled}
@@ -80,12 +89,12 @@ export function ChatInput({
         </div>
         <button
           onClick={handleSubmit}
-          disabled={disabled || !message.trim()}
+          disabled={disabled || !value.trim()}
           aria-label={disabled ? 'Sending...' : 'Send message'}
           className={cn(
             'flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors',
             'disabled:cursor-not-allowed disabled:opacity-50',
-            message.trim() && !disabled
+            value.trim() && !disabled
               ? 'bg-accent text-white hover:bg-accent-hover'
               : 'bg-surface-elevated text-text-muted'
           )}

@@ -44,8 +44,8 @@ pub enum ClientMessage {
         session_id: Uuid,
         /// The control request ID to respond to
         request_id: String,
-        /// Whether to allow the operation
-        allow: bool,
+        /// Response payload for the control request
+        response: serde_json::Value,
     },
 
     /// Stop a running agent session

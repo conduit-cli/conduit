@@ -1,17 +1,18 @@
 // React hooks for WebSocket communication
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { getWebSocket, type ConnectionState, type ConduitWebSocket } from '../lib/websocket';
-import type { AgentEvent } from '../types';
+import type { AgentEvent, ServerMessage } from '../types';
 
 // WebSocket context
 interface WebSocketContextValue {
   ws: ConduitWebSocket;
   connectionState: ConnectionState;
   sendInput: (sessionId: string, input: string) => void;
+  sendPrompt: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
   startSession: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
   stopSession: (sessionId: string) => void;
-  respondToControl: (sessionId: string, requestId: string, allow: boolean) => void;
+  respondToControl: (sessionId: string, requestId: string, response: unknown) => void;
 }
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null);
@@ -23,12 +24,49 @@ interface WebSocketProviderProps {
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const runningSessionsRef = useRef(new Set<string>());
+  const pendingPromptsRef = useRef(new Map<string, { prompt: string; workingDir: string; model?: string }>());
   const ws = getWebSocket();
+
+  const handleServerMessage = useCallback(
+    (message: ServerMessage) => {
+      if (message.type === 'session_started') {
+        runningSessionsRef.current.add(message.session_id);
+        pendingPromptsRef.current.delete(message.session_id);
+      }
+
+      if (message.type === 'session_ended') {
+        runningSessionsRef.current.delete(message.session_id);
+      }
+
+      if (message.type === 'agent_event') {
+        runningSessionsRef.current.add(message.session_id);
+      }
+
+      if (message.type === 'error' && message.session_id) {
+        const pending = pendingPromptsRef.current.get(message.session_id);
+        if (pending && message.message.includes('already running')) {
+          runningSessionsRef.current.add(message.session_id);
+          pendingPromptsRef.current.delete(message.session_id);
+          ws.sendInput(message.session_id, pending.prompt);
+        }
+      }
+    },
+    [ws]
+  );
+
+  useEffect(() => {
+    ws.updateOptions({
+      onConnect: () => setConnectionState('connected'),
+      onDisconnect: () => setConnectionState('disconnected'),
+      onError: () => setConnectionState('error'),
+      onMessage: handleServerMessage,
+    });
+  }, [ws, handleServerMessage]);
 
   useEffect(() => {
     setConnectionState('connecting');
     ws.connect();
-    // Connection state will be updated by the WebSocket callbacks when implemented
   }, [ws]);
 
   const sendInput = useCallback(
@@ -45,6 +83,18 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     [ws]
   );
 
+  const sendPrompt = useCallback(
+    (sessionId: string, prompt: string, workingDir: string, model?: string) => {
+      if (runningSessionsRef.current.has(sessionId)) {
+        ws.sendInput(sessionId, prompt);
+        return;
+      }
+      pendingPromptsRef.current.set(sessionId, { prompt, workingDir, model });
+      ws.startSession(sessionId, prompt, workingDir, model);
+    },
+    [ws]
+  );
+
   const stopSession = useCallback(
     (sessionId: string) => {
       ws.stopSession(sessionId);
@@ -53,8 +103,8 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   );
 
   const respondToControl = useCallback(
-    (sessionId: string, requestId: string, allow: boolean) => {
-      ws.respondToControl(sessionId, requestId, allow);
+    (sessionId: string, requestId: string, response: unknown) => {
+      ws.respondToControl(sessionId, requestId, response);
     },
     [ws]
   );
@@ -63,6 +113,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     ws,
     connectionState,
     sendInput,
+    sendPrompt,
     startSession,
     stopSession,
     respondToControl,
@@ -88,6 +139,7 @@ export function useWebSocketConnection(): ConnectionState {
 
 // Hook for subscribing to session events
 const MAX_SESSION_EVENTS = 500;
+const MAX_RAW_EVENTS = 200;
 const SKIPPED_EVENT_TYPES = new Set(['Raw', 'TokenUsage', 'ContextCompaction']);
 
 export function useSessionEvents(sessionId: string | null): AgentEvent[] {
@@ -115,6 +167,20 @@ export function useSessionEvents(sessionId: string | null): AgentEvent[] {
           } else {
             next = [...prev, event];
           }
+        } else if (event.type === 'AssistantMessage') {
+          const last = prev[prev.length - 1];
+          if (last?.type === 'AssistantMessage' && !last.is_final) {
+            next = [...prev.slice(0, -1), { ...event, text: last.text + event.text }];
+          } else {
+            next = [...prev, event];
+          }
+        } else if (event.type === 'AssistantReasoning') {
+          const last = prev[prev.length - 1];
+          if (last?.type === 'AssistantReasoning') {
+            next = [...prev.slice(0, -1), { ...event, text: last.text + event.text }];
+          } else {
+            next = [...prev, event];
+          }
         } else {
           next = [...prev, event];
         }
@@ -134,6 +200,41 @@ export function useSessionEvents(sessionId: string | null): AgentEvent[] {
       setEvents([]);
     };
   }, [sessionId, ws]);
+
+  return events;
+}
+
+export function useRawSessionEvents(sessionId: string | null, enabled = true): AgentEvent[] {
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const { ws } = useWebSocket();
+
+  useEffect(() => {
+    if (!sessionId || !enabled) {
+      setEvents([]);
+      return;
+    }
+
+    const handleEvent = (event: AgentEvent) => {
+      if (event.type !== 'Raw') {
+        return;
+      }
+
+      setEvents((prev) => {
+        const next = [...prev, event];
+        if (next.length > MAX_RAW_EVENTS) {
+          return next.slice(-MAX_RAW_EVENTS);
+        }
+        return next;
+      });
+    };
+
+    const unsubscribe = ws.subscribe(sessionId, handleEvent);
+
+    return () => {
+      unsubscribe();
+      setEvents([]);
+    };
+  }, [sessionId, enabled, ws]);
 
   return events;
 }
@@ -201,9 +302,9 @@ export function useAgentSession(sessionId: string | null) {
   }, [sessionId, stopSession]);
 
   const boundRespondToControl = useCallback(
-    (requestId: string, allow: boolean) => {
+    (requestId: string, response: unknown) => {
       if (sessionId) {
-        respondToControl(sessionId, requestId, allow);
+        respondToControl(sessionId, requestId, response);
       }
     },
     [sessionId, respondToControl]

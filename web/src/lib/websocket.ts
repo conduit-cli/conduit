@@ -31,6 +31,13 @@ export class ConduitWebSocket {
     };
   }
 
+  updateOptions(options: WebSocketOptions): void {
+    this.options = {
+      ...this.options,
+      ...options,
+    };
+  }
+
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
@@ -129,12 +136,12 @@ export class ConduitWebSocket {
   }
 
   // Respond to a control request
-  respondToControl(sessionId: string, requestId: string, allow: boolean): void {
+  respondToControl(sessionId: string, requestId: string, response: unknown): void {
     this.send({
       type: 'respond_to_control',
       session_id: sessionId,
       request_id: requestId,
-      allow,
+      response,
     });
   }
 
@@ -179,11 +186,13 @@ export class ConduitWebSocket {
 // Global WebSocket instance
 let globalWs: ConduitWebSocket | null = null;
 
-export function getWebSocket(): ConduitWebSocket {
+export function getWebSocket(options?: WebSocketOptions): ConduitWebSocket {
   if (!globalWs) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
-    globalWs = new ConduitWebSocket(wsUrl);
+    globalWs = new ConduitWebSocket(wsUrl, options);
+  } else if (options) {
+    globalWs.updateOptions(options);
   }
   return globalWs;
 }

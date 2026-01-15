@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::core::ConduitCore;
+use serde_json::json;
 
 use super::messages::{ClientMessage, ServerMessage};
 
@@ -179,6 +180,46 @@ impl SessionManager {
             .send(agent_input)
             .await
             .map_err(|e| format!("Failed to send input: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Respond to a control request for a running session.
+    pub async fn respond_to_control(
+        &self,
+        session_id: Uuid,
+        request_id: String,
+        response: serde_json::Value,
+    ) -> Result<(), String> {
+        let sessions = self.sessions.read().await;
+        let session = sessions
+            .get(&session_id)
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+        let input_tx = session
+            .input_tx
+            .as_ref()
+            .ok_or_else(|| "Session does not support control responses".to_string())?;
+
+        if session.agent_type != AgentType::Claude {
+            return Err("Control responses are only supported for Claude sessions".to_string());
+        }
+
+        let payload = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": response,
+            }
+        });
+        let json_payload = serde_json::to_string(&payload)
+            .map_err(|e| format!("Failed to serialize control response: {}", e))?;
+
+        input_tx
+            .send(AgentInput::ClaudeJsonl(format!("{json_payload}\n")))
+            .await
+            .map_err(|e| format!("Failed to send control response: {}", e))?;
 
         Ok(())
     }
@@ -378,17 +419,15 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
 
             ClientMessage::RespondToControl {
                 session_id,
-                request_id: _,
-                allow: _,
+                request_id,
+                response,
             } => {
-                // TODO: Implement control request handling
-                // This requires integration with the agent's control request mechanism
-                let _ = tx
-                    .send(ServerMessage::session_error(
-                        session_id,
-                        "Control request handling not yet implemented",
-                    ))
-                    .await;
+                if let Err(e) = session_manager
+                    .respond_to_control(session_id, request_id, response)
+                    .await
+                {
+                    let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                }
             }
 
             ClientMessage::StopSession { session_id } => {

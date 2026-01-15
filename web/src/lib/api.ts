@@ -17,6 +17,7 @@ import type {
   CreateSessionRequest,
   WorkspaceStatus,
   UiState,
+  BootstrapResponse,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -52,6 +53,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // Health
 export async function getHealth(): Promise<HealthResponse> {
   return request('/health');
+}
+
+// Bootstrap
+export async function getBootstrap(): Promise<BootstrapResponse> {
+  return request('/bootstrap');
 }
 
 // Agents

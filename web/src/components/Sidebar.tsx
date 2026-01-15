@@ -21,7 +21,11 @@ interface WorkspaceItemProps {
 }
 
 function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) {
-  const { data: status } = useWorkspaceStatus(workspace.id);
+  const { data: status } = useWorkspaceStatus(workspace.id, {
+    enabled: true,
+    refetchInterval: isSelected ? 5000 : false,
+    staleTime: isSelected ? 2000 : 60000,
+  });
 
   // Extract branch display name (show last part after / with ellipsis prefix)
   const branchDisplay = workspace.branch.includes('/')

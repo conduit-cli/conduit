@@ -19,6 +19,7 @@ export const queryKeys = {
   session: (id: string) => ['sessions', id] as const,
   sessionEvents: (id: string) => ['sessions', id, 'events'] as const,
   uiState: ['ui', 'state'] as const,
+  bootstrap: ['bootstrap'] as const,
 };
 
 // Health
@@ -27,6 +28,28 @@ export function useHealth() {
     queryKey: queryKeys.health,
     queryFn: api.getHealth,
     staleTime: 30000,
+  });
+}
+
+// Bootstrap
+export function useBootstrap() {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: queryKeys.bootstrap,
+    queryFn: async () => {
+      const data = await api.getBootstrap();
+      queryClient.setQueryData(queryKeys.uiState, data.ui_state);
+      queryClient.setQueryData(queryKeys.sessions, data.sessions);
+      queryClient.setQueryData(queryKeys.workspaces, data.workspaces);
+      if (data.active_session) {
+        queryClient.setQueryData(queryKeys.session(data.active_session.id), data.active_session);
+      }
+      if (data.active_workspace) {
+        queryClient.setQueryData(queryKeys.workspace(data.active_workspace.id), data.active_workspace);
+      }
+      return data;
+    },
+    staleTime: 0,
   });
 }
 
@@ -76,10 +99,12 @@ export function useDeleteRepository() {
 }
 
 // Workspaces
-export function useWorkspaces() {
+export function useWorkspaces(options?: { enabled?: boolean; staleTime?: number }) {
   return useQuery({
     queryKey: queryKeys.workspaces,
     queryFn: api.getWorkspaces,
+    enabled: options?.enabled,
+    staleTime: options?.staleTime,
   });
 }
 
@@ -130,13 +155,16 @@ export function useDeleteWorkspace() {
   });
 }
 
-export function useWorkspaceStatus(workspaceId: string | null) {
+export function useWorkspaceStatus(
+  workspaceId: string | null,
+  options?: { enabled?: boolean; refetchInterval?: number | false; staleTime?: number }
+) {
   return useQuery({
     queryKey: queryKeys.workspaceStatus(workspaceId ?? ''),
     queryFn: () => api.getWorkspaceStatus(workspaceId!),
-    enabled: !!workspaceId,
-    refetchInterval: 5000, // Poll every 5 seconds
-    staleTime: 2000,
+    enabled: options?.enabled ?? !!workspaceId,
+    refetchInterval: options?.refetchInterval ?? 5000,
+    staleTime: options?.staleTime ?? 2000,
   });
 }
 
@@ -170,10 +198,12 @@ export function useWorkspaceSession(workspaceId: string | null) {
 }
 
 // Sessions
-export function useSessions() {
+export function useSessions(options?: { enabled?: boolean; staleTime?: number }) {
   return useQuery({
     queryKey: queryKeys.sessions,
     queryFn: api.getSessions,
+    enabled: options?.enabled,
+    staleTime: options?.staleTime,
   });
 }
 
@@ -205,21 +235,25 @@ export function useCloseSession() {
   });
 }
 
-export function useSessionEventsFromApi(id: string | null) {
+export function useSessionEventsFromApi(
+  id: string | null,
+  options?: { enabled?: boolean; staleTime?: number }
+) {
   return useQuery({
     queryKey: queryKeys.sessionEvents(id ?? ''),
     queryFn: () => api.getSessionEvents(id!),
-    enabled: !!id,
-    staleTime: 5000, // Cache for 5 seconds
+    enabled: options?.enabled ?? !!id,
+    staleTime: options?.staleTime ?? 5000,
   });
 }
 
 // UI state
-export function useUiState() {
+export function useUiState(options?: { enabled?: boolean; staleTime?: number }) {
   return useQuery({
     queryKey: queryKeys.uiState,
     queryFn: api.getUiState,
-    staleTime: 0,
+    staleTime: options?.staleTime ?? 0,
+    enabled: options?.enabled,
   });
 }
 

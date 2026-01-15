@@ -1,10 +1,10 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout, ChatView } from './components';
 import { WebSocketProvider, ThemeProvider } from './hooks';
 import {
+  useBootstrap,
   useWorkspaces,
-  useWorkspaceSession,
   useSessions,
   useUiState,
   useUpdateUiState,
@@ -67,21 +67,28 @@ function latestUsageFromEvents(wsEvents: AgentEvent[], historyEvents: SessionEve
 }
 
 function AppContent() {
-  const { data: workspaces = [] } = useWorkspaces();
-  const { data: sessions = [] } = useSessions();
-  const { data: uiState } = useUiState();
+  const { data: bootstrap, isLoading: isBootstrapping } = useBootstrap();
+  const { data: workspaces = [] } = useWorkspaces({ enabled: !!bootstrap });
+  const { data: sessions = [] } = useSessions({ enabled: !!bootstrap });
+  const { data: uiState } = useUiState({ enabled: !!bootstrap });
   const updateUiState = useUpdateUiState();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [historyReady, setHistoryReady] = useState(false);
+  const previousActiveSessionId = useRef<string | null>(null);
+
+  const resolvedUiState = uiState ?? bootstrap?.ui_state;
+  const resolvedWorkspaces = workspaces.length > 0 ? workspaces : bootstrap?.workspaces ?? [];
+  const resolvedSessions = sessions.length > 0 ? sessions : bootstrap?.sessions ?? [];
 
   const sortedSessions = useMemo(
-    () => [...sessions].sort((a, b) => a.tab_index - b.tab_index),
-    [sessions]
+    () => [...resolvedSessions].sort((a, b) => a.tab_index - b.tab_index),
+    [resolvedSessions]
   );
   const orderedSessions = useMemo(
-    () => applyTabOrder(sortedSessions, uiState?.tab_order ?? []),
-    [sortedSessions, uiState?.tab_order]
+    () => applyTabOrder(sortedSessions, resolvedUiState?.tab_order ?? []),
+    [sortedSessions, resolvedUiState?.tab_order]
   );
 
   const activeSession = orderedSessions.find((session) => session.id === activeSessionId) ?? null;
@@ -89,74 +96,88 @@ function AppContent() {
   const { data: workspaceStatus } = useWorkspaceStatus(activeSession?.workspace_id ?? null);
 
   const wsEvents = useSessionEvents(activeSessionId);
-  const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId);
+  const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
+    enabled: historyReady && !!activeSessionId,
+  });
   const latestUsage = useMemo(
     () => latestUsageFromEvents(wsEvents, historyEvents),
     [wsEvents, historyEvents]
   );
 
-  // Get or create session for selected workspace (auto-creates if needed)
-  const { data: workspaceSession, isLoading: isLoadingSession } =
-    useWorkspaceSession(selectedWorkspaceId);
+  useEffect(() => {
+    setHistoryReady(true);
+  }, []);
 
   useEffect(() => {
-    if (!uiState) return;
-    setIsSidebarOpen(uiState.sidebar_open);
-  }, [uiState]);
+    if (!resolvedUiState) return;
+    setIsSidebarOpen(resolvedUiState.sidebar_open);
+  }, [resolvedUiState]);
 
   useEffect(() => {
-    if (!uiState) return;
-    const mergedOrder = mergeTabOrder(uiState.tab_order ?? [], sortedSessions);
-    if (mergedOrder.join(',') !== (uiState.tab_order ?? []).join(',')) {
+    if (!resolvedUiState) return;
+    const mergedOrder = mergeTabOrder(resolvedUiState.tab_order ?? [], sortedSessions);
+    if (mergedOrder.join(',') !== (resolvedUiState.tab_order ?? []).join(',')) {
       updateUiState.mutate({ tab_order: mergedOrder });
     }
-  }, [sortedSessions, uiState, updateUiState]);
+  }, [sortedSessions, resolvedUiState, updateUiState]);
 
   useEffect(() => {
-    if (activeSessionId || orderedSessions.length === 0 || !uiState) return;
+    if (!bootstrap) return;
+    if (!activeSessionId && bootstrap.active_session) {
+      setActiveSessionId(bootstrap.active_session.id);
+    }
+    if (!selectedWorkspaceId && bootstrap.active_workspace) {
+      setSelectedWorkspaceId(bootstrap.active_workspace.id);
+    }
+  }, [bootstrap, activeSessionId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (activeSessionId || orderedSessions.length === 0 || !resolvedUiState) return;
     const preferred =
-      uiState.active_session_id &&
-      orderedSessions.some((session) => session.id === uiState.active_session_id)
-        ? uiState.active_session_id
+      resolvedUiState.active_session_id &&
+      orderedSessions.some((session) => session.id === resolvedUiState.active_session_id)
+        ? resolvedUiState.active_session_id
         : orderedSessions[0].id;
     setActiveSessionId(preferred);
-  }, [activeSessionId, orderedSessions, uiState]);
+  }, [activeSessionId, orderedSessions, resolvedUiState]);
 
   useEffect(() => {
-    if (selectedWorkspaceId || workspaces.length === 0) return;
+    if (selectedWorkspaceId || resolvedWorkspaces.length === 0) return;
     const lastWorkspace =
-      uiState?.last_workspace_id &&
-      workspaces.some((workspace) => workspace.id === uiState.last_workspace_id)
-        ? uiState.last_workspace_id
+      resolvedUiState?.last_workspace_id &&
+      resolvedWorkspaces.some((workspace) => workspace.id === resolvedUiState.last_workspace_id)
+        ? resolvedUiState.last_workspace_id
         : null;
-    const nextWorkspace = lastWorkspace ?? activeSession?.workspace_id ?? workspaces[0].id;
+    const nextWorkspace = lastWorkspace ?? activeSession?.workspace_id ?? resolvedWorkspaces[0].id;
     if (nextWorkspace) {
       setSelectedWorkspaceId(nextWorkspace);
     }
-  }, [selectedWorkspaceId, workspaces, uiState?.last_workspace_id, activeSession?.workspace_id]);
+  }, [
+    selectedWorkspaceId,
+    resolvedWorkspaces,
+    resolvedUiState?.last_workspace_id,
+    activeSession?.workspace_id,
+  ]);
 
   useEffect(() => {
-    if (!workspaceSession) return;
-    if (workspaceSession.id !== activeSessionId) {
-      setActiveSessionId(workspaceSession.id);
-      updateUiState.mutate({
-        active_session_id: workspaceSession.id,
-        last_workspace_id: workspaceSession.workspace_id ?? null,
-      });
-    }
-  }, [workspaceSession, activeSessionId, updateUiState]);
-
-  useEffect(() => {
-    if (!activeSessionId || uiState?.active_session_id === activeSessionId) return;
+    if (!activeSessionId || resolvedUiState?.active_session_id === activeSessionId) return;
     updateUiState.mutate({ active_session_id: activeSessionId });
-  }, [activeSessionId, uiState?.active_session_id, updateUiState]);
+  }, [activeSessionId, resolvedUiState?.active_session_id, updateUiState]);
 
   useEffect(() => {
+    if (!activeSessionId) {
+      previousActiveSessionId.current = null;
+      return;
+    }
+    if (previousActiveSessionId.current === activeSessionId) {
+      return;
+    }
+    previousActiveSessionId.current = activeSessionId;
     if (!activeSession?.workspace_id) return;
     if (activeSession.workspace_id === selectedWorkspaceId) return;
     setSelectedWorkspaceId(activeSession.workspace_id);
     updateUiState.mutate({ last_workspace_id: activeSession.workspace_id });
-  }, [activeSession?.workspace_id, selectedWorkspaceId, updateUiState]);
+  }, [activeSessionId, activeSession?.workspace_id, selectedWorkspaceId, updateUiState]);
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     setSelectedWorkspaceId(workspace.id);
@@ -192,26 +213,24 @@ function AppContent() {
   };
 
   return (
-    <Layout
-      selectedWorkspaceId={selectedWorkspaceId}
-      onSelectWorkspace={handleSelectWorkspace}
-      sessions={orderedSessions}
-      activeSessionId={activeSessionId}
-      onSelectSession={handleSelectSession}
-      onReorderSessions={handleReorderSessions}
-      workspaces={workspaces}
-      activeWorkspace={activeWorkspace ?? null}
-      workspaceStatus={workspaceStatus ?? null}
-      latestUsage={latestUsage}
-      isSidebarOpen={isSidebarOpen}
-      onToggleSidebar={handleToggleSidebar}
-    >
-      <ChatView
-        session={activeSession}
-        onNewSession={handleNewSession}
-        isLoadingSession={isLoadingSession}
-      />
-    </Layout>
+      <Layout
+        selectedWorkspaceId={selectedWorkspaceId}
+        onSelectWorkspace={handleSelectWorkspace}
+        sessions={orderedSessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onReorderSessions={handleReorderSessions}
+        workspaces={resolvedWorkspaces}
+        activeWorkspace={activeWorkspace ?? null}
+        workspaceStatus={workspaceStatus ?? null}
+        latestUsage={latestUsage}
+        isSidebarOpen={isSidebarOpen}
+        onToggleSidebar={handleToggleSidebar}
+        isBootstrapping={isBootstrapping}
+      >
+        <ChatView session={activeSession} onNewSession={handleNewSession} isLoadingSession={false} />
+      </Layout>
+
   );
 }
 
