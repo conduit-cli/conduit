@@ -2,7 +2,12 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '../lib/api';
-import type { CreateRepositoryRequest, CreateWorkspaceRequest, CreateSessionRequest } from '../types';
+import type {
+  CreateRepositoryRequest,
+  CreateWorkspaceRequest,
+  CreateSessionRequest,
+  SessionEventsQuery,
+} from '../types';
 
 // Query keys
 export const queryKeys = {
@@ -17,7 +22,8 @@ export const queryKeys = {
   workspaceSession: (id: string) => ['workspaces', id, 'session'] as const,
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
-  sessionEvents: (id: string) => ['sessions', id, 'events'] as const,
+  sessionEvents: (id: string, query?: SessionEventsQuery) =>
+    ['sessions', id, 'events', query ?? {}] as const,
   uiState: ['ui', 'state'] as const,
   bootstrap: ['bootstrap'] as const,
 };
@@ -237,11 +243,11 @@ export function useCloseSession() {
 
 export function useSessionEventsFromApi(
   id: string | null,
-  options?: { enabled?: boolean; staleTime?: number }
+  options?: { enabled?: boolean; staleTime?: number; query?: SessionEventsQuery }
 ) {
   return useQuery({
-    queryKey: queryKeys.sessionEvents(id ?? ''),
-    queryFn: () => api.getSessionEvents(id!),
+    queryKey: queryKeys.sessionEvents(id ?? '', options?.query),
+    queryFn: () => api.getSessionEvents(id!, options?.query),
     enabled: options?.enabled ?? !!id,
     staleTime: options?.staleTime ?? 5000,
   });

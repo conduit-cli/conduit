@@ -93,6 +93,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     session?.id ?? null,
     {
       enabled: historyReady && !!session?.id,
+      query: { tail: true, limit: 200 },
     }
   );
   const { data: workspace } = useWorkspace(session?.workspace_id ?? '');

@@ -18,6 +18,7 @@ import type {
   WorkspaceStatus,
   UiState,
   BootstrapResponse,
+  SessionEventsQuery,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -138,8 +139,19 @@ export async function closeSession(id: string): Promise<void> {
   await request(`/sessions/${id}`, { method: 'DELETE' });
 }
 
-export async function getSessionEvents(id: string): Promise<SessionEvent[]> {
-  const response = await request<ListSessionEventsResponse>(`/sessions/${id}/events`);
+export async function getSessionEvents(
+  id: string,
+  query?: SessionEventsQuery
+): Promise<SessionEvent[]> {
+  const params = new URLSearchParams();
+  if (query?.limit !== undefined) params.set('limit', query.limit.toString());
+  if (query?.offset !== undefined) params.set('offset', query.offset.toString());
+  if (query?.tail) params.set('tail', 'true');
+
+  const queryString = params.toString();
+  const response = await request<ListSessionEventsResponse>(
+    `/sessions/${id}/events${queryString ? `?${queryString}` : ''}`
+  );
   return response.events;
 }
 

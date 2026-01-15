@@ -98,6 +98,7 @@ function AppContent() {
   const wsEvents = useSessionEvents(activeSessionId);
   const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
     enabled: historyReady && !!activeSessionId,
+    query: { tail: true, limit: 200 },
   });
   const latestUsage = useMemo(
     () => latestUsageFromEvents(wsEvents, historyEvents),

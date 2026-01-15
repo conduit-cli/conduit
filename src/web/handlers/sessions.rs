@@ -1,7 +1,7 @@
 //! Session handlers for the Conduit web API.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -204,12 +204,24 @@ pub struct TurnSummaryResponse {
 #[derive(Debug, Serialize)]
 pub struct ListSessionEventsResponse {
     pub events: Vec<SessionEventResponse>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SessionEventsQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub tail: bool,
 }
 
 /// Get events/history for a session.
 pub async fn get_session_events(
     State(state): State<WebAppState>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SessionEventsQuery>,
 ) -> Result<Json<ListSessionEventsResponse>, WebError> {
     let core = state.core().await;
     let store = core
@@ -227,7 +239,12 @@ pub async fn get_session_events(
         Some(id) => id.clone(),
         None => {
             // No agent session ID means no history yet
-            return Ok(Json(ListSessionEventsResponse { events: vec![] }));
+            return Ok(Json(ListSessionEventsResponse {
+                events: vec![],
+                total: 0,
+                offset: 0,
+                limit: 0,
+            }));
         }
     };
 
@@ -253,8 +270,27 @@ pub async fn get_session_events(
         }
     };
 
+    let total = messages.len();
+    let limit = query.limit.unwrap_or(total).min(total);
+
+    let (offset, selected) = if query.tail {
+        let start = total.saturating_sub(limit);
+        (start, messages.into_iter().skip(start).collect::<Vec<_>>())
+    } else {
+        let start = query.offset.unwrap_or(0).min(total);
+        let end = (start + limit).min(total);
+        (
+            start,
+            messages
+                .into_iter()
+                .skip(start)
+                .take(end.saturating_sub(start))
+                .collect::<Vec<_>>(),
+        )
+    };
+
     // Convert ChatMessages to SessionEventResponse
-    let events: Vec<SessionEventResponse> = messages
+    let events: Vec<SessionEventResponse> = selected
         .into_iter()
         .map(|msg| {
             let role = match msg.role {
@@ -284,5 +320,10 @@ pub async fn get_session_events(
         })
         .collect();
 
-    Ok(Json(ListSessionEventsResponse { events }))
+    Ok(Json(ListSessionEventsResponse {
+        events,
+        total,
+        offset,
+        limit,
+    }))
 }

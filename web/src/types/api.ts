@@ -98,6 +98,15 @@ export interface SessionEvent {
 
 export interface ListSessionEventsResponse {
   events: SessionEvent[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+}
+
+export interface SessionEventsQuery {
+  limit?: number;
+  offset?: number;
+  tail?: boolean;
 }
 
 export interface BootstrapResponse {
