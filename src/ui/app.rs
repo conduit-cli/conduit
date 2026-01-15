@@ -2676,12 +2676,19 @@ impl App {
         let command = command.trim();
         self.state.input_mode = InputMode::Normal;
 
-        // Check for :open command first (preserve path case)
-        if let Some(path) = command
-            .strip_prefix("open ")
-            .or_else(|| command.strip_prefix("o "))
-        {
-            let path = path.trim();
+        // Check for :open command first (preserve path case, case-insensitive command)
+        let mut parts = command.splitn(2, char::is_whitespace);
+        let cmd = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("").trim();
+        if cmd.eq_ignore_ascii_case("open") || cmd.eq_ignore_ascii_case("o") {
+            let mut path = rest;
+            // Allow quoted paths (common for paths with spaces)
+            path = path
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .or_else(|| path.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+                .unwrap_or(path);
+
             if !path.is_empty() {
                 // Expand tilde to home directory
                 let expanded_path = if let Some(stripped) = path.strip_prefix('~') {
@@ -4368,8 +4375,10 @@ impl App {
     /// Returns an action to execute if a valid hint was clicked
     fn handle_footer_click(&mut self, x: u16, _y: u16, footer_area: Rect) -> Option<Action> {
         // Use the same hints as GlobalFooter to stay in sync
-        // Check for file viewer first, as it takes precedence over view_mode
-        let hints: Vec<(&str, &str)> = if self.state.tab_manager.active_is_file() {
+        // Sidebar focus takes precedence over file viewer / view_mode
+        let hints: Vec<(&str, &str)> = if self.state.input_mode == InputMode::SidebarNavigation {
+            GlobalFooter::sidebar_hints()
+        } else if self.state.tab_manager.active_is_file() {
             GlobalFooter::file_viewer_hints()
         } else {
             match self.state.view_mode {
@@ -8068,7 +8077,7 @@ impl App {
         f: &mut ratatui::Frame<'_>,
     ) {
         use crate::ui::components::{
-            bg_base, text_muted, text_primary, FileViewerView, GlobalFooter,
+            bg_base, text_muted, text_primary, FileViewerView, FooterContext, GlobalFooter,
         };
         use ratatui::style::Style;
         use ratatui::text::{Line, Span};
@@ -8122,9 +8131,15 @@ impl App {
             FileViewerView::new(file_session).render(content_chunk, f.buffer_mut());
         }
 
-        // Render footer with file viewer hints
-        let footer =
-            GlobalFooter::file_viewer_context().with_message(self.state.footer_message.as_deref());
+        // Render footer (sidebar-aware)
+        let footer_context = if self.state.input_mode == InputMode::SidebarNavigation {
+            FooterContext::Sidebar
+        } else {
+            FooterContext::FileViewer
+        };
+        let footer = GlobalFooter::for_context(footer_context)
+            .with_spinner(self.state.footer_spinner.as_ref())
+            .with_message(self.state.footer_message.as_deref());
         footer.render(footer_area, f.buffer_mut());
     }
 
