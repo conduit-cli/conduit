@@ -2686,8 +2686,8 @@ impl App {
                 // Expand tilde to home directory
                 let expanded_path = if let Some(stripped) = path.strip_prefix('~') {
                     if let Some(home) = dirs::home_dir() {
-                        // Handle both "~" and "~/path" cases
-                        let rest = stripped.strip_prefix('/').unwrap_or(stripped);
+                        // Handle both "~" and "~/path" or "~\path" (Windows) cases
+                        let rest = stripped.trim_start_matches(['/', '\\']);
                         home.join(rest)
                     } else {
                         std::path::PathBuf::from(path)
@@ -4368,9 +4368,14 @@ impl App {
     /// Returns an action to execute if a valid hint was clicked
     fn handle_footer_click(&mut self, x: u16, _y: u16, footer_area: Rect) -> Option<Action> {
         // Use the same hints as GlobalFooter to stay in sync
-        let hints: Vec<(&str, &str)> = match self.state.view_mode {
-            ViewMode::Chat => GlobalFooter::chat_hints(),
-            ViewMode::RawEvents => GlobalFooter::raw_events_hints(),
+        // Check for file viewer first, as it takes precedence over view_mode
+        let hints: Vec<(&str, &str)> = if self.state.tab_manager.active_is_file() {
+            GlobalFooter::file_viewer_hints()
+        } else {
+            match self.state.view_mode {
+                ViewMode::Chat => GlobalFooter::chat_hints(),
+                ViewMode::RawEvents => GlobalFooter::raw_events_hints(),
+            }
         };
 
         // Calculate click position relative to footer
@@ -7469,13 +7474,12 @@ impl App {
                         use ratatui::text::{Line, Span};
                         use ratatui::widgets::{Paragraph, Widget};
 
-                        // Layout with tab bar, content, and footer
+                        // Layout with tab bar + content (footer is rendered in reserved footer_area)
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([
                                 Constraint::Length(1), // Tab bar
                                 Constraint::Min(5),    // Content area
-                                Constraint::Length(1), // Footer
                             ])
                             .split(content_area);
 
@@ -7485,7 +7489,7 @@ impl App {
                         self.state.raw_events_area = None;
                         self.state.input_area = None;
                         self.state.status_bar_area = None;
-                        self.state.footer_area = Some(chunks[2]);
+                        self.state.footer_area = Some(footer_area);
 
                         // Render tab bar
                         let tabs_focused = self.state.input_mode != InputMode::SidebarNavigation;
@@ -7622,7 +7626,7 @@ impl App {
                         let footer = GlobalFooter::for_context(footer_context)
                             .with_spinner(self.state.footer_spinner.as_ref())
                             .with_message(self.state.footer_message.as_deref());
-                        footer.render(chunks[2], f.buffer_mut());
+                        footer.render(footer_area, f.buffer_mut());
 
                         return;
                     }

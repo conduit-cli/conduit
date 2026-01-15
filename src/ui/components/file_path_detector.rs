@@ -232,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_path_exists_for_root() {
         // Root directory should exist on Unix systems
         assert!(path_exists("/"));
