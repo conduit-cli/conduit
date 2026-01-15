@@ -4450,8 +4450,10 @@ impl App {
         let key_combo = parse_key_notation(&key_notation).ok()?;
 
         // Determine context from current mode
-        // File viewer uses Scrolling context for j/k/g/G keys
-        let context = if self.state.tab_manager.active_is_file() {
+        // Keep precedence aligned with handle_footer_click(): sidebar > file-viewer > view_mode
+        let context = if self.state.input_mode == InputMode::SidebarNavigation {
+            KeyContext::from_input_mode(self.state.input_mode, self.state.view_mode)
+        } else if self.state.tab_manager.active_is_file() {
             KeyContext::Scrolling
         } else {
             KeyContext::from_input_mode(self.state.input_mode, self.state.view_mode)
@@ -8157,23 +8159,38 @@ impl App {
         let tab_bar = self.build_tab_bar(tabs_focused);
         tab_bar.render(tab_bar_chunk, f.buffer_mut());
 
-        // Render file header with path and line count
+        // Render file header and content
         if let Some(file_session) = self.state.tab_manager.active_file_viewer() {
+            // Render file header with path and line count
             let path_str = file_session.file_path.display().to_string();
             let line_info = format!(" ({} lines)", file_session.total_lines);
 
+            // Truncate path if it doesn't fit in the header width
+            let available_width = header_chunk.width.saturating_sub(2) as usize; // 1 for leading space, 1 for safety
+            let line_info_width = line_info.len();
+            let max_path_width = available_width.saturating_sub(line_info_width);
+            let truncated_path = if path_str.len() > max_path_width && max_path_width > 3 {
+                format!(
+                    "...{}",
+                    &path_str[path_str.len().saturating_sub(max_path_width - 3)..]
+                )
+            } else {
+                path_str
+            };
+
             let header_line = Line::from(vec![
                 Span::styled(" ", Style::default().bg(bg_base())),
-                Span::styled(path_str, Style::default().fg(text_primary()).bg(bg_base())),
+                Span::styled(
+                    truncated_path,
+                    Style::default().fg(text_primary()).bg(bg_base()),
+                ),
                 Span::styled(line_info, Style::default().fg(text_muted()).bg(bg_base())),
             ]);
 
             let header_para = Paragraph::new(header_line).style(Style::default().bg(bg_base()));
             header_para.render(header_chunk, f.buffer_mut());
-        }
 
-        // Render file content with line numbers and scrollbar
-        if let Some(file_session) = self.state.tab_manager.active_file_viewer() {
+            // Render file content with line numbers and scrollbar
             FileViewerView::new(file_session).render(content_chunk, f.buffer_mut());
         }
 
