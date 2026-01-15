@@ -16,6 +16,7 @@ import type {
   CreateWorkspaceRequest,
   CreateSessionRequest,
   WorkspaceStatus,
+  UiState,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -141,6 +142,20 @@ export async function getWorkspaceStatus(id: string): Promise<WorkspaceStatus> {
   return request(`/workspaces/${id}/status`);
 }
 
+// Auto-create workspace (generates name/branch automatically)
+export async function autoCreateWorkspace(repositoryId: string): Promise<Workspace> {
+  return request(`/repositories/${repositoryId}/workspaces/auto`, {
+    method: 'POST',
+  });
+}
+
+// Get or create session for a workspace
+export async function getOrCreateWorkspaceSession(workspaceId: string): Promise<Session> {
+  return request(`/workspaces/${workspaceId}/session`, {
+    method: 'POST',
+  });
+}
+
 // Themes
 export async function getThemes(): Promise<ThemeListResponse> {
   return request('/themes');
@@ -154,5 +169,17 @@ export async function setTheme(name: string): Promise<Theme> {
   return request('/themes/current', {
     method: 'POST',
     body: JSON.stringify({ name }),
+  });
+}
+
+// UI state
+export async function getUiState(): Promise<UiState> {
+  return request('/ui/state');
+}
+
+export async function updateUiState(data: Partial<UiState>): Promise<UiState> {
+  return request('/ui/state', {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }

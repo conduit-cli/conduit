@@ -87,6 +87,9 @@ export function useWebSocketConnection(): ConnectionState {
 }
 
 // Hook for subscribing to session events
+const MAX_SESSION_EVENTS = 500;
+const SKIPPED_EVENT_TYPES = new Set(['Raw', 'TokenUsage', 'ContextCompaction']);
+
 export function useSessionEvents(sessionId: string | null): AgentEvent[] {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const { ws } = useWebSocket();
@@ -98,7 +101,30 @@ export function useSessionEvents(sessionId: string | null): AgentEvent[] {
     }
 
     const handleEvent = (event: AgentEvent) => {
-      setEvents((prev) => [...prev, event]);
+      if (SKIPPED_EVENT_TYPES.has(event.type)) {
+        return;
+      }
+
+      setEvents((prev) => {
+        let next = prev;
+
+        if (event.type === 'CommandOutput' && event.is_streaming) {
+          const last = prev[prev.length - 1];
+          if (last?.type === 'CommandOutput' && last.is_streaming && last.command === event.command) {
+            next = [...prev.slice(0, -1), event];
+          } else {
+            next = [...prev, event];
+          }
+        } else {
+          next = [...prev, event];
+        }
+
+        if (next.length > MAX_SESSION_EVENTS) {
+          next = next.slice(-MAX_SESSION_EVENTS);
+        }
+
+        return next;
+      });
     };
 
     const unsubscribe = ws.subscribe(sessionId, handleEvent);

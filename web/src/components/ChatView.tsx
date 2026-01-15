@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { HistoryMessage } from './HistoryMessage';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
-import { useSessionEvents, useWebSocket, useSessionEventsFromApi } from '../hooks';
+import { useSessionEvents, useWebSocket, useSessionEventsFromApi, useWorkspace, useWorkspaceStatus } from '../hooks';
 import type { Session } from '../types';
 import { MessageSquarePlus, Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
@@ -10,13 +10,16 @@ import { cn } from '../lib/cn';
 interface ChatViewProps {
   session: Session | null;
   onNewSession?: () => void;
+  isLoadingSession?: boolean;
 }
 
-export function ChatView({ session, onNewSession }: ChatViewProps) {
+export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { sendInput } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
   const { data: historyEvents = [], isLoading: isLoadingHistory } = useSessionEventsFromApi(session?.id ?? null);
+  const { data: workspace } = useWorkspace(session?.workspace_id ?? '');
+  const { data: status } = useWorkspaceStatus(session?.workspace_id ?? null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasInitiallyScrolled, setHasInitiallyScrolled] = useState(false);
 
@@ -64,6 +67,17 @@ export function ChatView({ session, onNewSession }: ChatViewProps) {
       sendInput(session.id, message);
     }
   };
+
+  // Loading session state (when workspace is selected but session is being created/fetched)
+  if (isLoadingSession) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center text-text-muted">
+        <Loader2 className="mb-4 h-16 w-16 animate-spin opacity-50" />
+        <h2 className="mb-2 text-xl font-medium text-text">Loading Session...</h2>
+        <p className="text-center">Setting up your workspace session</p>
+      </div>
+    );
+  }
 
   // No session selected state
   if (!session) {
@@ -121,7 +135,17 @@ export function ChatView({ session, onNewSession }: ChatViewProps) {
             <h3 className="font-medium text-text">
               {session.title || `Session ${session.tab_index + 1}`}
             </h3>
-            <p className="text-xs text-text-muted capitalize">{session.agent_type}</p>
+            <p className="text-xs text-text-muted">
+              {session.model && <span>{session.model}</span>}
+              {session.model && ' · '}
+              <span className="capitalize">
+                {session.agent_type === 'claude'
+                  ? 'Claude Code'
+                  : session.agent_type === 'codex'
+                  ? 'Codex CLI'
+                  : 'Gemini CLI'}
+              </span>
+            </p>
           </div>
         </div>
         {(isProcessing || isLoadingHistory) && (
@@ -157,6 +181,11 @@ export function ChatView({ session, onNewSession }: ChatViewProps) {
         onSend={handleSend}
         disabled={isProcessing}
         placeholder={isProcessing ? 'Waiting for response...' : 'Type a message...'}
+        modelDisplayName={session?.model_display_name}
+        agentType={session?.agent_type}
+        agentMode={session?.agent_mode}
+        gitStats={status?.git_stats}
+        branch={workspace?.branch}
       />
     </div>
   );

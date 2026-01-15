@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { Repository, Workspace } from '../types';
+import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
 
 interface WorkspaceItemProps {
   workspace: Workspace;
@@ -59,21 +60,26 @@ function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) 
             </span>
           )}
 
-          {/* PR badge */}
+          {/* PR badge - clickable link to open PR */}
           {prStatus && (
-            <span
+            <a
+              href={prStatus.url || `https://github.com/pull/${prStatus.number}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className={cn(
-                'flex items-center gap-1 rounded px-1.5 py-0.5',
+                'flex items-center gap-1 rounded px-1.5 py-0.5 transition-opacity hover:opacity-80',
                 prStatus.state === 'open' && 'bg-green-500/10 text-green-400',
                 prStatus.state === 'merged' && 'bg-purple-500/10 text-purple-400',
                 prStatus.state === 'closed' && 'bg-red-500/10 text-red-400',
                 prStatus.state === 'draft' && 'bg-orange-500/10 text-orange-400'
               )}
+              aria-label={`Open PR #${prStatus.number}`}
             >
               <GitPullRequest className="h-3 w-3" />
               #{prStatus.number}
               {prStatus.checks_passing && ' ✓'}
-            </span>
+            </a>
           )}
         </div>
       </div>
@@ -155,6 +161,7 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
   const { data: workspaces = [] } = useWorkspaces();
   const { data: agents = [] } = useAgents();
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
+  const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
 
   const availableAgents = agents.filter((a) => a.available);
 
@@ -164,9 +171,13 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
     return acc;
   }, {} as Record<string, Workspace[]>);
 
-  const handleNewWorkspace = (repositoryId: string) => {
-    // TODO: Open new workspace dialog
-    console.log('New workspace for repository:', repositoryId);
+  const handleNewWorkspace = (repository: Repository) => {
+    setCreateWorkspaceRepo(repository);
+  };
+
+  const handleWorkspaceCreated = (workspace: Workspace) => {
+    setCreateWorkspaceRepo(null);
+    onSelectWorkspace?.(workspace);
   };
 
   return (
@@ -204,7 +215,7 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
                   workspaces={workspacesByRepo[repo.id] || []}
                   selectedWorkspaceId={selectedWorkspaceId}
                   onSelectWorkspace={onSelectWorkspace}
-                  onNewWorkspace={() => handleNewWorkspace(repo.id)}
+                  onNewWorkspace={() => handleNewWorkspace(repo)}
                 />
               ))
             )}
@@ -232,6 +243,17 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
           ))}
         </div>
       </div>
+
+      {/* Create Workspace Dialog */}
+      {createWorkspaceRepo && (
+        <CreateWorkspaceDialog
+          repositoryId={createWorkspaceRepo.id}
+          repositoryName={createWorkspaceRepo.name}
+          isOpen={!!createWorkspaceRepo}
+          onClose={() => setCreateWorkspaceRepo(null)}
+          onSuccess={handleWorkspaceCreated}
+        />
+      )}
     </aside>
   );
 }

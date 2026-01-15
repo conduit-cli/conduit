@@ -40,6 +40,18 @@ enum Commands {
         #[arg(long)]
         palette: bool,
     },
+
+    /// Start the web server (requires 'web' feature)
+    #[cfg(feature = "web")]
+    Serve {
+        /// Host address to bind to
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Port to listen on
+        #[arg(short, long, default_value_t = 3000)]
+        port: u16,
+    },
 }
 
 #[tokio::main]
@@ -59,6 +71,10 @@ async fn main() -> Result<()> {
             palette,
         }) => {
             run_migrate_theme(&input, output.as_deref(), palette)?;
+        }
+        #[cfg(feature = "web")]
+        Some(Commands::Serve { host, port }) => {
+            run_web_server(host, port).await?;
         }
         None => {
             run_app().await?;
@@ -316,6 +332,46 @@ fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool)
             .unwrap_or_default()
             .to_string_lossy()
     );
+
+    Ok(())
+}
+
+/// Run the web server
+#[cfg(feature = "web")]
+async fn run_web_server(host: String, port: u16) -> Result<()> {
+    use conduit::core::ConduitCore;
+    use conduit::web::{run_server, ServerConfig, WebAppState};
+
+    // Initialize logging to stdout for web server mode
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::Level::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+
+    // Create config
+    let config = Config::load();
+
+    // Detect tool availability
+    let tools = ToolAvailability::detect(&config.tool_paths);
+
+    // Create ConduitCore
+    let core = ConduitCore::new(config, tools);
+
+    // Create web app state
+    let state = WebAppState::new(core);
+
+    // Configure server
+    let server_config = ServerConfig {
+        host,
+        port,
+        cors_permissive: true,
+    };
+
+    // Run server
+    run_server(state, server_config).await?;
 
     Ok(())
 }

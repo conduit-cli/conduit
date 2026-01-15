@@ -393,7 +393,7 @@ impl App {
         let key_combo = KeyCombo::from_key_event(&key);
 
         // Look up action in config (context-specific first, then global)
-        if let Some(action) = self.config.keybindings.get_action(&key_combo, context) {
+        if let Some(action) = self.config().keybindings.get_action(&key_combo, context) {
             return self.execute_action(action.clone(), terminal, guard).await;
         }
 
@@ -461,7 +461,8 @@ impl App {
                         && !session.input_box.is_shell_mode()
                     {
                         self.state.close_overlays();
-                        self.state.help_dialog_state.show(&self.config.keybindings);
+                        let keybindings = self.config().keybindings.clone();
+                        self.state.help_dialog_state.show(&keybindings);
                         self.state.input_mode = InputMode::ShowingHelp;
                         return;
                     }

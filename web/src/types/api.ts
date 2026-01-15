@@ -29,6 +29,7 @@ export interface Session {
   agent_mode: string | null;
   agent_session_id: string | null;
   model: string | null;
+  model_display_name: string | null;
   pr_number: number | null;
   created_at: string;
   title: string | null;
@@ -115,4 +116,11 @@ export interface PrStatus {
 export interface WorkspaceStatus {
   git_stats?: GitDiffStats;
   pr_status?: PrStatus;
+}
+
+export interface UiState {
+  active_session_id: string | null;
+  tab_order: string[];
+  sidebar_open: boolean;
+  last_workspace_id: string | null;
 }

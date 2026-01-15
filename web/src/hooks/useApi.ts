@@ -14,9 +14,11 @@ export const queryKeys = {
   repositoryWorkspaces: (id: string) => ['repositories', id, 'workspaces'] as const,
   workspace: (id: string) => ['workspaces', id] as const,
   workspaceStatus: (id: string) => ['workspaces', id, 'status'] as const,
+  workspaceSession: (id: string) => ['workspaces', id, 'session'] as const,
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
   sessionEvents: (id: string) => ['sessions', id, 'events'] as const,
+  uiState: ['ui', 'state'] as const,
 };
 
 // Health
@@ -138,6 +140,35 @@ export function useWorkspaceStatus(workspaceId: string | null) {
   });
 }
 
+export function useAutoCreateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (repositoryId: string) => api.autoCreateWorkspace(repositoryId),
+    onSuccess: (_data, repositoryId) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
+      queryClient.invalidateQueries({ queryKey: queryKeys.repositoryWorkspaces(repositoryId) });
+    },
+  });
+}
+
+// Get or create session for a workspace
+// This auto-creates a session if one doesn't exist, matching TUI behavior
+export function useWorkspaceSession(workspaceId: string | null) {
+  const queryClient = useQueryClient();
+
+  return useQuery({
+    queryKey: queryKeys.workspaceSession(workspaceId ?? ''),
+    queryFn: async () => {
+      const session = await api.getOrCreateWorkspaceSession(workspaceId!);
+      // Invalidate sessions list since we may have created a new one
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      return session;
+    },
+    enabled: !!workspaceId,
+    staleTime: Infinity, // Session won't change unless we create a new one
+  });
+}
+
 // Sessions
 export function useSessions() {
   return useQuery({
@@ -180,5 +211,24 @@ export function useSessionEventsFromApi(id: string | null) {
     queryFn: () => api.getSessionEvents(id!),
     enabled: !!id,
     staleTime: 5000, // Cache for 5 seconds
+  });
+}
+
+// UI state
+export function useUiState() {
+  return useQuery({
+    queryKey: queryKeys.uiState,
+    queryFn: api.getUiState,
+    staleTime: 0,
+  });
+}
+
+export function useUpdateUiState() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: api.updateUiState,
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.uiState, data);
+    },
   });
 }

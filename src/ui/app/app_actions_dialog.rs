@@ -90,7 +90,7 @@ impl App {
             Action::OpenSettings => {
                 if self.state.input_mode == InputMode::SidebarNavigation {
                     self.state.close_overlays();
-                    if let Some(dao) = &self.app_state_dao {
+                    if let Some(dao) = self.app_state_dao() {
                         if let Ok(Some(current_dir)) = dao.get("projects_base_dir") {
                             self.state
                                 .base_dir_dialog_state

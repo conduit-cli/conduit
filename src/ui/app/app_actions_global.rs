@@ -38,7 +38,7 @@ impl App {
                 } else {
                     let session = self.state.tab_manager.active_session();
                     let workspace_id = session.and_then(|s| s.workspace_id);
-                    match (workspace_id, self.workspace_dao.as_ref()) {
+                    match (workspace_id, self.workspace_dao().as_ref()) {
                         (Some(workspace_id), Some(workspace_dao)) => {
                             match workspace_dao.get_by_id(workspace_id) {
                                 Ok(Some(workspace)) => Some(workspace.repository_id),
@@ -101,9 +101,8 @@ impl App {
             }
             Action::ShowThemePicker => {
                 self.state.close_overlays();
-                self.state
-                    .theme_picker_state
-                    .show(self.config.theme_path.as_deref());
+                let theme_path = self.config().theme_path.clone();
+                self.state.theme_picker_state.show(theme_path.as_deref());
                 self.state.input_mode = InputMode::SelectingTheme;
             }
             Action::OpenSessionImport => {
@@ -165,12 +164,13 @@ impl App {
             }
             Action::CopySelection => {
                 let mut copied = false;
+                let clear_after_copy = self.config().selection.clear_selection_after_copy;
                 if let Some(session) = self.state.tab_manager.active_session_mut() {
                     if session.input_box.has_selection() {
                         if let Some(text) = session.input_box.selected_text() {
                             copied = true;
                             effects.push(Effect::CopyToClipboard(text));
-                            if self.config.selection.clear_selection_after_copy {
+                            if clear_after_copy {
                                 Self::clear_selection_for_target(
                                     session,
                                     SelectionDragTarget::Input,
@@ -181,7 +181,7 @@ impl App {
                         if let Some(text) = session.chat_view.copy_selection() {
                             copied = true;
                             effects.push(Effect::CopyToClipboard(text));
-                            if self.config.selection.clear_selection_after_copy {
+                            if clear_after_copy {
                                 Self::clear_selection_for_target(
                                     session,
                                     SelectionDragTarget::Chat,

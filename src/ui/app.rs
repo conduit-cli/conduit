@@ -33,8 +33,9 @@ use crate::agent::{
     GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
+use crate::core::ConduitCore;
 use crate::data::{
-    AppStateStore, Database, ForkSeed, ForkSeedStore, QueuedImageAttachment, QueuedMessage,
+    AppStateStore, ForkSeed, ForkSeedStore, QueuedImageAttachment, QueuedMessage,
     QueuedMessageMode, Repository, RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
 };
 use crate::git::{PrManager, PrStatus, WorktreeManager};
@@ -152,34 +153,142 @@ const PLAN_MODE_INLINE_REMINDER_ENV: &str = "CONDUIT_PLAN_MODE_INLINE_REMINDER";
 
 /// Main application state
 pub struct App {
-    /// Application configuration
-    config: Config,
-    /// Tool availability (git, gh, claude, codex, gemini)
-    tools: ToolAvailability,
+    /// Core infrastructure (database, runners, config)
+    core: ConduitCore,
     /// In-memory UI state
     state: AppState,
-    /// Agent runners
-    claude_runner: Arc<ClaudeCodeRunner>,
-    codex_runner: Arc<CodexCliRunner>,
-    gemini_runner: Arc<GeminiCliRunner>,
     /// Event channel sender
     event_tx: mpsc::UnboundedSender<AppEvent>,
     /// Event channel receiver
     event_rx: mpsc::UnboundedReceiver<AppEvent>,
-    /// Repository DAO
-    repo_dao: Option<RepositoryStore>,
-    /// Workspace DAO
-    workspace_dao: Option<WorkspaceStore>,
-    /// App state DAO (for persisting app settings)
-    app_state_dao: Option<AppStateStore>,
-    /// Session tab DAO (for persisting open tabs)
-    session_tab_dao: Option<SessionTabStore>,
-    /// Fork seed DAO (for persisting fork metadata)
-    fork_seed_dao: Option<ForkSeedStore>,
-    /// Worktree manager
-    worktree_manager: WorktreeManager,
     /// Background git/PR status tracker
     git_tracker: Option<crate::ui::git_tracker::GitTrackerHandle>,
+}
+
+// Convenience accessors for backward compatibility during refactoring
+impl App {
+    /// Get the application configuration.
+    #[inline]
+    fn config(&self) -> &Config {
+        self.core.config()
+    }
+
+    /// Get the tool availability.
+    #[inline]
+    fn tools(&self) -> &ToolAvailability {
+        self.core.tools()
+    }
+
+    /// Get the repository DAO.
+    #[inline]
+    fn repo_dao(&self) -> Option<&RepositoryStore> {
+        self.core.repo_store()
+    }
+
+    fn repo_dao_clone(&self) -> Option<RepositoryStore> {
+        self.core.repo_store_clone()
+    }
+
+    /// Get the workspace DAO.
+    #[inline]
+    fn workspace_dao(&self) -> Option<&WorkspaceStore> {
+        self.core.workspace_store()
+    }
+
+    /// Get a clone of the workspace DAO.
+    #[inline]
+    fn workspace_dao_clone(&self) -> Option<WorkspaceStore> {
+        self.core.workspace_store_clone()
+    }
+
+    /// Get the app state DAO.
+    #[inline]
+    fn app_state_dao(&self) -> Option<&AppStateStore> {
+        self.core.app_state_store()
+    }
+
+    /// Get a clone of the app state DAO.
+    #[inline]
+    fn app_state_dao_clone(&self) -> Option<AppStateStore> {
+        self.core.app_state_store_clone()
+    }
+
+    /// Get the session tab DAO.
+    #[inline]
+    fn session_tab_dao(&self) -> Option<&SessionTabStore> {
+        self.core.session_tab_store()
+    }
+
+    /// Get a clone of the session tab DAO.
+    #[inline]
+    fn session_tab_dao_clone(&self) -> Option<SessionTabStore> {
+        self.core.session_tab_store_clone()
+    }
+
+    /// Get the fork seed DAO.
+    #[inline]
+    fn fork_seed_dao(&self) -> Option<&ForkSeedStore> {
+        self.core.fork_seed_store()
+    }
+
+    /// Get a clone of the fork seed DAO.
+    #[inline]
+    #[allow(dead_code)] // Will be used by web interface
+    fn fork_seed_dao_clone(&self) -> Option<ForkSeedStore> {
+        self.core.fork_seed_store_clone()
+    }
+
+    /// Get the Claude runner.
+    #[inline]
+    fn claude_runner(&self) -> &Arc<ClaudeCodeRunner> {
+        self.core.claude_runner()
+    }
+
+    /// Get the Codex runner.
+    #[inline]
+    fn codex_runner(&self) -> &Arc<CodexCliRunner> {
+        self.core.codex_runner()
+    }
+
+    /// Get the Gemini runner.
+    #[inline]
+    fn gemini_runner(&self) -> &Arc<GeminiCliRunner> {
+        self.core.gemini_runner()
+    }
+
+    /// Get the worktree manager.
+    #[inline]
+    fn worktree_manager(&self) -> &WorktreeManager {
+        self.core.worktree_manager()
+    }
+
+    /// Get a mutable reference to the worktree manager.
+    #[inline]
+    #[allow(dead_code)] // Will be used by web interface
+    fn worktree_manager_mut(&mut self) -> &mut WorktreeManager {
+        self.core.worktree_manager_mut()
+    }
+
+    /// Get a mutable reference to the tools.
+    #[inline]
+    fn tools_mut(&mut self) -> &mut ToolAvailability {
+        self.core.tools_mut()
+    }
+
+    /// Get a mutable reference to the config.
+    #[inline]
+    fn config_mut(&mut self) -> &mut Config {
+        self.core.config_mut()
+    }
+
+    /// Refresh agent runners (delegates to core) and update UI state.
+    fn refresh_runners(&mut self) {
+        self.core.refresh_runners();
+        let tools = self.tools().clone();
+        self.state
+            .agent_selector_state
+            .update_available_agents(&tools);
+    }
 }
 
 fn send_app_event(
@@ -209,34 +318,8 @@ impl App {
     pub fn new(config: Config, tools: ToolAvailability) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-        // Initialize database and DAOs
-        let (repo_dao, workspace_dao, app_state_dao, session_tab_dao, fork_seed_dao) =
-            match Database::open_default() {
-                Ok(db) => {
-                    let repo_dao = RepositoryStore::new(db.connection());
-                    let workspace_dao = WorkspaceStore::new(db.connection());
-                    let app_state_dao = AppStateStore::new(db.connection());
-                    let session_tab_dao = SessionTabStore::new(db.connection());
-                    let fork_seed_dao = ForkSeedStore::new(db.connection());
-                    (
-                        Some(repo_dao),
-                        Some(workspace_dao),
-                        Some(app_state_dao),
-                        Some(session_tab_dao),
-                        Some(fork_seed_dao),
-                    )
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to open database: {}", e);
-                    (None, None, None, None, None)
-                }
-            };
-
-        // Migrate old worktrees folder to workspaces (one-time migration)
-        crate::util::migrate_worktrees_to_workspaces();
-
-        // Initialize worktree manager with managed directory (~/.conduit/workspaces)
-        let worktree_manager = WorktreeManager::with_managed_dir(crate::util::workspaces_dir());
+        // Create core infrastructure (database, runners, worktree manager)
+        let core = ConduitCore::new(config.clone(), tools);
 
         // Initialize git tracker
         let (git_update_tx, mut git_update_rx) = mpsc::unbounded_channel();
@@ -255,42 +338,19 @@ impl App {
             }
         });
 
-        // Create runners with configured paths if available
-        let claude_runner = match tools.get_path(crate::util::Tool::Claude) {
-            Some(path) => Arc::new(ClaudeCodeRunner::with_path(path.clone())),
-            None => Arc::new(ClaudeCodeRunner::new()),
-        };
-        let codex_runner = match tools.get_path(crate::util::Tool::Codex) {
-            Some(path) => Arc::new(CodexCliRunner::with_path(path.clone())),
-            None => Arc::new(CodexCliRunner::new()),
-        };
-        let gemini_runner = match tools.get_path(crate::util::Tool::Gemini) {
-            Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
-            None => Arc::new(GeminiCliRunner::new()),
-        };
-
         let mut app = Self {
-            config: config.clone(),
-            tools,
+            core,
             state: AppState::new(config.max_tabs),
-            claude_runner,
-            codex_runner,
-            gemini_runner,
             event_tx,
             event_rx,
-            repo_dao,
-            workspace_dao,
-            app_state_dao,
-            session_tab_dao,
-            fork_seed_dao,
-            worktree_manager,
             git_tracker,
         };
 
         // Update agent selector based on available tools
+        let tools = app.tools().clone();
         app.state
             .agent_selector_state
-            .update_available_agents(&app.tools);
+            .update_available_agents(&tools);
 
         // Load sidebar data
         app.refresh_sidebar_data();
@@ -306,8 +366,7 @@ impl App {
         tracing::info!("Restoring session state");
         // Check repository count first
         let repo_count = self
-            .repo_dao
-            .as_ref()
+            .repo_dao()
             .and_then(|dao| dao.get_all().ok())
             .map(|repos| repos.len())
             .unwrap_or(0);
@@ -323,11 +382,11 @@ impl App {
         self.state.show_first_time_splash = false;
 
         // Try to restore saved tabs
-        let Some(session_tab_dao) = self.session_tab_dao.clone() else {
+        let Some(session_tab_dao) = self.session_tab_dao_clone() else {
             tracing::warn!("Session tab DAO unavailable; skipping session restore");
             return;
         };
-        let Some(app_state_dao) = self.app_state_dao.clone() else {
+        let Some(app_state_dao) = self.app_state_dao_clone() else {
             tracing::warn!("App state DAO unavailable; skipping session restore");
             return;
         };
@@ -351,7 +410,7 @@ impl App {
         // Restore each tab
         for tab in saved_tabs {
             let required_tool = Self::required_tool(tab.agent_type);
-            if !self.tools.is_available(required_tool) {
+            if !self.tools().is_available(required_tool) {
                 self.show_missing_tool(
                     required_tool,
                     format!(
@@ -379,13 +438,13 @@ impl App {
 
             // Look up workspace to get working_dir, workspace_name, and project_name
             if let Some(workspace_id) = tab.workspace_id {
-                if let Some(workspace_dao) = &self.workspace_dao {
+                if let Some(workspace_dao) = self.workspace_dao() {
                     if let Ok(Some(workspace)) = workspace_dao.get_by_id(workspace_id) {
                         session.working_dir = Some(workspace.path);
                         session.workspace_name = Some(workspace.name.clone());
 
                         // Look up repository for project name
-                        if let Some(repo_dao) = &self.repo_dao {
+                        if let Some(repo_dao) = self.repo_dao() {
                             if let Ok(Some(repo)) = repo_dao.get_by_id(workspace.repository_id) {
                                 session.project_name = Some(repo.name);
                             }
@@ -545,29 +604,38 @@ impl App {
         // Capture current expansion state before rebuild
         let expanded_repos = self.state.sidebar_data.expanded_repo_ids();
 
-        self.state.sidebar_data = SidebarData::new();
+        // Collect all repo/workspace data first to avoid borrow conflicts
+        let repo_workspace_data: Vec<(Uuid, String, Vec<(Uuid, String, String)>)> = {
+            let Some(repo_dao) = self.repo_dao() else {
+                self.state.sidebar_data = SidebarData::new();
+                return;
+            };
+            let Some(workspace_dao) = self.workspace_dao() else {
+                self.state.sidebar_data = SidebarData::new();
+                return;
+            };
 
-        let Some(repo_dao) = &self.repo_dao else {
-            return;
-        };
-        let Some(workspace_dao) = &self.workspace_dao else {
-            return;
-        };
-
-        // Load all repositories
-        if let Ok(repos) = repo_dao.get_all() {
-            for repo in repos {
-                // Load workspaces for this repository
-                if let Ok(workspaces) = workspace_dao.get_by_repository(repo.id) {
-                    let workspace_info: Vec<_> = workspaces
-                        .into_iter()
-                        .map(|ws| (ws.id, ws.name, ws.branch))
-                        .collect();
-                    self.state
-                        .sidebar_data
-                        .add_repository(repo.id, &repo.name, workspace_info);
+            let mut data = Vec::new();
+            if let Ok(repos) = repo_dao.get_all() {
+                for repo in repos {
+                    if let Ok(workspaces) = workspace_dao.get_by_repository(repo.id) {
+                        let workspace_info: Vec<_> = workspaces
+                            .into_iter()
+                            .map(|ws| (ws.id, ws.name, ws.branch))
+                            .collect();
+                        data.push((repo.id, repo.name, workspace_info));
+                    }
                 }
             }
+            data
+        };
+
+        // Now update state (no more borrows on self.core)
+        self.state.sidebar_data = SidebarData::new();
+        for (repo_id, repo_name, workspace_info) in repo_workspace_data {
+            self.state
+                .sidebar_data
+                .add_repository(repo_id, &repo_name, workspace_info);
         }
 
         // Restore expansion state
@@ -760,8 +828,8 @@ impl App {
         let snapshot = self.snapshot_session_state();
         Self::persist_session_state(
             snapshot,
-            self.session_tab_dao.clone(),
-            self.app_state_dao.clone(),
+            self.session_tab_dao_clone(),
+            self.app_state_dao_clone(),
         );
     }
 
@@ -1570,7 +1638,8 @@ impl App {
                         self.state
                             .model_selector_state
                             .set_default_model(agent_type, model_id.clone());
-                        self.config.set_default_model(agent_type, model_id.clone());
+                        self.config_mut()
+                            .set_default_model(agent_type, model_id.clone());
 
                         if let Err(err) = crate::config::save_default_model(agent_type, &model_id) {
                             tracing::warn!(error = %err, "Failed to save default model");
@@ -1660,8 +1729,8 @@ impl App {
                 Effect::SaveSessionState => {
                     tracing::debug!("SaveSessionState effect triggered");
                     let snapshot = self.snapshot_session_state();
-                    let session_tab_dao = self.session_tab_dao.clone();
-                    let app_state_dao = self.app_state_dao.clone();
+                    let session_tab_dao = self.session_tab_dao_clone();
+                    let app_state_dao = self.app_state_dao_clone();
                     if let Err(e) = tokio::task::spawn_blocking(move || {
                         Self::persist_session_state(snapshot, session_tab_dao, app_state_dao);
                     })
@@ -1676,9 +1745,9 @@ impl App {
                     config,
                 } => {
                     let runner: Arc<dyn AgentRunner> = match agent_type {
-                        AgentType::Claude => self.claude_runner.clone(),
-                        AgentType::Codex => self.codex_runner.clone(),
-                        AgentType::Gemini => self.gemini_runner.clone(),
+                        AgentType::Claude => self.claude_runner().clone(),
+                        AgentType::Codex => self.codex_runner().clone(),
+                        AgentType::Gemini => self.gemini_runner().clone(),
                     };
 
                     let event_tx = self.event_tx.clone();
@@ -1831,7 +1900,7 @@ impl App {
                     working_dir,
                 } => {
                     let event_tx = self.event_tx.clone();
-                    let config_working_dir = self.config.working_dir.clone();
+                    let config_working_dir = self.config().working_dir.clone();
                     tokio::spawn(async move {
                         let result = async {
                             let effective_working_dir =
@@ -1980,9 +2049,9 @@ impl App {
                     });
                 }
                 Effect::CreateWorkspace { repo_id } => {
-                    let repo_dao = self.repo_dao.clone();
-                    let workspace_dao = self.workspace_dao.clone();
-                    let worktree_manager = self.worktree_manager.clone();
+                    let repo_dao = self.repo_dao_clone();
+                    let workspace_dao = self.workspace_dao_clone();
+                    let worktree_manager = self.worktree_manager().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2068,9 +2137,9 @@ impl App {
                     parent_workspace_id,
                     base_branch,
                 } => {
-                    let repo_dao = self.repo_dao.clone();
-                    let workspace_dao = self.workspace_dao.clone();
-                    let worktree_manager = self.worktree_manager.clone();
+                    let repo_dao = self.repo_dao_clone();
+                    let workspace_dao = self.workspace_dao_clone();
+                    let worktree_manager = self.worktree_manager().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2167,9 +2236,9 @@ impl App {
                     });
                 }
                 Effect::ArchiveWorkspace { workspace_id } => {
-                    let repo_dao = self.repo_dao.clone();
-                    let workspace_dao = self.workspace_dao.clone();
-                    let worktree_manager = self.worktree_manager.clone();
+                    let repo_dao = self.repo_dao_clone();
+                    let workspace_dao = self.workspace_dao_clone();
+                    let worktree_manager = self.worktree_manager().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2238,9 +2307,9 @@ impl App {
                     });
                 }
                 Effect::RemoveProject { repo_id } => {
-                    let repo_dao = self.repo_dao.clone();
-                    let workspace_dao = self.workspace_dao.clone();
-                    let worktree_manager = self.worktree_manager.clone();
+                    let repo_dao = self.repo_dao_clone();
+                    let workspace_dao = self.workspace_dao_clone();
+                    let worktree_manager = self.worktree_manager().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2467,7 +2536,7 @@ impl App {
                         .project
                         .clone()
                         .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| self.config.working_dir.clone());
+                        .unwrap_or_else(|| self.config().working_dir.clone());
 
                     // Load the session history into a new tab
                     self.create_imported_session_tab(
@@ -2484,10 +2553,10 @@ impl App {
                     workspace_id,
                     current_branch,
                 } => {
-                    let tools = self.tools.clone();
+                    let tools = self.tools().clone();
                     let event_tx = self.event_tx.clone();
-                    let worktree_manager = self.worktree_manager.clone();
-                    let workspace_dao = self.workspace_dao.clone();
+                    let worktree_manager = self.worktree_manager().clone();
+                    let workspace_dao = self.workspace_dao_clone();
 
                     tokio::spawn(async move {
                         // No outer timeout here - timeout is applied inside generate_title_and_branch
@@ -2627,8 +2696,8 @@ impl App {
     }
 
     fn confirm_theme_picker(&mut self) -> anyhow::Result<Vec<Effect>> {
-        let previous_theme_name = self.config.theme_name.clone();
-        let previous_theme_path = self.config.theme_path.clone();
+        let previous_theme_name = self.config().theme_name.clone();
+        let previous_theme_path = self.config().theme_path.clone();
 
         let confirmed = self.state.theme_picker_state.confirm();
         if let Some(error) = self.state.theme_picker_state.take_error() {
@@ -2646,8 +2715,8 @@ impl App {
             };
             let display_name = theme.display_name.clone();
             if let Err(err) = crate::config::save_theme_config(name.as_deref(), path.as_deref()) {
-                self.config.theme_name = previous_theme_name;
-                self.config.theme_path = previous_theme_path;
+                self.config_mut().theme_name = previous_theme_name;
+                self.config_mut().theme_path = previous_theme_path;
                 self.state.theme_picker_state.hide(true); // Restore original theme
                                                           // Clear any pending theme picker error state.
                 self.state.theme_picker_state.take_error();
@@ -2658,8 +2727,8 @@ impl App {
                 );
                 return Ok(Vec::new());
             }
-            self.config.theme_name = name;
-            self.config.theme_path = path;
+            self.config_mut().theme_name = name;
+            self.config_mut().theme_path = path;
             self.state.set_timed_footer_message(
                 format!("Theme: {}", display_name),
                 Duration::from_secs(3),
@@ -2748,7 +2817,8 @@ impl App {
         match command_lower.as_str() {
             "help" | "h" | "?" => {
                 self.state.close_overlays();
-                self.state.help_dialog_state.show(&self.config.keybindings);
+                let keybindings = self.config().keybindings.clone();
+                self.state.help_dialog_state.show(&keybindings);
                 self.state.input_mode = InputMode::ShowingHelp;
                 return None;
             }
@@ -2840,7 +2910,7 @@ impl App {
         }
 
         // Find the workspace
-        let Some(workspace_dao) = &self.workspace_dao else {
+        let Some(workspace_dao) = self.workspace_dao() else {
             return;
         };
 
@@ -2861,15 +2931,13 @@ impl App {
 
         // Get the repository name for the tab title
         let project_name = self
-            .repo_dao
-            .as_ref()
+            .repo_dao()
             .and_then(|dao| dao.get_by_id(workspace.repository_id).ok().flatten())
             .map(|repo| repo.name);
 
         // Check if there's a saved session for this workspace (to restore chat history)
         let saved_tab = self
-            .session_tab_dao
-            .as_ref()
+            .session_tab_dao()
             .and_then(|dao| dao.get_by_workspace_id(workspace_id).ok().flatten());
 
         // Update last accessed
@@ -2882,22 +2950,22 @@ impl App {
         }
 
         let has_saved_session = saved_tab.is_some();
-        let no_agents_available = !self.tools.is_available(crate::util::Tool::Claude)
-            && !self.tools.is_available(crate::util::Tool::Codex)
-            && !self.tools.is_available(crate::util::Tool::Gemini);
+        let no_agents_available = !self.tools().is_available(crate::util::Tool::Claude)
+            && !self.tools().is_available(crate::util::Tool::Codex)
+            && !self.tools().is_available(crate::util::Tool::Gemini);
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
             .unwrap_or_else(|| {
-                let default_agent = self.config.default_agent;
+                let default_agent = self.config().default_agent;
                 let default_tool = Self::required_tool(default_agent);
-                if self.tools.is_available(default_tool) {
+                if self.tools().is_available(default_tool) {
                     default_agent
-                } else if self.tools.is_available(crate::util::Tool::Claude) {
+                } else if self.tools().is_available(crate::util::Tool::Claude) {
                     AgentType::Claude
-                } else if self.tools.is_available(crate::util::Tool::Codex) {
+                } else if self.tools().is_available(crate::util::Tool::Codex) {
                     AgentType::Codex
-                } else if self.tools.is_available(crate::util::Tool::Gemini) {
+                } else if self.tools().is_available(crate::util::Tool::Gemini) {
                     AgentType::Gemini
                 } else {
                     AgentType::Claude
@@ -2914,7 +2982,7 @@ impl App {
         });
 
         let required_tool = Self::required_tool(tab_agent_type);
-        if !self.tools.is_available(required_tool) {
+        if !self.tools().is_available(required_tool) {
             self.show_missing_tool(
                 required_tool,
                 if has_saved_session {
@@ -2942,6 +3010,9 @@ impl App {
         self.state
             .tab_manager
             .new_tab_with_working_dir(tab_agent_type, workspace.path.clone());
+
+        // Get default model before the mutable borrow
+        let default_model = self.config().default_model_for(tab_agent_type);
 
         // Store workspace info in session and restore chat history if available
         if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -3036,8 +3107,7 @@ impl App {
                     session.fork_welcome_shown = true;
                 }
             } else {
-                let model_id = self.config.default_model_for(tab_agent_type);
-                session.model = Some(model_id);
+                session.model = Some(default_model.clone());
                 session.init_context_for_model();
             }
 
@@ -3080,17 +3150,16 @@ impl App {
     }
 
     fn model_selector_defaults(&self) -> DefaultModelSelection {
-        let agent_type = self.config.default_agent;
+        let agent_type = self.config().default_agent;
         DefaultModelSelection {
             agent_type: Some(agent_type),
-            model_id: Some(self.config.default_model_for(agent_type)),
+            model_id: Some(self.config().default_model_for(agent_type)),
         }
     }
 
     fn open_project_picker_or_base_dir(&mut self) {
         let base_dir = self
-            .app_state_dao
-            .as_ref()
+            .app_state_dao()
             .and_then(|dao| dao.get("projects_base_dir").ok().flatten());
 
         self.state.close_overlays();
@@ -3117,25 +3186,6 @@ impl App {
             .missing_tool_dialog_state
             .show_with_context(tool, message);
         self.state.input_mode = InputMode::MissingTool;
-    }
-
-    /// Refresh agent runners using the latest tool configuration.
-    fn refresh_runners(&mut self) {
-        self.claude_runner = match self.tools.get_path(crate::util::Tool::Claude) {
-            Some(path) => Arc::new(ClaudeCodeRunner::with_path(path.clone())),
-            None => Arc::new(ClaudeCodeRunner::new()),
-        };
-        self.codex_runner = match self.tools.get_path(crate::util::Tool::Codex) {
-            Some(path) => Arc::new(CodexCliRunner::with_path(path.clone())),
-            None => Arc::new(CodexCliRunner::new()),
-        };
-        self.gemini_runner = match self.tools.get_path(crate::util::Tool::Gemini) {
-            Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
-            None => Arc::new(GeminiCliRunner::new()),
-        };
-        self.state
-            .agent_selector_state
-            .update_available_agents(&self.tools);
     }
 
     /// Find the tab index for a workspace if it's already open
@@ -3328,7 +3378,7 @@ impl App {
     /// Initiate the archive workspace flow - check git status and show confirmation dialog
     fn initiate_archive_workspace(&mut self, workspace_id: uuid::Uuid) {
         // Get the workspace
-        let Some(workspace_dao) = &self.workspace_dao else {
+        let Some(workspace_dao) = self.workspace_dao() else {
             return;
         };
 
@@ -3338,7 +3388,7 @@ impl App {
         };
 
         // Get git branch status
-        let branch_status = self.worktree_manager.get_branch_status(&workspace.path);
+        let branch_status = self.worktree_manager().get_branch_status(&workspace.path);
 
         // Build warnings and determine confirmation type
         let mut warnings = Vec::new();
@@ -3425,7 +3475,7 @@ impl App {
     /// Initiate project removal - shows confirmation dialog
     fn initiate_remove_project(&mut self, repo_id: uuid::Uuid) {
         // Get repository info
-        let Some(repo_dao) = &self.repo_dao else {
+        let Some(repo_dao) = self.repo_dao() else {
             return;
         };
 
@@ -3435,7 +3485,7 @@ impl App {
         };
 
         // Get all workspaces for this repository
-        let workspaces = if let Some(workspace_dao) = &self.workspace_dao {
+        let workspaces = if let Some(workspace_dao) = self.workspace_dao() {
             workspace_dao.get_by_repository(repo_id).unwrap_or_default()
         } else {
             Vec::new()
@@ -3447,7 +3497,7 @@ impl App {
         let mut has_unmerged = false;
 
         for ws in &workspaces {
-            if let Ok(status) = self.worktree_manager.get_branch_status(&ws.path) {
+            if let Ok(status) = self.worktree_manager().get_branch_status(&ws.path) {
                 if status.is_dirty {
                     has_dirty = true;
                 }
@@ -3546,7 +3596,7 @@ impl App {
     /// Add a project to the sidebar (repository only, no workspace)
     /// Returns the repository ID - either existing or newly created
     fn add_project_to_sidebar(&mut self, path: std::path::PathBuf) -> Option<uuid::Uuid> {
-        let Some(repo_dao) = &self.repo_dao else {
+        let Some(repo_dao) = self.repo_dao() else {
             return None;
         };
 
@@ -3581,7 +3631,7 @@ impl App {
     fn add_repository(&mut self) -> Option<uuid::Uuid> {
         let path = self.state.add_repo_dialog_state.expanded_path();
 
-        let Some(repo_dao) = &self.repo_dao else {
+        let Some(repo_dao) = self.repo_dao() else {
             return None;
         };
 
@@ -3615,8 +3665,8 @@ impl App {
     /// Create a new tab with the selected agent type
     fn create_tab_with_agent(&mut self, agent_type: AgentType) {
         self.state.tab_manager.new_tab(agent_type);
+        let model_id = self.config().default_model_for(agent_type);
         if let Some(session) = self.state.tab_manager.active_session_mut() {
-            let model_id = self.config.default_model_for(agent_type);
             session.model = Some(model_id);
             session.init_context_for_model();
             session.update_status();
@@ -4095,7 +4145,7 @@ impl App {
                     self.state.close_overlays();
                     self.state
                         .agent_selector_state
-                        .show_with_default(self.config.default_agent);
+                        .show_with_default(self.config().default_agent);
                     self.state.input_mode = InputMode::SelectingAgent;
                 }
             }
@@ -4325,7 +4375,7 @@ impl App {
             if self.state.model_selector_state.select_at_row(clicked_row) {
                 if let Some(model) = self.state.model_selector_state.selected_model().cloned() {
                     let required_tool = Self::required_tool(model.agent_type);
-                    if !self.tools.is_available(required_tool) {
+                    if !self.tools().is_available(required_tool) {
                         self.show_missing_tool(
                             required_tool,
                             format!(
@@ -4472,7 +4522,7 @@ impl App {
         };
 
         // Look up action in keybinding config
-        self.config
+        self.config()
             .keybindings
             .get_action(&key_combo, context)
             .cloned()
@@ -4551,7 +4601,7 @@ impl App {
                             // Clean up fork seed
                             if let Some(pending) = self.state.pending_fork_request.take() {
                                 if let Some(seed_id) = pending.fork_seed_id {
-                                    if let Some(dao) = &self.fork_seed_dao {
+                                    if let Some(dao) = self.fork_seed_dao() {
                                         if let Err(e) = dao.delete(seed_id) {
                                             tracing::debug!(
                                                 error = %e,
@@ -4580,7 +4630,7 @@ impl App {
                 Err(err) => {
                     if let Some(pending) = self.state.pending_fork_request.take() {
                         if let Some(seed_id) = pending.fork_seed_id {
-                            if let Some(dao) = &self.fork_seed_dao {
+                            if let Some(dao) = self.fork_seed_dao() {
                                 if let Err(e) = dao.delete(seed_id) {
                                     tracing::debug!(
                                         error = %e,
@@ -5909,6 +5959,9 @@ impl App {
         // NOTE: We don't take() resume_session_id here because early returns below
         // (e.g., working_dir validation) would consume it incorrectly. We only
         // consume resume_session_id later when we're committed to spawning the agent.
+        // Get default working dir before the mutable borrow
+        let default_working_dir = self.config().working_dir.clone();
+
         let (
             agent_type,
             agent_mode,
@@ -5941,10 +5994,7 @@ impl App {
                 .clone()
                 .or_else(|| session.resume_session_id.clone());
             // Use session's working_dir if set, otherwise fall back to config
-            let working_dir = session
-                .working_dir
-                .clone()
-                .unwrap_or_else(|| self.config.working_dir.clone());
+            let working_dir = session.working_dir.clone().unwrap_or(default_working_dir);
             let session_id = session.id;
 
             (
@@ -6148,7 +6198,7 @@ impl App {
         };
 
         let mut config = AgentStartConfig::new(prompt_for_agent, working_dir)
-            .with_tools(self.config.claude_allowed_tools.clone())
+            .with_tools(self.config().claude_allowed_tools.clone())
             .with_images(images)
             .with_agent_mode(agent_mode);
 
@@ -6233,6 +6283,10 @@ impl App {
         let mut shell_error: Option<String> = None;
         let mut queued_handled = false;
 
+        // Extract config values before the mutable borrow
+        let steer_behavior = self.config().steer.behavior;
+        let steer_fallback = self.config().steer.fallback;
+
         {
             let Some(session) = self.state.tab_manager.active_session_mut() else {
                 return Ok(effects);
@@ -6280,7 +6334,7 @@ impl App {
 
             if !queued_handled {
                 let effective_mode = if mode == QueuedMessageMode::Steer
-                    && self.config.steer.behavior == crate::config::SteerBehavior::Soft
+                    && steer_behavior == crate::config::SteerBehavior::Soft
                 {
                     QueuedMessageMode::FollowUp
                 } else {
@@ -6305,7 +6359,7 @@ impl App {
                     if mode == QueuedMessageMode::Steer
                         && effective_mode == QueuedMessageMode::Steer
                     {
-                        match self.config.steer.fallback {
+                        match steer_fallback {
                             crate::config::SteerFallback::Interrupt => {
                                 let (text, image_paths, image_placeholders) =
                                     app_queue::queued_to_submission(&queued);
@@ -6634,12 +6688,12 @@ impl App {
             }
         };
 
-        if self.fork_seed_dao.is_none() {
+        if self.fork_seed_dao().is_none() {
             self.show_error("Cannot Fork", "Fork metadata store unavailable.");
             return;
         }
 
-        let workspace_dao = match &self.workspace_dao {
+        let workspace_dao = match self.workspace_dao() {
             Some(dao) => dao,
             None => {
                 self.show_error("Cannot Fork", "Workspace database unavailable.");
@@ -6654,7 +6708,7 @@ impl App {
 
         // Get actual current branch for display (may differ from stored workspace.branch)
         let base_branch = self
-            .worktree_manager
+            .worktree_manager()
             .get_current_branch(&workspace.path)
             .unwrap_or_else(|_| workspace.branch.clone());
 
@@ -6675,7 +6729,7 @@ impl App {
         let mut warnings = Vec::new();
         let mut has_dirty = false;
 
-        if let Ok(status) = self.worktree_manager.get_branch_status(&workspace.path) {
+        if let Ok(status) = self.worktree_manager().get_branch_status(&workspace.path) {
             if status.is_dirty {
                 has_dirty = true;
                 if let Some(desc) = &status.dirty_description {
@@ -6762,7 +6816,7 @@ impl App {
             return None;
         }
 
-        let fork_seed_dao = match &self.fork_seed_dao {
+        let fork_seed_dao = match self.fork_seed_dao() {
             Some(dao) => dao,
             None => {
                 self.show_error("Fork Failed", "Fork metadata store unavailable.");
@@ -6811,13 +6865,11 @@ impl App {
         };
 
         let workspace_dao = self
-            .workspace_dao
-            .as_ref()
+            .workspace_dao()
             .ok_or_else(|| anyhow!("Workspace database unavailable."))?;
 
         let repo_dao = self
-            .repo_dao
-            .as_ref()
+            .repo_dao()
             .ok_or_else(|| anyhow!("Repository database unavailable."))?;
 
         let workspace = workspace_dao
@@ -6925,8 +6977,8 @@ impl App {
             tracker.untrack_workspace(workspace_id);
         }
 
-        let workspace_dao = self.workspace_dao.as_ref()?;
-        let repo_dao = self.repo_dao.as_ref()?;
+        let workspace_dao = self.workspace_dao()?;
+        let repo_dao = self.repo_dao()?;
 
         // Safety: only allow deletion of paths under the managed workspaces directory
         let managed_root = crate::util::workspaces_dir();
@@ -6964,7 +7016,7 @@ impl App {
                 // Try to prune stale worktree metadata since the path may have been deleted
                 if let Ok(Some(repo)) = repo_dao.get_by_id(workspace.repository_id) {
                     if let Some(base_path) = &repo.base_path {
-                        if let Err(prune_err) = self.worktree_manager.prune_worktrees(base_path) {
+                        if let Err(prune_err) = self.worktree_manager().prune_worktrees(base_path) {
                             tracing::debug!(
                                 error = %prune_err,
                                 "Failed to prune stale worktrees"
@@ -7051,7 +7103,7 @@ impl App {
                     workspace.path.display()
                 ));
             } else if let Err(e) = self
-                .worktree_manager
+                .worktree_manager()
                 .remove_worktree(base_path, &workspace.path)
             {
                 tracing::warn!(
@@ -7068,7 +7120,7 @@ impl App {
             // Also try to delete the branch (only if we successfully managed the worktree path)
             if path_is_managed {
                 if let Err(e) = self
-                    .worktree_manager
+                    .worktree_manager()
                     .delete_branch(base_path, &workspace.branch)
                 {
                     tracing::warn!(
@@ -7463,7 +7515,7 @@ impl App {
     fn drain_queue_for_tab(&mut self, tab_index: usize) -> anyhow::Result<Vec<Effect>> {
         let mut effects = Vec::new();
         let mut queued: Vec<QueuedMessage> = Vec::new();
-        let (queue_mode, queue_delivery) = (self.config.queue.mode, self.config.queue.delivery);
+        let (queue_mode, queue_delivery) = (self.config().queue.mode, self.config().queue.delivery);
 
         {
             let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
@@ -8852,13 +8904,13 @@ mod tests {
     use crate::util::ToolAvailability;
     use chrono::Utc;
     use serde_json::json;
-    use std::sync::Arc;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
     fn build_test_app_with_sessions(session_ids: &[Uuid]) -> App {
         let config = Config::default();
         let tools = ToolAvailability::default();
+        let core = crate::core::ConduitCore::new(config, tools);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let mut state = AppState::new(10);
 
@@ -8869,20 +8921,10 @@ mod tests {
         }
 
         App {
-            config,
-            tools,
+            core,
             state,
-            claude_runner: Arc::new(ClaudeCodeRunner::new()),
-            codex_runner: Arc::new(CodexCliRunner::new()),
-            gemini_runner: Arc::new(GeminiCliRunner::new()),
             event_tx,
             event_rx,
-            repo_dao: None,
-            workspace_dao: None,
-            app_state_dao: None,
-            session_tab_dao: None,
-            fork_seed_dao: None,
-            worktree_manager: WorktreeManager::new(),
             git_tracker: None,
         }
     }

@@ -19,11 +19,13 @@ impl App {
             }
             Action::ShowHelp => {
                 self.state.close_overlays();
-                self.state.help_dialog_state.show(&self.config.keybindings);
+                let keybindings = self.config().keybindings.clone();
+                self.state.help_dialog_state.show(&keybindings);
                 self.state.input_mode = InputMode::ShowingHelp;
             }
             Action::OpenCommandPalette => {
                 self.state.close_overlays();
+                let keybindings = self.config().keybindings.clone();
                 let supports_plan_mode = self
                     .state
                     .tab_manager
@@ -31,7 +33,7 @@ impl App {
                     .is_some_and(|s| s.capabilities.supports_plan_mode);
                 self.state
                     .command_palette_state
-                    .show(&self.config.keybindings, supports_plan_mode);
+                    .show(&keybindings, supports_plan_mode);
                 self.state.input_mode = InputMode::CommandPalette;
             }
             _ => {}

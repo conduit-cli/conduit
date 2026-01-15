@@ -122,16 +122,17 @@ impl App {
         let target = self.state.selection_drag.take()?;
         let mut copied_text = None;
         let mut should_clear_selection = false;
+        let auto_copy = self.config().selection.auto_copy_selection;
+        let clear_after_copy = self.config().selection.clear_selection_after_copy;
         if let Some(session) = self.state.tab_manager.active_session_mut() {
             let has_selection = match target {
                 SelectionDragTarget::Input => session.input_box.finalize_selection(),
                 SelectionDragTarget::Chat => session.chat_view.finalize_selection(),
             };
 
-            if has_selection && self.config.selection.auto_copy_selection {
+            if has_selection && auto_copy {
                 copied_text = Self::selection_text_for_target(session, target);
-                should_clear_selection =
-                    copied_text.is_some() && self.config.selection.clear_selection_after_copy;
+                should_clear_selection = copied_text.is_some() && clear_after_copy;
             }
             if should_clear_selection {
                 Self::clear_selection_for_target(session, target);

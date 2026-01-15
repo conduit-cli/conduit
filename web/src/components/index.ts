@@ -6,3 +6,5 @@ export * from './ChatInput';
 export * from './ChatView';
 export * from './HistoryMessage';
 export * from './ThemeSwitcher';
+export * from './CreateWorkspaceDialog';
+export * from './SessionTabs';

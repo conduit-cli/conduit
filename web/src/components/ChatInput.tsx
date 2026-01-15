@@ -6,9 +6,32 @@ interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  // Session/workspace info for status line
+  modelDisplayName?: string | null;
+  agentType?: 'claude' | 'codex' | 'gemini' | null;
+  agentMode?: string | null;
+  gitStats?: { additions: number; deletions: number } | null;
+  branch?: string | null;
 }
 
-export function ChatInput({ onSend, disabled = false, placeholder = 'Type a message...' }: ChatInputProps) {
+// Format branch name with ellipsis for long paths
+function formatBranch(branch: string): string {
+  if (branch.includes('/')) {
+    return '…/' + branch.split('/').pop();
+  }
+  return branch;
+}
+
+export function ChatInput({
+  onSend,
+  disabled = false,
+  placeholder = 'Type a message...',
+  modelDisplayName,
+  agentType,
+  agentMode,
+  gitStats,
+  branch,
+}: ChatInputProps) {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -75,8 +98,34 @@ export function ChatInput({ onSend, disabled = false, placeholder = 'Type a mess
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-text-muted">
-        <span>Press Enter to send, Shift+Enter for new line</span>
-        <span>Powered by Claude</span>
+        {/* Left: Agent Mode + Model + Agent Type */}
+        <div className="flex items-center gap-2">
+          {agentMode && <span className="text-accent">{agentMode}</span>}
+          {modelDisplayName && <span className="text-text">{modelDisplayName}</span>}
+          {agentType && (
+            <span>
+              {agentType === 'claude'
+                ? 'Claude Code'
+                : agentType === 'codex'
+                  ? 'Codex CLI'
+                  : 'Gemini CLI'}
+            </span>
+          )}
+          {!modelDisplayName && !agentType && <span>Press Enter to send, Shift+Enter for new line</span>}
+        </div>
+
+        {/* Right: Git stats + Branch */}
+        <div className="flex items-center gap-1.5">
+          {gitStats && (gitStats.additions > 0 || gitStats.deletions > 0) && (
+            <>
+              <span className="text-green-400">+{gitStats.additions}</span>
+              <span className="text-red-400">-{gitStats.deletions}</span>
+              <span>·</span>
+            </>
+          )}
+          {branch && <span className="max-w-48 truncate">{formatBranch(branch)}</span>}
+          {!gitStats && !branch && <span>Powered by Claude</span>}
+        </div>
       </div>
     </div>
   );

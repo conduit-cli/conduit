@@ -37,7 +37,7 @@ impl App {
                     let agent_type = model.agent_type;
                     let display_name = model.display_name.clone();
                     let required_tool = Self::required_tool(agent_type);
-                    if !self.tools.is_available(required_tool) {
+                    if !self.tools().is_available(required_tool) {
                         self.show_missing_tool(
                             required_tool,
                             format!(
@@ -108,7 +108,7 @@ impl App {
             }
             InputMode::SettingBaseDir => {
                 if self.state.base_dir_dialog_state.is_valid() {
-                    if let Some(dao) = &self.app_state_dao {
+                    if let Some(dao) = self.app_state_dao() {
                         if let Err(e) = dao.set(
                             "projects_base_dir",
                             self.state.base_dir_dialog_state.input(),
@@ -201,7 +201,7 @@ impl App {
                         MissingToolResult::PathProvided(path) => {
                             let tool = self.state.missing_tool_dialog_state.tool;
                             // Update ToolAvailability
-                            self.tools.update_tool(tool, path.clone());
+                            self.tools_mut().update_tool(tool, path.clone());
                             // Save to config
                             if let Err(e) = crate::config::save_tool_path(tool, &path) {
                                 tracing::warn!("Failed to save tool path to config: {}", e);

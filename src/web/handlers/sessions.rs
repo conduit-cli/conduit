@@ -8,7 +8,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::agent::{load_claude_history_with_debug, load_codex_history_with_debug, AgentType};
+use crate::agent::{
+    load_claude_history_with_debug, load_codex_history_with_debug, AgentType, ModelRegistry,
+};
 use crate::data::SessionTab;
 use crate::ui::components::MessageRole;
 use crate::web::error::WebError;
@@ -24,6 +26,7 @@ pub struct SessionResponse {
     pub agent_mode: Option<String>,
     pub agent_session_id: Option<String>,
     pub model: Option<String>,
+    pub model_display_name: Option<String>,
     pub pr_number: Option<i32>,
     pub created_at: String,
     pub title: Option<String>,
@@ -31,6 +34,11 @@ pub struct SessionResponse {
 
 impl From<SessionTab> for SessionResponse {
     fn from(session: SessionTab) -> Self {
+        // Look up model display name from registry
+        let model_display_name = session.model.as_ref().and_then(|model_id| {
+            ModelRegistry::find_model(session.agent_type, model_id).map(|info| info.display_name)
+        });
+
         Self {
             id: session.id,
             tab_index: session.tab_index,
@@ -39,6 +47,7 @@ impl From<SessionTab> for SessionResponse {
             agent_mode: session.agent_mode,
             agent_session_id: session.agent_session_id,
             model: session.model,
+            model_display_name,
             pr_number: session.pr_number,
             created_at: session.created_at.to_rfc3339(),
             title: session.title,

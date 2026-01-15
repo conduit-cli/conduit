@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 
-use crate::web::handlers::{repositories, sessions, themes, workspaces};
+use crate::web::handlers::{repositories, sessions, themes, ui_state, workspaces};
 use crate::web::state::WebAppState;
 
 /// Build the API router with all REST endpoints.
@@ -28,6 +28,10 @@ pub fn api_routes() -> Router<WebAppState> {
             "/repositories/{id}/workspaces",
             post(workspaces::create_workspace),
         )
+        .route(
+            "/repositories/{id}/workspaces/auto",
+            post(workspaces::auto_create_workspace),
+        )
         // Workspace routes
         .route("/workspaces", get(workspaces::list_workspaces))
         .route("/workspaces/{id}", get(workspaces::get_workspace))
@@ -40,6 +44,10 @@ pub fn api_routes() -> Router<WebAppState> {
             "/workspaces/{id}/status",
             get(workspaces::get_workspace_status),
         )
+        .route(
+            "/workspaces/{id}/session",
+            post(workspaces::get_or_create_session),
+        )
         // Session routes
         .route("/sessions", get(sessions::list_sessions))
         .route("/sessions", post(sessions::create_session))
@@ -50,4 +58,7 @@ pub fn api_routes() -> Router<WebAppState> {
         .route("/themes", get(themes::list_available_themes))
         .route("/themes/current", get(themes::get_current_theme))
         .route("/themes/current", post(themes::set_current_theme))
+        // UI state routes
+        .route("/ui/state", get(ui_state::get_ui_state))
+        .route("/ui/state", post(ui_state::update_ui_state))
 }
