@@ -2681,6 +2681,14 @@ impl App {
         let cmd = parts.next().unwrap_or("");
         let rest = parts.next().unwrap_or("").trim();
         if cmd.eq_ignore_ascii_case("open") || cmd.eq_ignore_ascii_case("o") {
+            if rest.is_empty() {
+                self.state.set_timed_footer_message(
+                    "Usage: :open <path>".to_string(),
+                    Duration::from_secs(3),
+                );
+                return None;
+            }
+
             let mut path = rest;
             // Allow quoted paths (common for paths with spaces)
             path = path
@@ -2691,16 +2699,20 @@ impl App {
 
             if !path.is_empty() {
                 // Expand tilde to home directory
-                let mut expanded_path = if let Some(stripped) = path.strip_prefix('~') {
-                    if let Some(home) = dirs::home_dir() {
-                        // Handle both "~" and "~/path" or "~\path" (Windows) cases
-                        let rest = stripped.trim_start_matches(['/', '\\']);
-                        home.join(rest)
-                    } else {
-                        std::path::PathBuf::from(path)
+                // Only expand ~ or ~/path (not ~username which would require system lookup)
+                let mut expanded_path = match path {
+                    "~" => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(path)),
+                    _ => {
+                        if let Some(rest) =
+                            path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
+                        {
+                            dirs::home_dir()
+                                .map(|home| home.join(rest))
+                                .unwrap_or_else(|| std::path::PathBuf::from(path))
+                        } else {
+                            std::path::PathBuf::from(path)
+                        }
                     }
-                } else {
-                    std::path::PathBuf::from(path)
                 };
 
                 // Resolve relative paths against the active workspace (fallback to config working dir)
@@ -4438,7 +4450,12 @@ impl App {
         let key_combo = parse_key_notation(&key_notation).ok()?;
 
         // Determine context from current mode
-        let context = KeyContext::from_input_mode(self.state.input_mode, self.state.view_mode);
+        // File viewer uses Scrolling context for j/k/g/G keys
+        let context = if self.state.tab_manager.active_is_file() {
+            KeyContext::Scrolling
+        } else {
+            KeyContext::from_input_mode(self.state.input_mode, self.state.view_mode)
+        };
 
         // Look up action in keybinding config
         self.config
@@ -8094,26 +8111,43 @@ impl App {
         use ratatui::style::Style;
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Paragraph, Widget};
+        use unicode_width::UnicodeWidthStr;
 
-        // Layout: tab bar, file header, content, footer
+        let is_command_mode = self.state.input_mode == InputMode::Command;
+
+        // Layout: tab bar, file header, content (+ optional command prompt)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Tab bar
-                Constraint::Length(1), // File header (path + line count)
-                Constraint::Min(5),    // File content
-            ])
+            .constraints(if is_command_mode {
+                vec![
+                    Constraint::Length(1), // Tab bar
+                    Constraint::Length(1), // File header
+                    Constraint::Min(3),    // File content
+                    Constraint::Length(3), // Command prompt
+                ]
+            } else {
+                vec![
+                    Constraint::Length(1), // Tab bar
+                    Constraint::Length(1), // File header (path + line count)
+                    Constraint::Min(5),    // File content
+                ]
+            })
             .split(content_area);
 
         let tab_bar_chunk = chunks[0];
         let header_chunk = chunks[1];
         let content_chunk = chunks[2];
+        let command_chunk = if is_command_mode {
+            Some(chunks[3])
+        } else {
+            None
+        };
 
         // Store areas for mouse hit-testing
         self.state.tab_bar_area = Some(tab_bar_chunk);
         self.state.chat_area = None;
         self.state.raw_events_area = None;
-        self.state.input_area = None;
+        self.state.input_area = command_chunk;
         self.state.status_bar_area = None;
         self.state.footer_area = Some(footer_area);
 
@@ -8141,6 +8175,18 @@ impl App {
         // Render file content with line numbers and scrollbar
         if let Some(file_session) = self.state.tab_manager.active_file_viewer() {
             FileViewerView::new(file_session).render(content_chunk, f.buffer_mut());
+        }
+
+        // Render command prompt if in command mode
+        if let Some(cmd_area) = command_chunk {
+            self.render_command_prompt(cmd_area, f.buffer_mut());
+            // Set cursor position for command input
+            let prompt = format!("  cmd › {}", self.state.command_buffer);
+            let prompt_width = UnicodeWidthStr::width(prompt.as_str()) as u16;
+            let max_x = cmd_area.x + cmd_area.width.saturating_sub(1);
+            let cx = (cmd_area.x + prompt_width).min(max_x);
+            let cy = cmd_area.y + 1;
+            f.set_cursor_position((cx, cy));
         }
 
         // Render footer (sidebar-aware)
