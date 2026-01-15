@@ -8165,15 +8165,30 @@ impl App {
             let path_str = file_session.file_path.display().to_string();
             let line_info = format!(" ({} lines)", file_session.total_lines);
 
-            // Truncate path if it doesn't fit in the header width
-            let available_width = header_chunk.width.saturating_sub(2) as usize; // 1 for leading space, 1 for safety
-            let line_info_width = line_info.len();
+            // Truncate path if it doesn't fit in the header width (UTF-8 safe, width-aware)
+            let available_width = header_chunk.width.saturating_sub(2) as usize; // 1 leading space + 1 safety
+            let line_info_width = UnicodeWidthStr::width(line_info.as_str());
             let max_path_width = available_width.saturating_sub(line_info_width);
-            let truncated_path = if path_str.len() > max_path_width && max_path_width > 3 {
-                format!(
-                    "...{}",
-                    &path_str[path_str.len().saturating_sub(max_path_width - 3)..]
-                )
+
+            let truncated_path = if UnicodeWidthStr::width(path_str.as_str()) > max_path_width {
+                if max_path_width <= 3 {
+                    // Not enough room for "..." + content
+                    "...".chars().take(max_path_width).collect::<String>()
+                } else {
+                    // Build tail from right, respecting character boundaries and widths
+                    let mut tail = String::new();
+                    let mut width = 0usize;
+                    let target = max_path_width.saturating_sub(3); // reserve for "..."
+                    for ch in path_str.chars().rev() {
+                        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+                        if width + w > target {
+                            break;
+                        }
+                        width += w;
+                        tail.insert(0, ch);
+                    }
+                    format!("...{}", tail)
+                }
             } else {
                 path_str
             };
