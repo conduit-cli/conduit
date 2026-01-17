@@ -41,6 +41,16 @@
   /* Diff colors */
   --color-diff-add: #82c88c;
   --color-diff-remove: #e67878;
+  --color-diff-add-bg: rgba(130, 200, 140, 0.15);
+  --color-diff-remove-bg: rgba(230, 120, 120, 0.15);
+
+  /* Terminal colors */
+  --color-terminal-bg: #0d0d14;
+  --color-terminal-text: #a0ffa0;
+  --color-terminal-prompt: #82c88c;
+
+  /* Code block colors */
+  --color-code-line-highlight: rgba(130, 170, 255, 0.1);
 
   /* Scrollbar colors */
   --color-scrollbar-thumb: #282834;
@@ -107,4 +117,51 @@ code {
 
 .prose a {
   color: var(--color-accent);
+}
+
+/* Shiki code block styling - force tight line spacing */
+.shiki-wrapper {
+  line-height: 1.5;
+  font-size: 0.8125rem;
+}
+
+.shiki-wrapper pre {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+}
+
+.shiki-wrapper code {
+  font-family: 'IBM Plex Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  /* Flex container ignores whitespace text nodes between .line elements */
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.shiki-wrapper .line {
+  display: block;
+}
+
+.shiki-wrapper.show-line-numbers .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 2.5rem;
+  margin-right: 1rem;
+  text-align: right;
+  color: var(--color-text-faint);
+  user-select: none;
+}
+
+.shiki-wrapper.show-line-numbers {
+  counter-reset: line;
+}
+
+/* Diff line highlighting in code blocks */
+.shiki-wrapper .diff.add {
+  background-color: var(--color-diff-add-bg);
+}
+
+.shiki-wrapper .diff.remove {
+  background-color: var(--color-diff-remove-bg);
 }
