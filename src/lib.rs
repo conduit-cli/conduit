@@ -6,8 +6,6 @@ pub mod git;
 pub mod session;
 pub mod ui;
 pub mod util;
-
-#[cfg(feature = "web")]
 pub mod web;
 
 pub use agent::{

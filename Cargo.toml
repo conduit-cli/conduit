@@ -10,17 +10,6 @@ readme = "README.md"
 keywords = ["tui", "cli", "claude", "ai", "terminal"]
 categories = ["command-line-utilities", "development-tools"]
 
-[features]
-default = []
-web = [
-    "dep:axum",
-    "dep:axum-extra",
-    "dep:tower",
-    "dep:tower-http",
-    "dep:rust-embed",
-    "dep:mime_guess",
-]
-
 [dependencies]
 # Async runtime
 tokio = { version = "1.42", features = ["full", "process", "sync", "macros", "rt-multi-thread"] }
@@ -82,13 +71,13 @@ base64 = "0.22"
 # Concurrency
 parking_lot = "0.12"
 
-# Web server (optional - enabled with "web" feature)
-axum = { version = "0.8", features = ["ws", "macros"], optional = true }
-axum-extra = { version = "0.10", features = ["typed-header"], optional = true }
-tower = { version = "0.5", features = ["util"], optional = true }
-tower-http = { version = "0.6", features = ["fs", "cors", "trace"], optional = true }
-rust-embed = { version = "8.5", optional = true }
-mime_guess = { version = "2.0", optional = true }
+# Web server
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+rust-embed = "8.5"
+mime_guess = "2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

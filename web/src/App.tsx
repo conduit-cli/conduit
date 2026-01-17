@@ -12,6 +12,7 @@ import {
   useWorkspaceStatus,
   useSessionEventsFromApi,
   useSessionEvents,
+  useWorkspaceSession,
 } from './hooks';
 import type { Workspace, Session, SessionEvent, AgentEvent } from './types';
 
@@ -94,6 +95,10 @@ function AppContent() {
   const activeSession = orderedSessions.find((session) => session.id === activeSessionId) ?? null;
   const { data: activeWorkspace } = useWorkspace(activeSession?.workspace_id ?? '');
   const { data: workspaceStatus } = useWorkspaceStatus(activeSession?.workspace_id ?? null);
+  const {
+    data: workspaceSession,
+    isLoading: isLoadingWorkspaceSession,
+  } = useWorkspaceSession(selectedWorkspaceId);
 
   const wsEvents = useSessionEvents(activeSessionId);
   const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
@@ -104,6 +109,7 @@ function AppContent() {
     () => latestUsageFromEvents(wsEvents, historyEvents),
     [wsEvents, historyEvents]
   );
+  const isLoadingSession = isLoadingWorkspaceSession && !activeSessionId;
 
   useEffect(() => {
     setHistoryReady(true);
@@ -131,6 +137,17 @@ function AppContent() {
       setSelectedWorkspaceId(bootstrap.active_workspace.id);
     }
   }, [bootstrap, activeSessionId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId || !workspaceSession) return;
+    if (workspaceSession.workspace_id !== selectedWorkspaceId) return;
+    if (workspaceSession.id === activeSessionId) return;
+    setActiveSessionId(workspaceSession.id);
+    updateUiState.mutate({
+      active_session_id: workspaceSession.id,
+      last_workspace_id: selectedWorkspaceId,
+    });
+  }, [activeSessionId, selectedWorkspaceId, updateUiState, workspaceSession]);
 
   useEffect(() => {
     if (activeSessionId || orderedSessions.length === 0 || !resolvedUiState) return;
@@ -182,7 +199,6 @@ function AppContent() {
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     setSelectedWorkspaceId(workspace.id);
-    updateUiState.mutate({ last_workspace_id: workspace.id });
   };
 
   const handleSelectSession = (session: Session) => {
@@ -229,7 +245,11 @@ function AppContent() {
         onToggleSidebar={handleToggleSidebar}
         isBootstrapping={isBootstrapping}
       >
-        <ChatView session={activeSession} onNewSession={handleNewSession} isLoadingSession={false} />
+        <ChatView
+          session={activeSession}
+          onNewSession={handleNewSession}
+          isLoadingSession={isLoadingSession}
+        />
       </Layout>
 
   );

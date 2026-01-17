@@ -41,8 +41,7 @@ enum Commands {
         palette: bool,
     },
 
-    /// Start the web server (requires 'web' feature)
-    #[cfg(feature = "web")]
+    /// Start the web server
     Serve {
         /// Host address to bind to
         #[arg(long, default_value = "127.0.0.1")]
@@ -72,7 +71,6 @@ async fn main() -> Result<()> {
         }) => {
             run_migrate_theme(&input, output.as_deref(), palette)?;
         }
-        #[cfg(feature = "web")]
         Some(Commands::Serve { host, port }) => {
             run_web_server(host, port).await?;
         }
@@ -337,7 +335,6 @@ fn run_migrate_theme(input: &Path, output: Option<&Path>, extract_palette: bool)
 }
 
 /// Run the web server
-#[cfg(feature = "web")]
 async fn run_web_server(host: String, port: u16) -> Result<()> {
     use conduit::core::ConduitCore;
     use conduit::web::{run_server, ServerConfig, WebAppState};

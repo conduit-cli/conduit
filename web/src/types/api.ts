@@ -96,11 +96,21 @@ export interface SessionEvent {
   summary?: TurnSummary;
 }
 
+export interface HistoryDebugEntry {
+  line: number;
+  entry_type: string;
+  status: string;
+  reason: string;
+  raw: unknown;
+}
+
 export interface ListSessionEventsResponse {
   events: SessionEvent[];
-  total?: number;
-  offset?: number;
-  limit?: number;
+  total: number;
+  offset: number;
+  limit: number;
+  debug_file?: string | null;
+  debug_entries?: HistoryDebugEntry[];
 }
 
 export interface SessionEventsQuery {

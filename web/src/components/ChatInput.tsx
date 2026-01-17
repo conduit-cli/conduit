@@ -9,6 +9,7 @@ interface ChatInputProps {
   disabled?: boolean;
   placeholder?: string;
   focusKey?: string | null;
+  history?: string[];
   // Session/workspace info for status line
   modelDisplayName?: string | null;
   agentType?: 'claude' | 'codex' | 'gemini' | null;
@@ -32,6 +33,7 @@ export function ChatInput({
   disabled = false,
   placeholder = 'Type a message...',
   focusKey,
+  history = [],
   modelDisplayName,
   agentType,
   agentMode,
@@ -39,10 +41,17 @@ export function ChatInput({
   branch,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyIndexRef = useRef<number | null>(null);
+  const historyDraftRef = useRef('');
 
   useEffect(() => {
     if (!textareaRef.current) return;
     textareaRef.current.focus();
+  }, [focusKey]);
+
+  useEffect(() => {
+    historyIndexRef.current = null;
+    historyDraftRef.current = '';
   }, [focusKey]);
 
   // Auto-resize textarea
@@ -58,10 +67,69 @@ export function ChatInput({
     const trimmed = value.trim();
     if (trimmed && !disabled) {
       onSend(trimmed);
+      historyIndexRef.current = null;
+      historyDraftRef.current = '';
     }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'ArrowUp') {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      if (history.length === 0) return;
+      if (e.shiftKey) return;
+      const selectionStart = textarea.selectionStart ?? 0;
+      const selectionEnd = textarea.selectionEnd ?? 0;
+      if (selectionStart !== selectionEnd) return;
+      const isEmpty = value.length === 0;
+      const atStart = selectionStart === 0;
+      if (!isEmpty && !atStart) return;
+      e.preventDefault();
+      if (historyIndexRef.current === null) {
+        historyDraftRef.current = value;
+        historyIndexRef.current = history.length - 1;
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current -= 1;
+      }
+      const nextValue = history[historyIndexRef.current] ?? '';
+      onChange(nextValue);
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          const len = nextValue.length;
+          textareaRef.current.setSelectionRange(len, len);
+        }
+      });
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      if (historyIndexRef.current === null) return;
+      e.preventDefault();
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current += 1;
+        const nextValue = history[historyIndexRef.current] ?? '';
+        onChange(nextValue);
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            const len = nextValue.length;
+            textareaRef.current.setSelectionRange(len, len);
+          }
+        });
+      } else {
+        historyIndexRef.current = null;
+        const draftValue = historyDraftRef.current;
+        historyDraftRef.current = '';
+        onChange(draftValue);
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            const len = draftValue.length;
+            textareaRef.current.setSelectionRange(len, len);
+          }
+        });
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();

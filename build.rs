@@ -3,7 +3,6 @@
 //! When the `web` feature is enabled, this script compiles the React frontend
 //! before embedding it into the binary with rust-embed.
 
-use std::env;
 use std::path::Path;
 use std::process::Command;
 
@@ -14,11 +13,6 @@ fn main() {
     println!("cargo::rerun-if-changed=web/vite.config.ts");
     println!("cargo::rerun-if-changed=web/tailwind.config.js");
     println!("cargo::rerun-if-changed=web/index.html");
-
-    // Only build frontend when the web feature is enabled
-    if env::var("CARGO_FEATURE_WEB").is_err() {
-        return;
-    }
 
     let web_dir = Path::new("web");
 

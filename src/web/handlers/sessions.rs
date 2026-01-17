@@ -207,6 +207,20 @@ pub struct ListSessionEventsResponse {
     pub total: usize,
     pub offset: usize,
     pub limit: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_file: Option<String>,
+    #[serde(default)]
+    pub debug_entries: Vec<HistoryDebugEntryResponse>,
+}
+
+/// Debug entry for history loading (raw events view).
+#[derive(Debug, Serialize)]
+pub struct HistoryDebugEntryResponse {
+    pub line: usize,
+    pub entry_type: String,
+    pub status: String,
+    pub reason: String,
+    pub raw: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -244,21 +258,33 @@ pub async fn get_session_events(
                 total: 0,
                 offset: 0,
                 limit: 0,
+                debug_file: None,
+                debug_entries: vec![],
             }));
         }
     };
 
     // Load history based on agent type
+    let mut debug_entries = Vec::new();
+    let mut debug_file: Option<String> = None;
     let messages = match session.agent_type {
         AgentType::Claude => match load_claude_history_with_debug(&agent_session_id) {
-            Ok((msgs, _, _)) => msgs,
+            Ok((msgs, entries, file_path)) => {
+                debug_entries = entries;
+                debug_file = Some(file_path.to_string_lossy().to_string());
+                msgs
+            }
             Err(e) => {
                 tracing::warn!("Failed to load Claude history: {}", e);
                 vec![]
             }
         },
         AgentType::Codex => match load_codex_history_with_debug(&agent_session_id) {
-            Ok((msgs, _, _)) => msgs,
+            Ok((msgs, entries, file_path)) => {
+                debug_entries = entries;
+                debug_file = Some(file_path.to_string_lossy().to_string());
+                msgs
+            }
             Err(e) => {
                 tracing::warn!("Failed to load Codex history: {}", e);
                 vec![]
@@ -320,10 +346,23 @@ pub async fn get_session_events(
         })
         .collect();
 
+    let debug_entries: Vec<HistoryDebugEntryResponse> = debug_entries
+        .into_iter()
+        .map(|entry| HistoryDebugEntryResponse {
+            line: entry.line_number,
+            entry_type: entry.entry_type,
+            status: entry.status,
+            reason: entry.reason,
+            raw: entry.raw_json,
+        })
+        .collect();
+
     Ok(Json(ListSessionEventsResponse {
         events,
         total,
         offset,
         limit,
+        debug_file,
+        debug_entries,
     }))
 }

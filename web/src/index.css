@@ -108,7 +108,7 @@ code {
 /* Prose overrides for markdown content */
 .prose pre {
   background-color: var(--color-background);
-  border: 1px solid var(--color-border);
+  /* Note: Don't add border here - CodeBlock component handles its own border */
 }
 
 .prose code {

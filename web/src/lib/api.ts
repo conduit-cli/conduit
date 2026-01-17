@@ -139,20 +139,33 @@ export async function closeSession(id: string): Promise<void> {
   await request(`/sessions/${id}`, { method: 'DELETE' });
 }
 
-export async function getSessionEvents(
-  id: string,
-  query?: SessionEventsQuery
-): Promise<SessionEvent[]> {
+function buildSessionEventsQuery(query?: SessionEventsQuery) {
   const params = new URLSearchParams();
   if (query?.limit !== undefined) params.set('limit', query.limit.toString());
   if (query?.offset !== undefined) params.set('offset', query.offset.toString());
   if (query?.tail) params.set('tail', 'true');
+  return params.toString();
+}
 
-  const queryString = params.toString();
+export async function getSessionEvents(
+  id: string,
+  query?: SessionEventsQuery
+): Promise<SessionEvent[]> {
+  const queryString = buildSessionEventsQuery(query);
   const response = await request<ListSessionEventsResponse>(
     `/sessions/${id}/events${queryString ? `?${queryString}` : ''}`
   );
   return response.events;
+}
+
+export async function getSessionEventsPage(
+  id: string,
+  query?: SessionEventsQuery
+): Promise<ListSessionEventsResponse> {
+  const queryString = buildSessionEventsQuery(query);
+  return request<ListSessionEventsResponse>(
+    `/sessions/${id}/events${queryString ? `?${queryString}` : ''}`
+  );
 }
 
 // Workspace status

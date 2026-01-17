@@ -7,11 +7,22 @@ import {
   CheckCircle2,
   XCircle,
   FileCode2,
-  TerminalSquare,
   AlertTriangle,
   Loader2,
 } from 'lucide-react';
 import type { AgentEvent } from '../types';
+import { MarkdownBody } from './markdown';
+import {
+  ReadToolCard,
+  EditToolCard,
+  WriteToolCard,
+  BashToolCard,
+  GlobToolCard,
+  GrepToolCard,
+  TodoWriteToolCard,
+} from './tools';
+import type { ToolStatus } from './tools';
+import { TerminalOutput } from './TerminalOutput';
 
 interface ChatMessageProps {
   event: AgentEvent;
@@ -20,6 +31,95 @@ interface ChatMessageProps {
 function formatToolPayload(payload: unknown) {
   if (payload == null) return '';
   return typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+}
+
+// Parse tool arguments to extract relevant fields
+function parseToolArgs(args: unknown): Record<string, unknown> {
+  if (!args) return {};
+  if (typeof args === 'string') {
+    try {
+      return JSON.parse(args);
+    } catch {
+      return { raw: args };
+    }
+  }
+  if (typeof args === 'object') {
+    return args as Record<string, unknown>;
+  }
+  return {};
+}
+
+// Render tool-specific card based on tool name
+function renderToolStarted(toolName: string, args: unknown) {
+  const parsedArgs = parseToolArgs(args);
+  const status: ToolStatus = 'running';
+
+  switch (toolName) {
+    case 'Read':
+      return (
+        <ReadToolCard
+          status={status}
+          filePath={String(parsedArgs.file_path || parsedArgs.path || '')}
+        />
+      );
+    case 'Edit':
+      return (
+        <EditToolCard
+          status={status}
+          filePath={String(parsedArgs.file_path || parsedArgs.path || '')}
+        />
+      );
+    case 'Write':
+      return (
+        <WriteToolCard
+          status={status}
+          filePath={String(parsedArgs.file_path || parsedArgs.path || '')}
+        />
+      );
+    case 'Bash':
+      return (
+        <BashToolCard
+          status={status}
+          command={String(parsedArgs.command || '')}
+        />
+      );
+    case 'Glob':
+      return (
+        <GlobToolCard
+          status={status}
+          pattern={String(parsedArgs.pattern || '')}
+        />
+      );
+    case 'Grep':
+      return (
+        <GrepToolCard
+          status={status}
+          pattern={String(parsedArgs.pattern || '')}
+          path={parsedArgs.path ? String(parsedArgs.path) : undefined}
+        />
+      );
+    case 'TodoWrite':
+      return (
+        <TodoWriteToolCard
+          status={status}
+          content={JSON.stringify(parsedArgs)}
+        />
+      );
+    default:
+      // Fallback for unknown tools
+      const argsStr = formatToolPayload(args);
+      return (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+          <div className="flex items-center gap-2 text-xs font-medium text-amber-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Running tool: {toolName}</span>
+          </div>
+          {argsStr && (
+            <pre className="mt-2 text-xs text-text-muted overflow-x-auto">{argsStr}</pre>
+          )}
+        </div>
+      );
+  }
 }
 
 export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps) {
@@ -31,9 +131,7 @@ export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps
             <Sparkles className="h-4 w-4 text-accent" />
           </div>
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="prose prose-sm prose-invert max-w-none">
-              <p className="whitespace-pre-wrap break-words text-pretty text-sm text-text">{event.text}</p>
-            </div>
+            <MarkdownBody content={event.text} />
           </div>
         </div>
       );
@@ -46,63 +144,58 @@ export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-xs text-text-muted">Thinking...</p>
-            <p className="mt-1 whitespace-pre-wrap break-words text-pretty text-sm italic text-text-muted">{event.text}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-pretty text-sm italic text-text-muted">
+              {event.text}
+            </p>
           </div>
         </div>
       );
 
     case 'ToolStarted': {
-      const args = formatToolPayload(event.arguments);
       return (
         <div className="flex min-w-0 gap-3">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
             <Wand2 className="h-4 w-4 text-amber-400" />
           </div>
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-amber-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>Running tool: {event.tool_name}</span>
-            </div>
-            {args && (
-              <details className="rounded-lg border border-border bg-surface-elevated">
-                <summary className="cursor-pointer px-2 py-1 text-xs text-text-muted">View arguments</summary>
-                <pre className="border-t border-border p-2 text-xs text-text-muted">{args}</pre>
-              </details>
-            )}
+          <div className="min-w-0 flex-1">
+            {renderToolStarted(event.tool_name, event.arguments)}
           </div>
         </div>
       );
     }
 
     case 'ToolCompleted': {
-      const output = event.result ? event.result : event.error ?? '';
       const statusStyles = event.success
-        ? { container: 'bg-emerald-500/10', text: 'text-emerald-400' }
-        : { container: 'bg-red-500/10', text: 'text-red-400' };
+        ? { container: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400' }
+        : { container: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-400' };
+
+      const output = event.result ?? event.error ?? '';
 
       return (
         <div className="flex min-w-0 gap-3">
           <div className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', statusStyles.container)}>
             {event.success ? (
-              <CheckCircle2 className={cn('h-4 w-4', statusStyles.text)} />
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             ) : (
-              <XCircle className={cn('h-4 w-4', statusStyles.text)} />
+              <XCircle className="h-4 w-4 text-red-400" />
             )}
           </div>
-          <div className="min-w-0 flex-1 space-y-2">
-            <p className={cn('text-xs font-medium', statusStyles.text)}>
-              {event.success ? 'Tool completed' : 'Tool failed'}
-            </p>
-            {output && (
-              <details className="rounded-lg border border-border bg-surface-elevated">
-                <summary className="cursor-pointer px-2 py-1 text-xs text-text-muted">
-                  {event.success ? 'View output' : 'View error'}
-                </summary>
-                <pre className={cn('border-t border-border p-2 text-xs', event.success ? 'text-text-muted' : 'text-red-400')}>
+          <div className="min-w-0 flex-1">
+            <div className={cn('rounded-lg border p-3', statusStyles.container, statusStyles.border)}>
+              <p className={cn('text-xs font-medium', statusStyles.text)}>
+                {event.success ? 'Tool completed' : 'Tool failed'}
+              </p>
+              {output && (
+                <pre
+                  className={cn(
+                    'mt-2 text-xs overflow-x-auto max-h-64 overflow-y-auto',
+                    event.success ? 'text-text-muted' : 'text-red-400'
+                  )}
+                >
                   {output}
                 </pre>
-              </details>
-            )}
+              )}
+            </div>
           </div>
         </div>
       );
@@ -124,33 +217,17 @@ export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps
       );
 
     case 'CommandOutput': {
-      const exitCode = event.exit_code;
-      const exitLabel = exitCode === null ? null : `Exit ${exitCode}`;
-      const exitClass = exitCode === 0 ? 'text-emerald-400' : 'text-red-400';
-
       return (
         <div className="flex min-w-0 gap-3">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-500/10">
-            <TerminalSquare className="h-4 w-4 text-slate-400" />
+            <FileCode2 className="h-4 w-4 text-slate-400" />
           </div>
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-              <span>Command output</span>
-              {exitLabel && <span className={cn('font-semibold', exitClass)}>{exitLabel}</span>}
-            </div>
-            <details className="rounded-lg border border-border bg-surface-elevated">
-              <summary className="cursor-pointer px-2 py-1 text-xs text-text-muted">View details</summary>
-              <div className="space-y-2 border-t border-border p-2">
-                <pre className="overflow-auto rounded bg-surface px-2 py-1 text-xs text-text-muted">
-                  {event.command}
-                </pre>
-                {event.output && (
-                  <pre className="max-h-48 overflow-auto rounded bg-black/50 p-2 font-mono text-xs text-green-400">
-                    {event.output}
-                  </pre>
-                )}
-              </div>
-            </details>
+          <div className="min-w-0 flex-1">
+            <TerminalOutput
+              command={event.command}
+              output={event.output}
+              exitCode={event.exit_code}
+            />
           </div>
         </div>
       );

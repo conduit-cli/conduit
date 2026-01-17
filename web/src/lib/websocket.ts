@@ -21,6 +21,7 @@ export class ConduitWebSocket {
   private reconnectTimeout: number | null = null;
   private pingInterval: number | null = null;
   private messageHandlers: Map<string, Set<(event: AgentEvent) => void>> = new Map();
+  private activeSubscriptions: Set<string> = new Set();
 
   constructor(url: string, options: WebSocketOptions = {}) {
     this.url = url;
@@ -46,6 +47,7 @@ export class ConduitWebSocket {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.startPing();
+      this.resubscribeAll();
       this.options.onConnect?.();
     };
 
@@ -99,7 +101,7 @@ export class ConduitWebSocket {
     this.messageHandlers.get(sessionId)!.add(handler);
 
     // Send subscribe message
-    this.send({ type: 'subscribe', session_id: sessionId });
+    this.subscribeIfConnected(sessionId);
 
     // Return unsubscribe function
     return () => {
@@ -108,7 +110,10 @@ export class ConduitWebSocket {
         handlers.delete(handler);
         if (handlers.size === 0) {
           this.messageHandlers.delete(sessionId);
-          this.send({ type: 'unsubscribe', session_id: sessionId });
+          if (this.activeSubscriptions.has(sessionId)) {
+            this.activeSubscriptions.delete(sessionId);
+            this.send({ type: 'unsubscribe', session_id: sessionId });
+          }
         }
       }
     };
@@ -151,6 +156,29 @@ export class ConduitWebSocket {
       if (handlers) {
         handlers.forEach((handler) => handler(message.event));
       }
+    }
+  }
+
+  private isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  private subscribeIfConnected(sessionId: string): void {
+    if (!this.isConnected() || this.activeSubscriptions.has(sessionId)) {
+      return;
+    }
+    this.send({ type: 'subscribe', session_id: sessionId });
+    this.activeSubscriptions.add(sessionId);
+  }
+
+  private resubscribeAll(): void {
+    if (!this.isConnected()) {
+      return;
+    }
+    this.activeSubscriptions.clear();
+    for (const sessionId of this.messageHandlers.keys()) {
+      this.send({ type: 'subscribe', session_id: sessionId });
+      this.activeSubscriptions.add(sessionId);
     }
   }
 

@@ -215,10 +215,6 @@ export function useRawSessionEvents(sessionId: string | null, enabled = true): A
     }
 
     const handleEvent = (event: AgentEvent) => {
-      if (event.type !== 'Raw') {
-        return;
-      }
-
       setEvents((prev) => {
         const next = [...prev, event];
         if (next.length > MAX_RAW_EVENTS) {

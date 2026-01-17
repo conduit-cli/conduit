@@ -33,6 +33,34 @@ pub struct SessionManager {
     core: Arc<RwLock<ConduitCore>>,
 }
 
+async fn persist_agent_session_id(
+    core: &Arc<RwLock<ConduitCore>>,
+    session_id: Uuid,
+    agent_session_id: &str,
+) -> Result<(), String> {
+    let store = {
+        let core = core.read().await;
+        core.session_tab_store_clone()
+            .ok_or_else(|| "Database not available".to_string())?
+    };
+
+    let mut tab = store
+        .get_by_id(session_id)
+        .map_err(|e| format!("Failed to get session {}: {}", session_id, e))?
+        .ok_or_else(|| format!("Session {} not found in database", session_id))?;
+
+    if tab.agent_session_id.as_deref() == Some(agent_session_id) {
+        return Ok(());
+    }
+
+    tab.agent_session_id = Some(agent_session_id.to_string());
+    store
+        .update(&tab)
+        .map_err(|e| format!("Failed to update session {}: {}", session_id, e))?;
+
+    Ok(())
+}
+
 impl SessionManager {
     pub fn new(core: Arc<RwLock<ConduitCore>>) -> Self {
         Self {
@@ -104,10 +132,30 @@ impl SessionManager {
 
         // Spawn task to forward events from agent to broadcast channel
         let sessions_ref = self.sessions.clone();
+        let core_ref = self.core.clone();
         tokio::spawn(async move {
             while let Some(event) = handle.events.recv().await {
-                // Try to send, ignore errors (no subscribers)
-                let _ = event_tx.send(event);
+                if let AgentEvent::SessionInit(init) = &event {
+                    if let Err(error) =
+                        persist_agent_session_id(&core_ref, session_id, init.session_id.as_str())
+                            .await
+                    {
+                        tracing::warn!(
+                            %session_id,
+                            agent_session_id = %init.session_id,
+                            error = %error,
+                            "Failed to persist agent session id"
+                        );
+                    }
+                }
+
+                if let Err(error) = event_tx.send(event) {
+                    tracing::debug!(
+                        %session_id,
+                        error = %error,
+                        "No active subscribers for agent events"
+                    );
+                }
             }
             // Session ended, remove from map
             let mut sessions = sessions_ref.write().await;

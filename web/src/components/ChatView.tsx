@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { HistoryMessage } from './HistoryMessage';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
-import {
-  useSessionEvents,
-  useWebSocket,
-  useSessionEventsFromApi,
-  useWorkspace,
-  useWorkspaceStatus,
-  useRawSessionEvents,
-} from '../hooks';
-import type { Session, UserQuestion } from '../types';
+import { RawEventsPanel } from './RawEventsPanel';
+import { useSessionEvents, useWebSocket, useWorkspace, useWorkspaceStatus, useRawSessionEvents } from '../hooks';
+import { getSessionEventsPage } from '../lib/api';
+import type { Session, UserQuestion, SessionEvent, HistoryDebugEntry, AgentEvent } from '../types';
 import { MessageSquarePlus, Loader2, Bug } from 'lucide-react';
 import { cn } from '../lib/cn';
 
@@ -22,6 +17,47 @@ interface ChatViewProps {
 }
 
 const INLINE_PROMPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+function buildHistoryRawEvents(
+  debugEntries: HistoryDebugEntry[] | undefined,
+  debugFile: string | null | undefined,
+  historyEventCount: number
+): AgentEvent[] {
+  const entries = debugEntries ?? [];
+  const shouldInclude =
+    debugFile !== undefined || debugEntries !== undefined || historyEventCount > 0;
+  if (!shouldInclude) return [];
+  const included = entries.filter((entry) => entry.status === 'INCLUDE').length;
+  const skipped = entries.filter((entry) => entry.status === 'SKIP').length;
+  const events: AgentEvent[] = [
+    {
+      type: 'Raw',
+      data: {
+        type: 'history_load',
+        file: debugFile ?? null,
+        total_entries: entries.length,
+        included,
+        skipped,
+      },
+    },
+  ];
+
+  entries.forEach((entry) => {
+    events.push({
+      type: 'Raw',
+      data: {
+        type: `L${entry.line} ${entry.status} ${entry.entry_type}`,
+        line: entry.line,
+        entry_type: entry.entry_type,
+        status: entry.status,
+        reason: entry.reason,
+        raw: entry.raw,
+      },
+    });
+  });
+
+  return events;
+}
 
 function normalizeQuestions(questions: UserQuestion[]): UserQuestion[] {
   return questions.map((question, index) => {
@@ -86,16 +122,16 @@ function buildExitPlanUpdatedInput(plan: string) {
 
 export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const pendingScrollAdjustment = useRef<{ previousHeight: number; previousTop: number } | null>(null);
+  const isPrependingHistory = useRef(false);
+  const isPinnedToBottom = useRef(true);
   const { sendPrompt, respondToControl } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
-  const [historyReady, setHistoryReady] = useState(false);
-  const { data: historyEvents = [], isLoading: isLoadingHistory } = useSessionEventsFromApi(
-    session?.id ?? null,
-    {
-      enabled: historyReady && !!session?.id,
-      query: { tail: true, limit: 200 },
-    }
-  );
+  const [historyEvents, setHistoryEvents] = useState<SessionEvent[]>([]);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const { data: workspace } = useWorkspace(session?.workspace_id ?? '');
   const { data: status } = useWorkspaceStatus(session?.workspace_id ?? null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -108,10 +144,104 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, string[]>>({});
   const lastHistoryUserCount = useRef<Record<string, number>>({});
   const lastHistoryEventCount = useRef<Record<string, number>>({});
-  const rawEvents = useRawSessionEvents(session?.id ?? null, showRawEvents);
+  const [historyRawEvents, setHistoryRawEvents] = useState<AgentEvent[]>([]);
+  const rawEvents = useRawSessionEvents(session?.id ?? null, true);
+
+  const historyLimit = 200;
+  const hasMoreHistory = historyOffset > 0;
 
   useEffect(() => {
-    setHistoryReady(true);
+    let isActive = true;
+
+    setHistoryEvents([]);
+    setHistoryOffset(0);
+    setIsLoadingMore(false);
+    setHistoryRawEvents([]);
+
+    if (!session?.id) {
+      setIsLoadingHistory(false);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    setIsLoadingHistory(true);
+    getSessionEventsPage(session.id, { tail: true, limit: historyLimit })
+      .then((response) => {
+        if (!isActive) return;
+        setHistoryEvents(response.events);
+        setHistoryOffset(response.offset);
+        setHistoryRawEvents(
+          buildHistoryRawEvents(
+            response.debug_entries,
+            response.debug_file,
+            response.events.length
+          )
+        );
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setHistoryEvents([]);
+        setHistoryOffset(0);
+      })
+      .finally(() => {
+        if (!isActive) return;
+        setIsLoadingHistory(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [session?.id, historyLimit]);
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!session?.id || isLoadingMore || historyOffset === 0) return;
+
+    const nextOffset = Math.max(0, historyOffset - historyLimit);
+    const container = scrollContainerRef.current;
+    if (container) {
+      pendingScrollAdjustment.current = {
+        previousHeight: container.scrollHeight,
+        previousTop: container.scrollTop,
+      };
+    }
+    isPrependingHistory.current = true;
+    setIsLoadingMore(true);
+
+    try {
+      const response = await getSessionEventsPage(session.id, {
+        offset: nextOffset,
+        limit: historyLimit,
+      });
+      setHistoryEvents((prev) => [...response.events, ...prev]);
+      setHistoryOffset(response.offset);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [historyLimit, historyOffset, isLoadingMore, session?.id]);
+
+  useLayoutEffect(() => {
+    if (!pendingScrollAdjustment.current || !scrollContainerRef.current) return;
+    const { previousHeight, previousTop } = pendingScrollAdjustment.current;
+    const container = scrollContainerRef.current;
+    const newHeight = container.scrollHeight;
+    container.scrollTop = previousTop + (newHeight - previousHeight);
+    pendingScrollAdjustment.current = null;
+    isPrependingHistory.current = false;
+  }, [historyEvents]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const updatePinnedState = () => {
+      const distanceFromBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
+      isPinnedToBottom.current = distanceFromBottom < 48;
+    };
+
+    updatePinnedState();
+    container.addEventListener('scroll', updatePinnedState, { passive: true });
+    return () => container.removeEventListener('scroll', updatePinnedState);
   }, []);
 
   // Track processing state based on websocket events
@@ -158,13 +288,35 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showRawEvents]);
 
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const sentinel = topSentinelRef.current;
+    if (!container || !sentinel || !hasMoreHistory) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMoreHistory();
+        }
+      },
+      {
+        root: container,
+        rootMargin: '150px 0px 0px 0px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreHistory, loadMoreHistory]);
+
   // Reset scroll state when session changes
   useEffect(() => {
     setHasInitiallyScrolled(false);
   }, [session?.id]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || historyEvents.length === 0) return;
 
     const userCount = historyEvents.filter((event) => event.role === 'user').length;
     const previousCount = lastHistoryUserCount.current[session.id] ?? 0;
@@ -207,24 +359,29 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     }
   }, [historyEvents, session, isProcessing, isAwaitingResponse]);
 
-  // Scroll to bottom - instant for initial load, smooth for new messages
+  const draftValue = session ? drafts[session.id] ?? '' : '';
+  const optimisticUserMessages = session ? optimisticMessages[session.id] ?? [] : [];
+
+  // Scroll to bottom - instant for initial load, follow new messages when pinned
   useEffect(() => {
     if (!scrollContainerRef.current) return;
+    if (isPrependingHistory.current) return;
 
     const container = scrollContainerRef.current;
 
     // Initial scroll when history loads - instant, no animation
-    if (historyEvents.length > 0 && !hasInitiallyScrolled) {
+    if ((historyEvents.length > 0 || wsEvents.length > 0 || optimisticUserMessages.length > 0) && !hasInitiallyScrolled) {
       container.scrollTop = container.scrollHeight;
       setHasInitiallyScrolled(true);
+      isPinnedToBottom.current = true;
       return;
     }
 
-    // Smooth scroll for new WebSocket messages
-    if (wsEvents.length > 0 && hasInitiallyScrolled) {
-      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-    }
-  }, [wsEvents, historyEvents, hasInitiallyScrolled]);
+    if (!hasInitiallyScrolled || !isPinnedToBottom.current) return;
+
+    const behavior = isProcessing ? 'auto' : 'smooth';
+    container.scrollTo({ top: container.scrollHeight, behavior });
+  }, [wsEvents, historyEvents, optimisticUserMessages.length, hasInitiallyScrolled, isProcessing]);
 
   useEffect(() => {
     if (!session || wsEvents.length === 0) return;
@@ -345,8 +502,15 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   };
 
   const visibleWsEvents = useMemo(
-    () =>
-      wsEvents.filter((event) => {
+    () => {
+      const toolIdToName = new Map<string, string>();
+      wsEvents.forEach((event) => {
+        if (event.type === 'ToolStarted') {
+          toolIdToName.set(event.tool_id, event.tool_name);
+        }
+      });
+
+      return wsEvents.filter((event) => {
         if (
           event.type === 'SessionInit' ||
           event.type === 'Raw' ||
@@ -359,21 +523,40 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         if (event.type === 'ToolStarted' && INLINE_PROMPT_TOOLS.has(event.tool_name)) {
           return false;
         }
+        if (event.type === 'ToolStarted' && event.tool_name === 'Bash') {
+          return false;
+        }
+        if (
+          event.type === 'ToolCompleted' &&
+          toolIdToName.get(event.tool_id) === 'Bash'
+        ) {
+          return false;
+        }
         if (inlinePrompt && event.type === 'ToolCompleted' && event.tool_id === inlinePrompt.toolUseId) {
           return false;
         }
         return true;
-      }),
+      });
+    },
     [wsEvents, inlinePrompt]
   );
 
   // Check if we have content to display
   const hasHistory = historyEvents.length > 0;
   const hasWsEvents = visibleWsEvents.length > 0;
-  const draftValue = session ? drafts[session.id] ?? '' : '';
-  const optimisticUserMessages = session ? optimisticMessages[session.id] ?? [] : [];
   const hasOptimisticMessages = optimisticUserMessages.length > 0;
   const hasContent = hasHistory || hasWsEvents || hasOptimisticMessages;
+  const rawEventsForView = useMemo(() => {
+    const liveEvents = rawEvents.length > 0 ? rawEvents : wsEvents;
+    return [...historyRawEvents, ...liveEvents];
+  }, [historyRawEvents, rawEvents, wsEvents]);
+  const userMessageHistory = useMemo(() => {
+    if (!session) return [];
+    const historyMessages = historyEvents
+      .filter((event) => event.role === 'user')
+      .map((event) => event.content);
+    return [...historyMessages, ...optimisticUserMessages];
+  }, [historyEvents, optimisticUserMessages, session]);
 
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
@@ -442,12 +625,15 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {(isProcessing || isLoadingHistory) && (
-            <div className="flex items-center gap-2 text-sm text-text-muted">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{isLoadingHistory ? 'Loading history...' : 'Processing...'}</span>
-            </div>
-          )}
+        {(isProcessing || isLoadingHistory || isLoadingMore) && (
+          <div className="flex items-center gap-2 text-sm text-text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>
+              {isLoadingHistory || isLoadingMore ? 'Loading history...' : 'Processing...'}
+            </span>
+          </div>
+        )}
+
           <button
             onClick={() => setShowRawEvents((prev) => !prev)}
             className={cn(
@@ -471,11 +657,15 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
           </div>
         ) : (
           <div className="min-w-0 space-y-4">
-            {isLoadingHistory && (
+            <div ref={topSentinelRef} />
+            {(isLoadingHistory || isLoadingMore) && (
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Loading history…</span>
+                <span>{isLoadingMore ? 'Loading older messages…' : 'Loading history…'}</span>
               </div>
+            )}
+            {!isLoadingHistory && !hasMoreHistory && historyEvents.length > 0 && (
+              <div className="text-xs text-text-muted">Start of history</div>
             )}
             {/* Historical messages from API */}
             {historyEvents.map((event, index) => (
@@ -502,33 +692,10 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
       </div>
 
       {showRawEvents && (
-        <div className="absolute right-0 top-0 z-10 flex h-full w-full max-w-md flex-col border-l border-border bg-surface shadow-xl">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <div className="text-sm font-medium text-text">Raw events</div>
-            <button
-              onClick={() => setShowRawEvents(false)}
-              className="text-xs text-text-muted hover:text-text"
-            >
-              Close
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3">
-            {rawEvents.length === 0 ? (
-              <p className="text-xs text-text-muted">No raw events captured.</p>
-            ) : (
-              <div className="space-y-2">
-                {rawEvents.map((event, index) => (
-                  <pre
-                    key={`raw-${index}`}
-                    className="rounded-lg border border-border bg-surface-elevated p-2 text-xs text-text-muted"
-                  >
-                    {JSON.stringify(event, null, 2)}
-                  </pre>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <RawEventsPanel
+          events={rawEventsForView}
+          onClose={() => setShowRawEvents(false)}
+        />
       )}
 
       {/* Input area */}
@@ -539,6 +706,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         disabled={isProcessing}
         placeholder={isProcessing ? 'Waiting for response...' : 'Type a message...'}
         focusKey={session?.id ?? null}
+        history={userMessageHistory}
         modelDisplayName={session?.model_display_name}
         agentType={session?.agent_type}
         agentMode={session?.agent_mode}
