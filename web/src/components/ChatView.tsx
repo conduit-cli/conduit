@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } fr
 import { HistoryMessage } from './HistoryMessage';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
+import { QueuePanel } from './QueuePanel';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
 import { RawEventsPanel } from './RawEventsPanel';
 import { ModelSelectorDialog } from './ModelSelectorDialog';
@@ -13,19 +14,59 @@ import {
   useRawSessionEvents,
   useUpdateSession,
   useSetDefaultModel,
+  useSessionQueue,
+  useAddQueueMessage,
+  useUpdateQueueMessage,
+  useDeleteQueueMessage,
+  useSessionHistory,
+  useForkSession,
+  useCreateWorkspacePr,
 } from '../hooks';
 import { getSessionEventsPage } from '../lib/api';
-import type { Session, UserQuestion, SessionEvent, HistoryDebugEntry, AgentEvent } from '../types';
-import { MessageSquarePlus, Loader2, Bug } from 'lucide-react';
+import type {
+  Session,
+  UserQuestion,
+  SessionEvent,
+  HistoryDebugEntry,
+  AgentEvent,
+  QueuedMessage,
+  ImageAttachment,
+} from '../types';
+import { MessageSquarePlus, Loader2, Bug, GitBranch, GitPullRequest } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 interface ChatViewProps {
   session: Session | null;
   onNewSession?: () => void;
   isLoadingSession?: boolean;
+  onForkedSession?: (session: Session, workspace: { id: string }) => void;
 }
 
 const INLINE_PROMPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+type ImageDraft = {
+  id: string;
+  file: File;
+  previewUrl: string;
+};
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function parseImageDataUrl(dataUrl: string, fallbackType: string): ImageAttachment {
+  if (dataUrl.startsWith('data:')) {
+    const [meta, data] = dataUrl.split(',');
+    const mediaType = meta?.split(';')[0]?.replace('data:', '') || fallbackType;
+    return { data, media_type: mediaType };
+  }
+  return { data: dataUrl, media_type: fallbackType || 'application/octet-stream' };
+}
 
 function buildHistoryRawEvents(
   debugEntries: HistoryDebugEntry[] | undefined,
@@ -129,7 +170,12 @@ function buildExitPlanUpdatedInput(plan: string) {
   return { plan };
 }
 
-export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewProps) {
+export function ChatView({
+  session,
+  onNewSession,
+  isLoadingSession,
+  onForkedSession,
+}: ChatViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const pendingScrollAdjustment = useRef<{ previousHeight: number; previousTop: number } | null>(null);
@@ -139,12 +185,19 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
   const setDefaultModelMutation = useSetDefaultModel();
+  const forkSessionMutation = useForkSession();
+  const createPrMutation = useCreateWorkspacePr();
   const [historyEvents, setHistoryEvents] = useState<SessionEvent[]>([]);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const { data: workspace } = useWorkspace(session?.workspace_id ?? '');
   const { data: status } = useWorkspaceStatus(session?.workspace_id ?? null);
+  const { data: inputHistory } = useSessionHistory(session?.id ?? null);
+  const { data: queueData } = useSessionQueue(session?.id ?? null);
+  const addQueueMutation = useAddQueueMessage();
+  const updateQueueMutation = useUpdateQueueMessage();
+  const deleteQueueMutation = useDeleteQueueMessage();
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
   const [hasInitiallyScrolled, setHasInitiallyScrolled] = useState(false);
@@ -154,6 +207,9 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const [showModelSelector, setShowModelSelector] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, string[]>>({});
+  const [attachmentsBySession, setAttachmentsBySession] = useState<Record<string, ImageDraft[]>>(
+    {}
+  );
   const lastHistoryUserCount = useRef<Record<string, number>>({});
   const lastHistoryEventCount = useRef<Record<string, number>>({});
   const [historyRawEvents, setHistoryRawEvents] = useState<AgentEvent[]>([]);
@@ -284,6 +340,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     setShowRawEvents(false);
     setIsAwaitingResponse(false);
   }, [session?.id]);
+
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -455,13 +512,136 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
 
   const handleSend = (message: string) => {
     if (!session || !workspace) return;
+    void sendWithAttachments(message);
+  };
+
+  const buildImagePayload = useCallback(async (attachments: ImageDraft[]) => {
+    if (attachments.length === 0) return [];
+    const payloads = await Promise.all(
+      attachments.map(async (attachment) => {
+        const dataUrl = await readFileAsDataUrl(attachment.file);
+        return parseImageDataUrl(dataUrl, attachment.file.type);
+      })
+    );
+    return payloads;
+  }, []);
+
+  const handleAttachImages = (files: File[]) => {
+    if (!session) return;
+    const next = files
+      .filter((file) => file.type.startsWith('image/'))
+      .map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+    if (next.length === 0) return;
+    setAttachmentsBySession((prev) => {
+      const current = prev[session.id] ?? [];
+      return { ...prev, [session.id]: [...current, ...next] };
+    });
+  };
+
+  const handleRemoveAttachment = (attachmentId: string) => {
+    if (!session) return;
+    setAttachmentsBySession((prev) => {
+      const current = prev[session.id] ?? [];
+      const remaining = current.filter((attachment) => {
+        if (attachment.id === attachmentId) {
+          URL.revokeObjectURL(attachment.previewUrl);
+          return false;
+        }
+        return true;
+      });
+      return { ...prev, [session.id]: remaining };
+    });
+  };
+
+  const clearAttachments = (sessionId: string) => {
+    setAttachmentsBySession((prev) => {
+      const current = prev[sessionId] ?? [];
+      current.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
+      if (current.length === 0) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!session?.id) return;
+    return () => {
+      clearAttachments(session.id);
+    };
+  }, [session?.id]);
+
+  const sendWithAttachments = async (message: string) => {
+    if (!session || !workspace) return;
+
+    let images: ImageAttachment[] = [];
+    try {
+      images = await buildImagePayload(currentAttachments);
+    } catch (error) {
+      console.error('Failed to encode images', error);
+      return;
+    }
+    if (message.trim().length === 0 && images.length === 0) {
+      return;
+    }
+
+    if (message.trim().length > 0) {
+      setOptimisticMessages((prev) => ({
+        ...prev,
+        [session.id]: [...(prev[session.id] ?? []), message],
+      }));
+    }
+
+    setIsAwaitingResponse(true);
+    sendPrompt(session.id, message, workspace.path, session.model ?? undefined, false, images);
+    setDrafts((prev) => ({ ...prev, [session.id]: '' }));
+    clearAttachments(session.id);
+  };
+
+  const handleQueue = (message: string) => {
+    if (!session) return;
+    addQueueMutation.mutate(
+      {
+        id: session.id,
+        data: {
+          mode: 'follow-up',
+          text: message,
+          images: [],
+        },
+      },
+      {
+        onSuccess: () => {
+          setDrafts((prev) => ({ ...prev, [session.id]: '' }));
+        },
+      }
+    );
+  };
+
+  const handleSendQueued = (queued: QueuedMessage) => {
+    if (!session || !workspace) return;
     setOptimisticMessages((prev) => ({
       ...prev,
-      [session.id]: [...(prev[session.id] ?? []), message],
+      [session.id]: [...(prev[session.id] ?? []), queued.text],
     }));
     setIsAwaitingResponse(true);
-    sendPrompt(session.id, message, workspace.path, session.model ?? undefined);
-    setDrafts((prev) => ({ ...prev, [session.id]: '' }));
+    sendPrompt(session.id, queued.text, workspace.path, session.model ?? undefined);
+    deleteQueueMutation.mutate({ id: session.id, messageId: queued.id });
+  };
+
+  const handleRemoveQueued = (messageId: string) => {
+    if (!session) return;
+    deleteQueueMutation.mutate({ id: session.id, messageId });
+  };
+
+  const handleMoveQueued = (messageId: string, position: number) => {
+    if (!session) return;
+    updateQueueMutation.mutate({ id: session.id, messageId, data: { position } });
   };
 
   const handleDraftChange = (value: string) => {
@@ -564,17 +744,23 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   }, [historyRawEvents, rawEvents, wsEvents]);
   const userMessageHistory = useMemo(() => {
     if (!session) return [];
+    if (inputHistory?.history?.length) {
+      return [...inputHistory.history, ...optimisticUserMessages];
+    }
     const historyMessages = historyEvents
       .filter((event) => event.role === 'user')
       .map((event) => event.content);
     return [...historyMessages, ...optimisticUserMessages];
-  }, [historyEvents, optimisticUserMessages, session]);
+  }, [historyEvents, optimisticUserMessages, session, inputHistory]);
 
   // Can only change model if session hasn't started (no agent_session_id) and not processing
   const canChangeModel = !session?.agent_session_id && !isProcessing;
   const canChangeMode =
     session?.agent_type === 'claude' && !session?.agent_session_id && !isProcessing;
   const effectiveAgentMode = session?.agent_mode ?? 'build';
+  const queuedMessages = queueData?.messages ?? [];
+  const canSendQueued = !!session && !!workspace && !isProcessing;
+  const currentAttachments = session ? attachmentsBySession[session.id] ?? [] : [];
 
   const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
     if (!session) return;
@@ -605,6 +791,72 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     const nextMode = effectiveAgentMode === 'plan' ? 'build' : 'plan';
     updateSessionMutation.mutate({ id: session.id, data: { agent_mode: nextMode } });
   }, [effectiveAgentMode, session, updateSessionMutation]);
+
+  const handleForkSession = useCallback(() => {
+    if (!session) return;
+    forkSessionMutation.mutate(session.id, {
+      onSuccess: (response) => {
+        if (onForkedSession) {
+          onForkedSession(response.session, response.workspace);
+        }
+        if (response.warnings.length > 0) {
+          window.alert(`Fork warnings:\n${response.warnings.join('\n')}`);
+        }
+        sendPrompt(
+          response.session.id,
+          response.seed_prompt,
+          response.workspace.path,
+          response.session.model ?? undefined,
+          true
+        );
+      },
+    });
+  }, [forkSessionMutation, onForkedSession, sendPrompt, session]);
+
+  const handleCreatePr = useCallback(() => {
+    if (!session || !workspace) return;
+    createPrMutation.mutate(workspace.id, {
+      onSuccess: (response) => {
+        const preflight = response.preflight;
+        if (!preflight.gh_installed) {
+          window.alert('GitHub CLI (gh) is required to create PRs.');
+          return;
+        }
+        if (!preflight.gh_authenticated) {
+          window.alert('GitHub CLI is not authenticated. Run: gh auth login');
+          return;
+        }
+        if (preflight.on_main_branch) {
+          window.alert(
+            `You are on ${preflight.branch_name}. Create a feature branch before opening a PR.`
+          );
+          return;
+        }
+        if (preflight.existing_pr?.url) {
+          window.alert(`PR already exists: ${preflight.existing_pr.url}`);
+          return;
+        }
+
+        const warnings: string[] = [];
+        if (preflight.uncommitted_count > 0) {
+          warnings.push(`${preflight.uncommitted_count} file(s) will be auto-committed`);
+        }
+        if (!preflight.has_upstream) {
+          warnings.push('Branch will be pushed to remote');
+        }
+        if (warnings.length > 0) {
+          const proceed = window.confirm(`Create PR?\n\n${warnings.join('\n')}`);
+          if (!proceed) return;
+        }
+        sendPrompt(
+          session.id,
+          response.prompt,
+          workspace.path,
+          session.model ?? undefined
+        );
+      },
+    });
+  }, [createPrMutation, sendPrompt, session, workspace]);
 
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
@@ -700,6 +952,36 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
           )}
 
           <button
+            onClick={handleForkSession}
+            disabled={!session?.workspace_id || isProcessing || forkSessionMutation.isPending}
+            className={cn(
+              'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
+              'text-text-muted hover:bg-surface-elevated hover:text-text',
+              (!session?.workspace_id || isProcessing || forkSessionMutation.isPending) &&
+                'cursor-not-allowed opacity-50'
+            )}
+            aria-label="Fork session"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Fork
+          </button>
+
+          <button
+            onClick={handleCreatePr}
+            disabled={!session?.workspace_id || isProcessing || createPrMutation.isPending}
+            className={cn(
+              'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
+              'text-text-muted hover:bg-surface-elevated hover:text-text',
+              (!session?.workspace_id || isProcessing || createPrMutation.isPending) &&
+                'cursor-not-allowed opacity-50'
+            )}
+            aria-label="Create pull request"
+          >
+            <GitPullRequest className="h-3.5 w-3.5" />
+            PR
+          </button>
+
+          <button
             onClick={() => setShowRawEvents((prev) => !prev)}
             className={cn(
               'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
@@ -763,12 +1045,23 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         />
       )}
 
+      <QueuePanel
+        messages={queuedMessages}
+        canSend={canSendQueued}
+        onSend={handleSendQueued}
+        onRemove={handleRemoveQueued}
+        onMove={handleMoveQueued}
+      />
+
       {/* Input area */}
       <ChatInput
         onSend={handleSend}
+        onQueue={handleQueue}
         value={draftValue}
         onChange={handleDraftChange}
-        disabled={isProcessing}
+        inputDisabled={false}
+        sendDisabled={isProcessing || !workspace}
+        queueDisabled={!session || currentAttachments.length > 0}
         placeholder={isProcessing ? 'Waiting for response...' : 'Type a message...'}
         focusKey={session?.id ?? null}
         history={userMessageHistory}
@@ -779,6 +1072,13 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         branch={workspace?.branch}
         onModelClick={() => setShowModelSelector(true)}
         canChangeModel={canChangeModel}
+        attachments={currentAttachments.map((attachment) => ({
+          id: attachment.id,
+          previewUrl: attachment.previewUrl,
+          name: attachment.file.name,
+        }))}
+        onAttachImages={handleAttachImages}
+        onRemoveAttachment={handleRemoveAttachment}
       />
 
       {/* Model selector dialog */}

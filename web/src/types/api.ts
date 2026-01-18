@@ -119,12 +119,48 @@ export interface SessionEventsQuery {
   tail?: boolean;
 }
 
+export interface InputHistoryResponse {
+  history: string[];
+}
+
 export interface BootstrapResponse {
   ui_state: UiState;
   sessions: Session[];
   workspaces: Workspace[];
   active_session: Session | null;
   active_workspace: Workspace | null;
+}
+
+export interface ExternalSession {
+  id: string;
+  agent_type: 'claude' | 'codex' | 'gemini';
+  display: string;
+  project?: string | null;
+  project_name?: string | null;
+  timestamp: string;
+  relative_time: string;
+  message_count: number;
+  file_path: string;
+}
+
+export interface ListExternalSessionsResponse {
+  sessions: ExternalSession[];
+}
+
+export interface ImportExternalSessionResponse {
+  session: Session;
+  workspace?: Workspace;
+  repository?: Repository;
+}
+
+export interface ForkSessionResponse {
+  session: Session;
+  workspace: Workspace;
+  warnings: string[];
+  token_estimate: number;
+  context_window: number;
+  usage_percent: number;
+  seed_prompt: string;
 }
 
 export interface GitDiffStats {
@@ -138,12 +174,65 @@ export interface PrStatus {
   state: 'open' | 'merged' | 'closed' | 'draft' | 'unknown';
   checks_passing: boolean;
   url?: string;
+  merge_readiness?: 'ready' | 'blocked' | 'has_conflicts' | 'unknown';
+  checks_total?: number;
+  checks_passed?: number;
+  checks_failed?: number;
+  checks_pending?: number;
+  checks_skipped?: number;
+  mergeable?: 'mergeable' | 'conflicting' | 'unknown';
+  review_decision?: 'approved' | 'review_required' | 'changes_requested' | 'none';
 }
 
 export interface WorkspaceStatus {
   git_stats?: GitDiffStats;
   pr_status?: PrStatus;
   updated_at?: string;
+}
+
+export interface PrPreflightResponse {
+  gh_installed: boolean;
+  gh_authenticated: boolean;
+  on_main_branch: boolean;
+  branch_name: string;
+  target_branch: string;
+  uncommitted_count: number;
+  has_upstream: boolean;
+  existing_pr?: PrStatus;
+}
+
+export interface PrCreateResponse {
+  preflight: PrPreflightResponse;
+  prompt: string;
+}
+
+export interface QueuedImageAttachment {
+  path: string;
+  placeholder: string;
+}
+
+export interface QueuedMessage {
+  id: string;
+  mode: 'steer' | 'follow-up';
+  text: string;
+  images: QueuedImageAttachment[];
+  created_at: string;
+}
+
+export interface SessionQueueResponse {
+  messages: QueuedMessage[];
+}
+
+export interface AddQueueMessageRequest {
+  mode: 'steer' | 'follow-up';
+  text: string;
+  images?: QueuedImageAttachment[];
+}
+
+export interface UpdateQueueMessageRequest {
+  text?: string;
+  mode?: 'steer' | 'follow-up';
+  position?: number;
 }
 
 export interface UiState {

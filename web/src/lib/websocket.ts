@@ -1,6 +1,6 @@
 // WebSocket client for real-time agent communication
 
-import type { ClientMessage, ServerMessage, AgentEvent } from '../types';
+import type { ClientMessage, ServerMessage, AgentEvent, ImageAttachment } from '../types';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -120,19 +120,28 @@ export class ConduitWebSocket {
   }
 
   // Start a new session
-  startSession(sessionId: string, prompt: string, workingDir: string, model?: string): void {
+  startSession(
+    sessionId: string,
+    prompt: string,
+    workingDir: string,
+    model?: string,
+    hidden?: boolean,
+    images?: ImageAttachment[]
+  ): void {
     this.send({
       type: 'start_session',
       session_id: sessionId,
       prompt,
       working_dir: workingDir,
       model,
+      hidden,
+      images,
     });
   }
 
   // Send input to a running session
-  sendInput(sessionId: string, input: string): void {
-    this.send({ type: 'send_input', session_id: sessionId, input });
+  sendInput(sessionId: string, input: string, hidden?: boolean, images?: ImageAttachment[]): void {
+    this.send({ type: 'send_input', session_id: sessionId, input, hidden, images });
   }
 
   // Stop a session

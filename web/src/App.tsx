@@ -1,6 +1,8 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout, ChatView } from './components';
+import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
+import { SessionImportDialog } from './components/SessionImportDialog';
 import { WebSocketProvider, ThemeProvider } from './hooks';
 import {
   useBootstrap,
@@ -81,6 +83,8 @@ function AppContent() {
   const [autoCreateEnabled, setAutoCreateEnabled] = useState(true);
   const [suppressedWorkspaceIds, setSuppressedWorkspaceIds] = useState<Set<string>>(new Set());
   const [historyReady, setHistoryReady] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const previousActiveSessionId = useRef<string | null>(null);
   const bootstrapApplied = useRef(false);
 
@@ -293,7 +297,62 @@ function AppContent() {
     console.log('New session requested');
   };
 
+  const handleOpenImport = () => {
+    setIsImportDialogOpen(true);
+  };
+
+  const handleImportedSession = (session: Session) => {
+    setActiveSessionId(session.id);
+    updateUiState.mutate({ active_session_id: session.id });
+
+    if (session.workspace_id) {
+      setSelectedWorkspaceId(session.workspace_id);
+      updateUiState.mutate({ last_workspace_id: session.workspace_id });
+    }
+
+    const currentOrder = resolvedUiState?.tab_order ?? [];
+    if (!currentOrder.includes(session.id)) {
+      updateUiState.mutate({ tab_order: [...currentOrder, session.id] });
+    }
+  };
+
+  const commands = useMemo<CommandPaletteItem[]>(
+    () => [
+      {
+        id: 'toggle-sidebar',
+        label: isSidebarOpen ? 'Hide Sidebar' : 'Show Sidebar',
+        shortcut: 'Ctrl+B',
+        onSelect: handleToggleSidebar,
+      },
+      {
+        id: 'import-session',
+        label: 'Import Session',
+        shortcut: 'Ctrl+I',
+        onSelect: handleOpenImport,
+      },
+      {
+        id: 'new-session',
+        label: 'Start New Session',
+        onSelect: handleNewSession,
+        disabled: true,
+      },
+    ],
+    [handleNewSession, handleOpenImport, handleToggleSidebar, isSidebarOpen]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
+    <>
       <Layout
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
@@ -308,15 +367,27 @@ function AppContent() {
         latestUsage={latestUsage}
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={handleToggleSidebar}
+        onImportSession={handleOpenImport}
         isBootstrapping={isBootstrapping}
       >
         <ChatView
           session={activeSession}
           onNewSession={handleNewSession}
           isLoadingSession={isLoadingSession}
+          onForkedSession={handleImportedSession}
         />
       </Layout>
-
+      <SessionImportDialog
+        isOpen={isImportDialogOpen}
+        onClose={() => setIsImportDialogOpen(false)}
+        onImported={handleImportedSession}
+      />
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        commands={commands}
+      />
+    </>
   );
 }
 

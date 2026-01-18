@@ -11,11 +11,12 @@ use uuid::Uuid;
 
 use crate::core::services::{ServiceError, SessionService};
 use crate::data::Workspace;
+use crate::git::PrManager;
 use crate::util::names::{generate_branch_name, generate_workspace_name, get_git_username};
 use crate::web::error::WebError;
 use crate::web::handlers::sessions::SessionResponse;
 use crate::web::state::WebAppState;
-use crate::web::status_types::WorkspaceStatusResponse;
+use crate::web::status_types::{PrStatusResponse, WorkspaceStatusResponse};
 
 /// Response for a single workspace.
 #[derive(Debug, Serialize)]
@@ -51,6 +52,26 @@ impl From<Workspace> for WorkspaceResponse {
 #[derive(Debug, Serialize)]
 pub struct ListWorkspacesResponse {
     pub workspaces: Vec<WorkspaceResponse>,
+}
+
+/// PR preflight response for a workspace.
+#[derive(Debug, Serialize)]
+pub struct PrPreflightResponse {
+    pub gh_installed: bool,
+    pub gh_authenticated: bool,
+    pub on_main_branch: bool,
+    pub branch_name: String,
+    pub target_branch: String,
+    pub uncommitted_count: usize,
+    pub has_upstream: bool,
+    pub existing_pr: Option<PrStatusResponse>,
+}
+
+/// PR create response returns prompt to send to agent.
+#[derive(Debug, Serialize)]
+pub struct PrCreateResponse {
+    pub preflight: PrPreflightResponse,
+    pub prompt: String,
 }
 
 /// Request to create a new workspace.
@@ -358,6 +379,49 @@ pub async fn get_workspace_status(
     ))
 }
 
+/// Run PR preflight checks for a workspace.
+pub async fn get_workspace_pr_preflight(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<PrPreflightResponse>, WebError> {
+    let core = state.core().await;
+    let store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let workspace = store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
+
+    let preflight = PrManager::preflight_check(&workspace.path);
+    Ok(Json(build_pr_preflight_response(preflight)))
+}
+
+/// Create a PR prompt for a workspace after preflight checks.
+pub async fn create_workspace_pr(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<PrCreateResponse>, WebError> {
+    let core = state.core().await;
+    let store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let workspace = store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
+
+    let preflight = PrManager::preflight_check(&workspace.path);
+    let prompt = PrManager::generate_pr_prompt(&preflight);
+
+    Ok(Json(PrCreateResponse {
+        preflight: build_pr_preflight_response(preflight),
+        prompt,
+    }))
+}
+
 /// Get or create a session for a workspace.
 ///
 /// This endpoint returns the existing session for a workspace if one exists,
@@ -380,5 +444,21 @@ fn map_service_error(error: ServiceError) -> WebError {
         ServiceError::InvalidInput(message) => WebError::BadRequest(message),
         ServiceError::NotFound(message) => WebError::NotFound(message),
         ServiceError::Internal(message) => WebError::Internal(message),
+    }
+}
+
+fn build_pr_preflight_response(preflight: crate::git::PrPreflightResult) -> PrPreflightResponse {
+    PrPreflightResponse {
+        gh_installed: preflight.gh_installed,
+        gh_authenticated: preflight.gh_authenticated,
+        on_main_branch: preflight.on_main_branch,
+        branch_name: preflight.branch_name,
+        target_branch: preflight.target_branch,
+        uncommitted_count: preflight.uncommitted_count,
+        has_upstream: preflight.has_upstream,
+        existing_pr: preflight
+            .existing_pr
+            .as_ref()
+            .and_then(PrStatusResponse::from_pr_status),
     }
 }

@@ -9,6 +9,13 @@ use uuid::Uuid;
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::AgentType;
 
+/// Image attachment for WebSocket prompts (base64-encoded).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    pub data: String,
+    pub media_type: String,
+}
+
 /// Messages sent from client to server over WebSocket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -30,6 +37,12 @@ pub enum ClientMessage {
         /// Optional model override
         #[serde(default)]
         model: Option<String>,
+        /// Whether to suppress UI/history for this prompt
+        #[serde(default)]
+        hidden: bool,
+        /// Optional image attachments
+        #[serde(default)]
+        images: Vec<ImageAttachment>,
     },
 
     /// Send input to a running agent (follow-up message)
@@ -37,6 +50,12 @@ pub enum ClientMessage {
         session_id: Uuid,
         /// The input text to send
         input: String,
+        /// Whether to suppress UI/history for this prompt
+        #[serde(default)]
+        hidden: bool,
+        /// Optional image attachments
+        #[serde(default)]
+        images: Vec<ImageAttachment>,
     },
 
     /// Respond to a control request (permission prompt)

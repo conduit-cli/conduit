@@ -1,5 +1,5 @@
 import { useHealth } from '../hooks';
-import { Circle, Settings, PanelLeft, GitBranch, GitPullRequest, Activity } from 'lucide-react';
+import { Circle, Settings, PanelLeft, GitBranch, GitPullRequest, Activity, Download } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import type { Session, Workspace, WorkspaceStatus } from '../types';
@@ -11,6 +11,7 @@ interface HeaderProps {
   latestUsage?: { input_tokens: number; output_tokens: number } | null;
   isSidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  onImportSession?: () => void;
 }
 
 export function Header({
@@ -20,6 +21,7 @@ export function Header({
   latestUsage,
   isSidebarOpen = true,
   onToggleSidebar,
+  onImportSession,
 }: HeaderProps) {
   const { data: health, isLoading, isError } = useHealth();
 
@@ -115,6 +117,15 @@ export function Header({
             </span>
           </div>
           <ThemeSwitcher />
+          {onImportSession && (
+            <button
+              aria-label="Import session"
+              onClick={onImportSession}
+              className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            >
+              <Download className="h-4 w-4" />
+            </button>
+          )}
           <button
             aria-label="Settings"
             className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"

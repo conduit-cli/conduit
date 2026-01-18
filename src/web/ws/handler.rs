@@ -1,20 +1,24 @@
 //! WebSocket connection handler for real-time agent communication.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
+use base64::engine::general_purpose;
+use base64::Engine as _;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, RwLock};
 use uuid::Uuid;
 
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
+use crate::core::services::SessionService;
 use crate::core::ConduitCore;
 use serde_json::json;
 
-use super::messages::{ClientMessage, ServerMessage};
+use super::messages::{ClientMessage, ImageAttachment, ServerMessage};
 
 /// Active session state tracked by the WebSocket handler.
 struct ActiveSession {
@@ -61,6 +65,17 @@ async fn persist_agent_session_id(
     Ok(())
 }
 
+async fn append_input_history(
+    core: &Arc<RwLock<ConduitCore>>,
+    session_id: Uuid,
+    input: &str,
+) -> Result<(), String> {
+    let core = core.read().await;
+    SessionService::append_input_history(&core, session_id, input)
+        .map_err(|e| format!("Failed to append input history: {}", e))?;
+    Ok(())
+}
+
 impl SessionManager {
     pub fn new(core: Arc<RwLock<ConduitCore>>) -> Self {
         Self {
@@ -77,6 +92,7 @@ impl SessionManager {
         prompt: String,
         working_dir: PathBuf,
         model: Option<String>,
+        images: Vec<PathBuf>,
     ) -> Result<broadcast::Receiver<AgentEvent>, String> {
         // Check if session already exists
         {
@@ -102,6 +118,9 @@ impl SessionManager {
         let mut config = AgentStartConfig::new(prompt, working_dir);
         if let Some(m) = model {
             config = config.with_model(m);
+        }
+        if !images.is_empty() {
+            config = config.with_images(images);
         }
 
         // Start the agent
@@ -203,7 +222,12 @@ impl SessionManager {
     }
 
     /// Send input to a running session.
-    pub async fn send_input(&self, session_id: Uuid, input: String) -> Result<(), String> {
+    pub async fn send_input(
+        &self,
+        session_id: Uuid,
+        input: String,
+        images: Vec<PathBuf>,
+    ) -> Result<(), String> {
         let sessions = self.sessions.read().await;
         let session = sessions
             .get(&session_id)
@@ -220,7 +244,7 @@ impl SessionManager {
             AgentType::Claude => AgentInput::ClaudeJsonl(input),
             AgentType::Codex | AgentType::Gemini => AgentInput::CodexPrompt {
                 text: input,
-                images: vec![],
+                images,
             },
         };
 
@@ -277,6 +301,60 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         sessions.get(&session_id).map(|s| s.agent_type)
     }
+}
+
+fn decode_image_attachments(images: &[ImageAttachment]) -> Result<Vec<PathBuf>, String> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut paths = Vec::with_capacity(images.len());
+    for image in images {
+        paths.push(decode_image_attachment(image)?);
+    }
+    Ok(paths)
+}
+
+fn decode_image_attachment(image: &ImageAttachment) -> Result<PathBuf, String> {
+    let (bytes, media_type) = decode_base64_image(&image.data, &image.media_type)?;
+    let ext = match media_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        _ => return Err(format!("Unsupported image media type: {}", media_type)),
+    };
+
+    let dir = uploads_dir()?;
+    let filename = format!("ws-image-{}.{}", Uuid::new_v4(), ext);
+    let path = dir.join(filename);
+    fs::write(&path, bytes).map_err(|e| format!("Failed to write image: {}", e))?;
+    Ok(path)
+}
+
+fn decode_base64_image(data: &str, fallback_media_type: &str) -> Result<(Vec<u8>, String), String> {
+    if let Some(rest) = data.strip_prefix("data:") {
+        let mut parts = rest.splitn(2, ";base64,");
+        let media_type = parts.next().unwrap_or(fallback_media_type).to_string();
+        let encoded = parts
+            .next()
+            .ok_or_else(|| "Invalid data URL image".to_string())?;
+        let bytes = general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(|e| format!("Failed to decode base64 image: {}", e))?;
+        return Ok((bytes, media_type));
+    }
+
+    let bytes = general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("Failed to decode base64 image: {}", e))?;
+    Ok((bytes, fallback_media_type.to_string()))
+}
+
+fn uploads_dir() -> Result<PathBuf, String> {
+    let dir = crate::util::data_dir().join("uploads");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create uploads dir: {}", e))?;
+    Ok(dir)
 }
 
 /// Handle a WebSocket connection.
@@ -377,6 +455,8 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 prompt,
                 working_dir,
                 model,
+                hidden,
+                images,
             } => {
                 // Look up session in database to get agent type
                 let core = session_manager.core.read().await;
@@ -413,6 +493,30 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 };
                 drop(core);
 
+                let image_paths = if images.is_empty() {
+                    Vec::new()
+                } else if agent_type != AgentType::Codex {
+                    let _ = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Image attachments are only supported for Codex sessions",
+                        ))
+                        .await;
+                    continue;
+                } else {
+                    match decode_image_attachments(&images) {
+                        Ok(paths) => paths,
+                        Err(error) => {
+                            let _ = tx
+                                .send(ServerMessage::session_error(session_id, error))
+                                .await;
+                            continue;
+                        }
+                    }
+                };
+
+                let prompt_for_history = prompt.clone();
+
                 match session_manager
                     .start_session(
                         session_id,
@@ -420,10 +524,27 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         prompt,
                         PathBuf::from(working_dir),
                         model,
+                        image_paths,
                     )
                     .await
                 {
                     Ok(mut event_rx) => {
+                        if !hidden {
+                            if let Err(error) = append_input_history(
+                                &session_manager.core,
+                                session_id,
+                                &prompt_for_history,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    %session_id,
+                                    error = %error,
+                                    "Failed to persist input history"
+                                );
+                            }
+                        }
+
                         // Auto-subscribe to the new session
                         let tx_clone = tx.clone();
                         let task = tokio::spawn(async move {
@@ -459,9 +580,53 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 }
             }
 
-            ClientMessage::SendInput { session_id, input } => {
-                if let Err(e) = session_manager.send_input(session_id, input).await {
+            ClientMessage::SendInput {
+                session_id,
+                input,
+                hidden,
+                images,
+            } => {
+                let image_paths = if images.is_empty() {
+                    Vec::new()
+                } else {
+                    match session_manager.get_agent_type(session_id).await {
+                        Some(AgentType::Codex) => match decode_image_attachments(&images) {
+                            Ok(paths) => paths,
+                            Err(error) => {
+                                let _ = tx
+                                    .send(ServerMessage::session_error(session_id, error))
+                                    .await;
+                                continue;
+                            }
+                        },
+                        Some(_) => {
+                            let _ = tx
+                                .send(ServerMessage::session_error(
+                                    session_id,
+                                    "Image attachments are only supported for Codex sessions",
+                                ))
+                                .await;
+                            continue;
+                        }
+                        None => Vec::new(),
+                    }
+                };
+
+                if let Err(e) = session_manager
+                    .send_input(session_id, input.clone(), image_paths)
+                    .await
+                {
                     let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                } else if !hidden {
+                    if let Err(error) =
+                        append_input_history(&session_manager.core, session_id, &input).await
+                    {
+                        tracing::warn!(
+                            %session_id,
+                            error = %error,
+                            "Failed to persist input history"
+                        );
+                    }
                 }
             }
 

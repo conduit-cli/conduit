@@ -5,8 +5,16 @@ export type ClientMessage =
   | { type: 'ping' }
   | { type: 'subscribe'; session_id: string }
   | { type: 'unsubscribe'; session_id: string }
-  | { type: 'start_session'; session_id: string; prompt: string; working_dir: string; model?: string }
-  | { type: 'send_input'; session_id: string; input: string }
+  | {
+      type: 'start_session';
+      session_id: string;
+      prompt: string;
+      working_dir: string;
+      model?: string;
+      hidden?: boolean;
+      images?: ImageAttachment[];
+    }
+  | { type: 'send_input'; session_id: string; input: string; hidden?: boolean; images?: ImageAttachment[] }
   | { type: 'respond_to_control'; session_id: string; request_id: string; response: unknown }
   | { type: 'stop_session'; session_id: string };
 
@@ -37,6 +45,11 @@ export type AgentEvent =
   | { type: 'ContextCompaction'; reason: string; tokens_before: number; tokens_after: number }
   | { type: 'Error'; message: string; is_fatal: boolean }
   | { type: 'Raw'; data: unknown };
+
+export interface ImageAttachment {
+  data: string;
+  media_type: string;
+}
 
 export interface TokenUsage {
   input_tokens: number;

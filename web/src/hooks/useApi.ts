@@ -10,6 +10,8 @@ import type {
   Session,
   SessionEventsQuery,
   SetDefaultModelRequest,
+  AddQueueMessageRequest,
+  UpdateQueueMessageRequest,
 } from '../types';
 
 // Query keys
@@ -23,11 +25,16 @@ export const queryKeys = {
   repositoryWorkspaces: (id: string) => ['repositories', id, 'workspaces'] as const,
   workspace: (id: string) => ['workspaces', id] as const,
   workspaceStatus: (id: string) => ['workspaces', id, 'status'] as const,
+  workspacePrPreflight: (id: string) => ['workspaces', id, 'pr-preflight'] as const,
   workspaceSession: (id: string) => ['workspaces', id, 'session'] as const,
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
   sessionEvents: (id: string, query?: SessionEventsQuery) =>
     ['sessions', id, 'events', query ?? {}] as const,
+  sessionHistory: (id: string) => ['sessions', id, 'history'] as const,
+  sessionQueue: (id: string) => ['sessions', id, 'queue'] as const,
+  externalSessions: (agentType?: string | null) =>
+    ['external-sessions', agentType ?? 'all'] as const,
   uiState: ['ui', 'state'] as const,
   bootstrap: ['bootstrap'] as const,
 };
@@ -178,6 +185,15 @@ export function useWorkspaceStatus(
   });
 }
 
+export function useWorkspacePrPreflight(workspaceId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.workspacePrPreflight(workspaceId ?? ''),
+    queryFn: () => api.getWorkspacePrPreflight(workspaceId!),
+    enabled: (options?.enabled ?? true) && !!workspaceId,
+    staleTime: 0,
+  });
+}
+
 export function useAutoCreateWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -220,11 +236,38 @@ export function useSessions(options?: { enabled?: boolean; staleTime?: number })
   });
 }
 
+export function useExternalSessions(agentType?: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.externalSessions(agentType),
+    queryFn: () => api.listExternalSessions(agentType ?? undefined),
+    enabled: options?.enabled ?? true,
+    staleTime: 5000,
+  });
+}
+
 export function useSession(id: string) {
   return useQuery({
     queryKey: queryKeys.session(id),
     queryFn: () => api.getSession(id),
     enabled: !!id,
+  });
+}
+
+export function useSessionHistory(sessionId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.sessionHistory(sessionId ?? ''),
+    queryFn: () => api.getSessionHistory(sessionId!),
+    enabled: (options?.enabled ?? true) && !!sessionId,
+    staleTime: 5000,
+  });
+}
+
+export function useSessionQueue(sessionId: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.sessionQueue(sessionId ?? ''),
+    queryFn: () => api.getSessionQueue(sessionId!),
+    enabled: (options?.enabled ?? true) && !!sessionId,
+    staleTime: 2000,
   });
 }
 
@@ -234,6 +277,47 @@ export function useCreateSession() {
     mutationFn: (data: CreateSessionRequest) => api.createSession(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+export function useAddQueueMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: AddQueueMessageRequest }) =>
+      api.addSessionQueueMessage(id, data),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessionQueue(variables.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessionHistory(variables.id) });
+    },
+  });
+}
+
+export function useUpdateQueueMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      messageId,
+      data,
+    }: {
+      id: string;
+      messageId: string;
+      data: UpdateQueueMessageRequest;
+    }) => api.updateSessionQueueMessage(id, messageId, data),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessionQueue(variables.id) });
+    },
+  });
+}
+
+export function useDeleteQueueMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, messageId }: { id: string; messageId: string }) =>
+      api.deleteSessionQueueMessage(id, messageId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessionQueue(variables.id) });
     },
   });
 }
@@ -267,6 +351,18 @@ export function useCloseSession() {
   });
 }
 
+export function useImportExternalSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.importExternalSession(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
+      queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+    },
+  });
+}
+
 export function useUpdateSession() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -276,6 +372,24 @@ export function useUpdateSession() {
       queryClient.setQueryData(queryKeys.session(updatedSession.id), updatedSession);
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
+  });
+}
+
+export function useForkSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.forkSession(id),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStatus(response.workspace.id) });
+    },
+  });
+}
+
+export function useCreateWorkspacePr() {
+  return useMutation({
+    mutationFn: (workspaceId: string) => api.createWorkspacePr(workspaceId),
   });
 }
 

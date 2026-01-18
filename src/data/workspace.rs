@@ -155,6 +155,23 @@ impl WorkspaceStore {
         Ok(count > 0)
     }
 
+    /// Get a workspace by path
+    pub fn get_by_path(&self, path: &Path) -> SqliteResult<Option<Workspace>> {
+        let conn = self.conn.lock().unwrap();
+        let path_str = path.to_string_lossy().to_string();
+        let mut stmt = conn.prepare(
+            "SELECT id, repository_id, name, branch, path, created_at, last_accessed, is_default, archived_at, archived_commit_sha
+             FROM workspaces WHERE path = ?1",
+        )?;
+
+        let mut rows = stmt.query(params![path_str])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Self::row_to_workspace(row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Get the default workspace for a repository
     pub fn get_default_for_repository(
         &self,

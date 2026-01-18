@@ -1,12 +1,19 @@
 import { useRef, useEffect, useState, type KeyboardEvent } from 'react';
-import { Send, Loader2, GitBranch } from 'lucide-react';
+import { Send, Loader2, GitBranch, ListPlus, ImagePlus, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
+  onQueue?: (message: string) => void;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
+  inputDisabled?: boolean;
+  sendDisabled?: boolean;
+  queueDisabled?: boolean;
+  attachments?: { id: string; previewUrl: string; name: string }[];
+  onAttachImages?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
   placeholder?: string;
   focusKey?: string | null;
   history?: string[];
@@ -23,9 +30,16 @@ interface ChatInputProps {
 
 export function ChatInput({
   onSend,
+  onQueue,
   value,
   onChange,
   disabled = false,
+  inputDisabled,
+  sendDisabled,
+  queueDisabled,
+  attachments = [],
+  onAttachImages,
+  onRemoveAttachment,
   placeholder = 'Type a message...',
   focusKey,
   history = [],
@@ -38,10 +52,15 @@ export function ChatInput({
   canChangeModel = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const statusBarRef = useRef<HTMLDivElement>(null);
   const historyIndexRef = useRef<number | null>(null);
   const historyDraftRef = useRef('');
   const [isCompact, setIsCompact] = useState(false);
+  const effectiveInputDisabled = inputDisabled ?? disabled;
+  const effectiveSendDisabled = sendDisabled ?? disabled;
+  const effectiveQueueDisabled = queueDisabled ?? disabled;
+  const hasAttachments = attachments.length > 0;
 
   // Responsive check for status bar - switch to compact mode when space is tight
   useEffect(() => {
@@ -80,10 +99,34 @@ export function ChatInput({
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (trimmed && !disabled) {
+    if ((trimmed.length > 0 || hasAttachments) && !effectiveSendDisabled) {
       onSend(trimmed);
       historyIndexRef.current = null;
       historyDraftRef.current = '';
+    }
+  };
+
+  const handleQueue = () => {
+    if (!onQueue) return;
+    const trimmed = value.trim();
+    if (trimmed && !effectiveQueueDisabled) {
+      onQueue(trimmed);
+      historyIndexRef.current = null;
+      historyDraftRef.current = '';
+    }
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesSelected = (files: FileList | null) => {
+    if (!files || !onAttachImages) return;
+    const nextFiles = Array.from(files);
+    if (nextFiles.length === 0) return;
+    onAttachImages(nextFiles);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -161,34 +204,99 @@ export function ChatInput({
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            disabled={disabled}
+            disabled={effectiveInputDisabled}
             rows={1}
             className={cn(
               'w-full resize-none rounded-lg border border-border bg-surface-elevated px-4 py-3 text-sm text-text placeholder-text-muted',
               'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
-              'disabled:cursor-not-allowed disabled:opacity-50'
-            )}
+            'disabled:cursor-not-allowed disabled:opacity-50'
+          )}
           />
         </div>
+        {onAttachImages && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => handleFilesSelected(e.target.files)}
+            />
+            <button
+              onClick={handleAttachClick}
+              disabled={effectiveInputDisabled}
+              aria-label="Attach images"
+              className={cn(
+                'flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+                'bg-surface-elevated text-text-muted hover:bg-surface hover:text-text'
+              )}
+            >
+              <ImagePlus className="h-5 w-5" />
+            </button>
+          </>
+        )}
+        {onQueue && (
+          <button
+            onClick={handleQueue}
+            disabled={effectiveQueueDisabled || !value.trim()}
+            aria-label="Queue message"
+            className={cn(
+              'flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors',
+              'disabled:cursor-not-allowed disabled:opacity-50',
+              value.trim() && !effectiveQueueDisabled
+                ? 'bg-surface-elevated text-text hover:bg-surface'
+                : 'bg-surface-elevated text-text-muted'
+            )}
+          >
+            <ListPlus className="h-5 w-5" />
+          </button>
+        )}
         <button
           onClick={handleSubmit}
-          disabled={disabled || !value.trim()}
-          aria-label={disabled ? 'Sending...' : 'Send message'}
+          disabled={effectiveSendDisabled || (!value.trim() && !hasAttachments)}
+          aria-label={effectiveSendDisabled ? 'Sending...' : 'Send message'}
           className={cn(
             'flex size-11 shrink-0 items-center justify-center rounded-lg transition-colors',
             'disabled:cursor-not-allowed disabled:opacity-50',
-            value.trim() && !disabled
+            (value.trim() || hasAttachments) && !effectiveSendDisabled
               ? 'bg-accent text-white hover:bg-accent-hover'
               : 'bg-surface-elevated text-text-muted'
           )}
         >
-          {disabled ? (
+          {effectiveSendDisabled ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
             <Send className="h-5 w-5" />
           )}
         </button>
       </div>
+      {attachments.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {attachments.map((attachment) => (
+            <div
+              key={attachment.id}
+              className="group relative h-16 w-16 overflow-hidden rounded-lg border border-border/60 bg-surface-elevated"
+            >
+              <img
+                src={attachment.previewUrl}
+                alt={attachment.name}
+                className="h-full w-full object-cover"
+              />
+              {onRemoveAttachment && (
+                <button
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                  className="absolute right-1 top-1 rounded-full bg-surface/80 p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100"
+                  aria-label="Remove attachment"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <div
         ref={statusBarRef}
         className={cn(

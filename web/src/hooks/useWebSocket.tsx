@@ -2,16 +2,35 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { getWebSocket, type ConnectionState, type ConduitWebSocket } from '../lib/websocket';
-import type { AgentEvent, ServerMessage } from '../types';
+import type { AgentEvent, ImageAttachment, ServerMessage } from '../types';
 
 // WebSocket context
 interface WebSocketContextValue {
   ws: ConduitWebSocket;
   connectionState: ConnectionState;
   processingSessionIds: Set<string>;
-  sendInput: (sessionId: string, input: string) => void;
-  sendPrompt: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
-  startSession: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
+  sendInput: (
+    sessionId: string,
+    input: string,
+    hidden?: boolean,
+    images?: ImageAttachment[]
+  ) => void;
+  sendPrompt: (
+    sessionId: string,
+    prompt: string,
+    workingDir: string,
+    model?: string,
+    hidden?: boolean,
+    images?: ImageAttachment[]
+  ) => void;
+  startSession: (
+    sessionId: string,
+    prompt: string,
+    workingDir: string,
+    model?: string,
+    hidden?: boolean,
+    images?: ImageAttachment[]
+  ) => void;
   stopSession: (sessionId: string) => void;
   respondToControl: (sessionId: string, requestId: string, response: unknown) => void;
 }
@@ -27,7 +46,12 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [processingSessionIds, setProcessingSessionIds] = useState<Set<string>>(new Set());
   const runningSessionsRef = useRef(new Set<string>());
-  const pendingPromptsRef = useRef(new Map<string, { prompt: string; workingDir: string; model?: string }>());
+  const pendingPromptsRef = useRef(
+    new Map<
+      string,
+      { prompt: string; workingDir: string; model?: string; images?: ImageAttachment[] }
+    >()
+  );
   const ws = getWebSocket();
 
   const handleServerMessage = useCallback(
@@ -69,7 +93,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         if (pending && message.message.includes('already running')) {
           runningSessionsRef.current.add(message.session_id);
           pendingPromptsRef.current.delete(message.session_id);
-          ws.sendInput(message.session_id, pending.prompt);
+          ws.sendInput(message.session_id, pending.prompt, false, pending.images);
         }
       }
     },
@@ -91,27 +115,41 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   }, [ws]);
 
   const sendInput = useCallback(
-    (sessionId: string, input: string) => {
-      ws.sendInput(sessionId, input);
+    (sessionId: string, input: string, hidden?: boolean, images?: ImageAttachment[]) => {
+      ws.sendInput(sessionId, input, hidden, images);
     },
     [ws]
   );
 
   const startSession = useCallback(
-    (sessionId: string, prompt: string, workingDir: string, model?: string) => {
-      ws.startSession(sessionId, prompt, workingDir, model);
+    (
+      sessionId: string,
+      prompt: string,
+      workingDir: string,
+      model?: string,
+      hidden?: boolean,
+      images?: ImageAttachment[]
+    ) => {
+      ws.startSession(sessionId, prompt, workingDir, model, hidden, images);
     },
     [ws]
   );
 
   const sendPrompt = useCallback(
-    (sessionId: string, prompt: string, workingDir: string, model?: string) => {
+    (
+      sessionId: string,
+      prompt: string,
+      workingDir: string,
+      model?: string,
+      hidden?: boolean,
+      images?: ImageAttachment[]
+    ) => {
       if (runningSessionsRef.current.has(sessionId)) {
-        ws.sendInput(sessionId, prompt);
+        ws.sendInput(sessionId, prompt, hidden, images);
         return;
       }
-      pendingPromptsRef.current.set(sessionId, { prompt, workingDir, model });
-      ws.startSession(sessionId, prompt, workingDir, model);
+      pendingPromptsRef.current.set(sessionId, { prompt, workingDir, model, images });
+      ws.startSession(sessionId, prompt, workingDir, model, hidden, images);
     },
     [ws]
   );

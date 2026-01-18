@@ -20,6 +20,7 @@ interface LayoutProps {
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   isBootstrapping?: boolean;
+  onImportSession?: () => void;
 }
 
 export function Layout({
@@ -38,6 +39,7 @@ export function Layout({
   isSidebarOpen,
   onToggleSidebar,
   isBootstrapping = false,
+  onImportSession,
 }: LayoutProps) {
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
 
@@ -103,6 +105,7 @@ export function Layout({
           latestUsage={latestUsage}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={onToggleSidebar}
+          onImportSession={onImportSession}
         />
         <SessionTabs
           sessions={sessions}

@@ -30,6 +30,14 @@ pub struct PrStatusResponse {
     pub state: String,
     pub checks_passing: bool,
     pub url: Option<String>,
+    pub merge_readiness: Option<String>,
+    pub checks_total: Option<usize>,
+    pub checks_passed: Option<usize>,
+    pub checks_failed: Option<usize>,
+    pub checks_pending: Option<usize>,
+    pub checks_skipped: Option<usize>,
+    pub mergeable: Option<String>,
+    pub review_decision: Option<String>,
 }
 
 impl PrStatusResponse {
@@ -52,6 +60,37 @@ impl PrStatusResponse {
             state,
             checks_passing: matches!(pr.checks.state(), CheckState::Passing),
             url: pr.url.clone(),
+            merge_readiness: Some(
+                match pr.merge_readiness {
+                    crate::git::MergeReadiness::Ready => "ready",
+                    crate::git::MergeReadiness::Blocked => "blocked",
+                    crate::git::MergeReadiness::HasConflicts => "has_conflicts",
+                    crate::git::MergeReadiness::Unknown => "unknown",
+                }
+                .to_string(),
+            ),
+            checks_total: Some(pr.checks.total),
+            checks_passed: Some(pr.checks.passed),
+            checks_failed: Some(pr.checks.failed),
+            checks_pending: Some(pr.checks.pending),
+            checks_skipped: Some(pr.checks.skipped),
+            mergeable: Some(
+                match pr.mergeable {
+                    crate::git::MergeableStatus::Mergeable => "mergeable",
+                    crate::git::MergeableStatus::Conflicting => "conflicting",
+                    crate::git::MergeableStatus::Unknown => "unknown",
+                }
+                .to_string(),
+            ),
+            review_decision: Some(
+                match pr.review_decision {
+                    crate::git::ReviewDecision::Approved => "approved",
+                    crate::git::ReviewDecision::ReviewRequired => "review_required",
+                    crate::git::ReviewDecision::ChangesRequested => "changes_requested",
+                    crate::git::ReviewDecision::None => "none",
+                }
+                .to_string(),
+            ),
         })
     }
 }

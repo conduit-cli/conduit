@@ -12,12 +12,16 @@ use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentMode, AgentType,
     ModelRegistry,
 };
+use crate::core::services::session_service::CreateForkedSessionParams;
 use crate::core::services::{
     CreateSessionParams, ServiceError, SessionService, UpdateSessionParams,
 };
-use crate::data::SessionTab;
-use crate::ui::components::MessageRole;
+use crate::data::{ForkSeed, SessionTab, Workspace};
+use crate::ui::app_prompt;
+use crate::ui::components::{ChatMessage, MessageRole};
+use crate::util::names::{generate_branch_name, generate_workspace_name, get_git_username};
 use crate::web::error::WebError;
+use crate::web::handlers::workspaces::WorkspaceResponse;
 use crate::web::state::WebAppState;
 
 /// Response for a single session.
@@ -205,6 +209,33 @@ fn map_service_error(error: ServiceError) -> WebError {
     }
 }
 
+fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
+    let Some(agent_session_id) = session.agent_session_id.as_deref() else {
+        return Vec::new();
+    };
+
+    match session.agent_type {
+        AgentType::Claude => load_claude_history_with_debug(agent_session_id)
+            .map(|(messages, _, _)| messages)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load Claude history: {}", e);
+                Vec::new()
+            }),
+        AgentType::Codex => load_codex_history_with_debug(agent_session_id)
+            .map(|(messages, _, _)| messages)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load Codex history: {}", e);
+                Vec::new()
+            }),
+        AgentType::Gemini => Vec::new(),
+    }
+}
+
+fn estimate_tokens(text: &str) -> i64 {
+    let chars = text.chars().count().max(1);
+    ((chars as f64) / 4.0).ceil() as i64
+}
+
 /// A single event/message in session history.
 #[derive(Debug, Serialize)]
 pub struct SessionEventResponse {
@@ -239,6 +270,24 @@ pub struct ListSessionEventsResponse {
     pub debug_file: Option<String>,
     #[serde(default)]
     pub debug_entries: Vec<HistoryDebugEntryResponse>,
+}
+
+/// Response for input history.
+#[derive(Debug, Serialize)]
+pub struct InputHistoryResponse {
+    pub history: Vec<String>,
+}
+
+/// Response for a forked session.
+#[derive(Debug, Serialize)]
+pub struct ForkSessionResponse {
+    pub session: SessionResponse,
+    pub workspace: WorkspaceResponse,
+    pub warnings: Vec<String>,
+    pub token_estimate: i64,
+    pub context_window: i64,
+    pub usage_percent: f64,
+    pub seed_prompt: String,
 }
 
 /// Debug entry for history loading (raw events view).
@@ -324,6 +373,14 @@ pub async fn get_session_events(
         }
     };
 
+    let messages: Vec<ChatMessage> = messages
+        .into_iter()
+        .filter(|msg| {
+            !(msg.role == MessageRole::User
+                && msg.content.trim_start().starts_with("[CONDUIT_FORK_SEED]"))
+        })
+        .collect();
+
     let total = messages.len();
     let limit = query.limit.unwrap_or(total).min(total);
 
@@ -392,5 +449,190 @@ pub async fn get_session_events(
         limit,
         debug_file,
         debug_entries,
+    }))
+}
+
+/// Get input history for a session.
+pub async fn get_session_history(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<InputHistoryResponse>, WebError> {
+    let core = state.core().await;
+    let history =
+        SessionService::get_input_history(&core, id).map_err(|err| map_service_error(err))?;
+    Ok(Json(InputHistoryResponse { history }))
+}
+
+/// Fork a session into a new workspace and return the seed prompt.
+pub async fn fork_session(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ForkSessionResponse>, WebError> {
+    let core = state.core().await;
+
+    let session = SessionService::get_session(&core, id).map_err(map_service_error)?;
+    let workspace_id = session.workspace_id.ok_or_else(|| {
+        WebError::BadRequest("Session is not associated with a workspace".to_string())
+    })?;
+
+    let workspace_store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let repo_store = core
+        .repo_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let fork_seed_store = core
+        .fork_seed_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let workspace = workspace_store
+        .get_by_id(workspace_id)
+        .map_err(|e| WebError::Internal(format!("Failed to load workspace: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", workspace_id)))?;
+
+    let repo = repo_store
+        .get_by_id(workspace.repository_id)
+        .map_err(|e| WebError::Internal(format!("Failed to load repository: {}", e)))?
+        .ok_or_else(|| {
+            WebError::NotFound(format!("Repository {} not found", workspace.repository_id))
+        })?;
+
+    let base_repo_path = repo
+        .base_path
+        .clone()
+        .ok_or_else(|| WebError::BadRequest("Repository has no base path".to_string()))?;
+
+    let worktree_manager = core.worktree_manager();
+    let base_branch = worktree_manager
+        .get_current_branch(&workspace.path)
+        .unwrap_or_else(|_| workspace.branch.clone());
+
+    let history = load_history_for_session(&session);
+    let seed_prompt = app_prompt::build_fork_seed_prompt(&history);
+    let seed_hash = app_prompt::compute_seed_prompt_hash(&seed_prompt);
+
+    let model_id = session
+        .model
+        .clone()
+        .unwrap_or_else(|| ModelRegistry::default_model(session.agent_type));
+    let context_window = ModelRegistry::context_window(session.agent_type, &model_id);
+    let token_estimate = estimate_tokens(&seed_prompt);
+    let usage_percent = if context_window > 0 {
+        (token_estimate as f64 / context_window as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let mut warnings = Vec::new();
+    if let Ok(status) = worktree_manager.get_branch_status(&workspace.path) {
+        if status.is_dirty {
+            if let Some(desc) = status.dirty_description {
+                warnings.push(desc);
+            } else {
+                warnings.push("Uncommitted changes detected".to_string());
+            }
+            warnings.push("Commit before forking to preserve changes.".to_string());
+        }
+    }
+
+    if usage_percent >= 100.0 {
+        warnings.push(format!(
+            "Seed exceeds context window ({} / {} tokens, ~{:.0}%).",
+            token_estimate, context_window, usage_percent
+        ));
+    } else if usage_percent >= 80.0 {
+        warnings.push(format!(
+            "Seed uses ~{:.0}% of context window ({} / {}).",
+            usage_percent, token_estimate, context_window
+        ));
+    }
+
+    let fork_seed = ForkSeed::new(
+        session.agent_type,
+        session.agent_session_id.clone(),
+        Some(workspace_id),
+        seed_hash,
+        None,
+        token_estimate,
+        context_window,
+    );
+    fork_seed_store
+        .create(&fork_seed)
+        .map_err(|e| WebError::Internal(format!("Failed to save fork metadata: {}", e)))?;
+
+    let existing_names = workspace_store
+        .get_all_names_by_repository(workspace.repository_id)
+        .map_err(|e| WebError::Internal(format!("Failed to get workspace names: {}", e)))?;
+    let workspace_name = generate_workspace_name(&existing_names);
+    let branch_name = generate_branch_name(&get_git_username(), &workspace_name);
+
+    let worktree_path = worktree_manager
+        .create_worktree_from_branch(&base_repo_path, &base_branch, &branch_name, &workspace_name)
+        .map_err(|e| WebError::Internal(format!("Failed to create worktree: {}", e)))?;
+
+    let new_workspace = Workspace::new(
+        workspace.repository_id,
+        &workspace_name,
+        &branch_name,
+        worktree_path,
+    );
+    if let Err(e) = workspace_store.create(&new_workspace) {
+        if let Err(cleanup_err) =
+            worktree_manager.remove_worktree(&base_repo_path, &new_workspace.path)
+        {
+            tracing::error!(
+                error = %cleanup_err,
+                base_path = %base_repo_path.display(),
+                workspace_path = %new_workspace.path.display(),
+                "Failed to clean up worktree after DB error"
+            );
+        }
+        if let Err(branch_err) = worktree_manager.delete_branch(&base_repo_path, &branch_name) {
+            tracing::error!(
+                error = %branch_err,
+                base_path = %base_repo_path.display(),
+                workspace_path = %new_workspace.path.display(),
+                branch = %branch_name,
+                "Failed to delete branch after DB error"
+            );
+        }
+        return Err(WebError::Internal(format!(
+            "Failed to save workspace to database: {}",
+            e
+        )));
+    }
+
+    let forked_session = SessionService::create_forked_session(
+        &core,
+        CreateForkedSessionParams {
+            workspace_id: new_workspace.id,
+            agent_type: session.agent_type,
+            agent_mode: session
+                .agent_mode
+                .as_ref()
+                .and_then(|mode| match mode.as_str() {
+                    "build" => Some(AgentMode::Build),
+                    "plan" => Some(AgentMode::Plan),
+                    _ => None,
+                }),
+            model: session.model.clone(),
+            fork_seed_id: fork_seed.id,
+        },
+    )
+    .map_err(map_service_error)?;
+
+    state
+        .status_manager()
+        .register_workspace(new_workspace.id, new_workspace.path.clone());
+    state.status_manager().refresh_workspace(new_workspace.id);
+
+    Ok(Json(ForkSessionResponse {
+        session: SessionResponse::from(forked_session),
+        workspace: WorkspaceResponse::from(new_workspace),
+        warnings,
+        token_estimate,
+        context_window,
+        usage_percent,
+        seed_prompt,
     }))
 }

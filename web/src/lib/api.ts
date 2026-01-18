@@ -22,6 +22,17 @@ import type {
   UiState,
   BootstrapResponse,
   SessionEventsQuery,
+  InputHistoryResponse,
+  SessionQueueResponse,
+  AddQueueMessageRequest,
+  UpdateQueueMessageRequest,
+  QueuedMessage,
+  ExternalSession,
+  ListExternalSessionsResponse,
+  ImportExternalSessionResponse,
+  ForkSessionResponse,
+  PrPreflightResponse,
+  PrCreateResponse,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -190,9 +201,50 @@ export async function getSessionEventsPage(
   );
 }
 
+export async function getSessionHistory(id: string): Promise<InputHistoryResponse> {
+  return request(`/sessions/${id}/history`);
+}
+
+export async function getSessionQueue(id: string): Promise<SessionQueueResponse> {
+  return request(`/sessions/${id}/queue`);
+}
+
+export async function addSessionQueueMessage(
+  id: string,
+  data: AddQueueMessageRequest
+): Promise<QueuedMessage> {
+  return request(`/sessions/${id}/queue`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSessionQueueMessage(
+  id: string,
+  messageId: string,
+  data: UpdateQueueMessageRequest
+): Promise<QueuedMessage> {
+  return request(`/sessions/${id}/queue/${messageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSessionQueueMessage(id: string, messageId: string): Promise<void> {
+  await request(`/sessions/${id}/queue/${messageId}`, { method: 'DELETE' });
+}
+
 // Workspace status
 export async function getWorkspaceStatus(id: string): Promise<WorkspaceStatus> {
   return request(`/workspaces/${id}/status`);
+}
+
+export async function getWorkspacePrPreflight(id: string): Promise<PrPreflightResponse> {
+  return request(`/workspaces/${id}/pr/preflight`);
+}
+
+export async function createWorkspacePr(id: string): Promise<PrCreateResponse> {
+  return request(`/workspaces/${id}/pr`, { method: 'POST' });
 }
 
 // Auto-create workspace (generates name/branch automatically)
@@ -205,6 +257,26 @@ export async function autoCreateWorkspace(repositoryId: string): Promise<Workspa
 // Get or create session for a workspace
 export async function getOrCreateWorkspaceSession(workspaceId: string): Promise<Session> {
   return request(`/workspaces/${workspaceId}/session`, {
+    method: 'POST',
+  });
+}
+
+// External sessions
+export async function listExternalSessions(agentType?: string): Promise<ExternalSession[]> {
+  const params = agentType ? `?agent_type=${encodeURIComponent(agentType)}` : '';
+  const response = await request<ListExternalSessionsResponse>(`/external-sessions${params}`);
+  return response.sessions;
+}
+
+export async function importExternalSession(id: string): Promise<ImportExternalSessionResponse> {
+  return request(`/external-sessions/${id}/import`, {
+    method: 'POST',
+  });
+}
+
+// Fork session
+export async function forkSession(id: string): Promise<ForkSessionResponse> {
+  return request(`/sessions/${id}/fork`, {
     method: 'POST',
   });
 }
