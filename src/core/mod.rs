@@ -7,5 +7,7 @@
 //! - Worktree management
 
 mod conduit_core;
+pub mod dto;
+pub mod services;
 
 pub use conduit_core::ConduitCore;

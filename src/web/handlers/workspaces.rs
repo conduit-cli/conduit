@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::data::{SessionTab, Workspace};
+use crate::core::services::{ServiceError, SessionService};
+use crate::data::Workspace;
 use crate::util::names::{generate_branch_name, generate_workspace_name, get_git_username};
 use crate::web::error::WebError;
 use crate::web::handlers::sessions::SessionResponse;
@@ -368,56 +369,16 @@ pub async fn get_or_create_session(
     Path(workspace_id): Path<Uuid>,
 ) -> Result<Json<SessionResponse>, WebError> {
     let core = state.core().await;
-
-    // Get the session store
-    let session_store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    // Try to find existing session for this workspace
-    if let Some(mut existing) = session_store
-        .get_by_workspace_id(workspace_id)
-        .map_err(|e| WebError::Internal(format!("Failed to query session: {}", e)))?
-    {
-        if existing.model.is_none() {
-            existing.model = Some(core.config().default_model_for(existing.agent_type));
-            session_store.update(&existing).map_err(|e| {
-                WebError::Internal(format!("Failed to update session model: {}", e))
-            })?;
-        }
-        return Ok(Json(SessionResponse::from(existing)));
-    }
-
-    // Verify the workspace exists
-    let workspace_store = core
-        .workspace_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    let _workspace = workspace_store
-        .get_by_id(workspace_id)
-        .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
-        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", workspace_id)))?;
-
-    // No existing session - create new one with default agent
-    let sessions = session_store
-        .get_all()
-        .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-    let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
-
-    let default_agent = core.config().default_agent;
-    let session = SessionTab::new(
-        next_index,
-        default_agent,
-        Some(workspace_id),
-        None, // agent_session_id will be set when agent starts
-        Some(core.config().default_model_for(default_agent)),
-        None, // pr_number
-    );
-
-    session_store
-        .create(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to create session: {}", e)))?;
+    let session = SessionService::get_or_create_session_for_workspace(&core, workspace_id)
+        .map_err(|err| map_service_error(err))?;
 
     Ok(Json(SessionResponse::from(session)))
+}
+
+fn map_service_error(error: ServiceError) -> WebError {
+    match error {
+        ServiceError::InvalidInput(message) => WebError::BadRequest(message),
+        ServiceError::NotFound(message) => WebError::NotFound(message),
+        ServiceError::Internal(message) => WebError::Internal(message),
+    }
 }

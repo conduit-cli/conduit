@@ -572,6 +572,9 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
 
   // Can only change model if session hasn't started (no agent_session_id) and not processing
   const canChangeModel = !session?.agent_session_id && !isProcessing;
+  const canChangeMode =
+    session?.agent_type === 'claude' && !session?.agent_session_id && !isProcessing;
+  const effectiveAgentMode = session?.agent_mode ?? 'build';
 
   const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
     if (!session) return;
@@ -596,6 +599,12 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     },
     [setDefaultModelMutation]
   );
+
+  const handleToggleAgentMode = useCallback(() => {
+    if (!session) return;
+    const nextMode = effectiveAgentMode === 'plan' ? 'build' : 'plan';
+    updateSessionMutation.mutate({ id: session.id, data: { agent_mode: nextMode } });
+  }, [effectiveAgentMode, session, updateSessionMutation]);
 
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
@@ -672,6 +681,23 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
             </span>
           </div>
         )}
+
+          {session?.agent_type === 'claude' && (
+            <button
+              onClick={handleToggleAgentMode}
+              disabled={!canChangeMode}
+              className={cn(
+                'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
+                effectiveAgentMode === 'plan'
+                  ? 'bg-accent/20 text-accent'
+                  : 'text-text-muted hover:bg-surface-elevated hover:text-text',
+                !canChangeMode && 'cursor-not-allowed opacity-50'
+              )}
+              aria-label={`Switch to ${effectiveAgentMode === 'plan' ? 'build' : 'plan'} mode`}
+            >
+              {effectiveAgentMode === 'plan' ? 'Plan' : 'Build'}
+            </button>
+          )}
 
           <button
             onClick={() => setShowRawEvents((prev) => !prev)}

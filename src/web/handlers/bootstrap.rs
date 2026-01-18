@@ -1,9 +1,10 @@
 use axum::{extract::State, Json};
 use uuid::Uuid;
 
+use crate::core::services::{ServiceError, SessionService};
 use crate::data::{SessionTab, Workspace};
 use crate::web::error::WebError;
-use crate::web::handlers::sessions::{ensure_session_model, SessionResponse};
+use crate::web::handlers::sessions::SessionResponse;
 use crate::web::handlers::ui_state::{load_ui_state, state_store, WebUiStateResponse};
 use crate::web::handlers::workspaces::WorkspaceResponse;
 use crate::web::state::WebAppState;
@@ -61,20 +62,11 @@ pub async fn get_bootstrap(
     let store = state_store(&core)?;
     let ui_state = load_ui_state(store)?;
 
-    let session_store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
     let workspace_store = core
         .workspace_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
-    let sessions = session_store
-        .get_all()
-        .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
-    let sessions = sessions
-        .into_iter()
-        .map(|session| ensure_session_model(&core, session_store, session))
-        .collect::<Result<Vec<_>, WebError>>()?;
+    let sessions = SessionService::list_sessions(&core).map_err(|err| map_service_error(err))?;
     let workspaces = workspace_store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list workspaces: {}", e)))?;
@@ -96,4 +88,12 @@ pub async fn get_bootstrap(
         active_session: active_session.map(SessionResponse::from),
         active_workspace: active_workspace.map(WorkspaceResponse::from),
     }))
+}
+
+fn map_service_error(error: ServiceError) -> WebError {
+    match error {
+        ServiceError::InvalidInput(message) => WebError::BadRequest(message),
+        ServiceError::NotFound(message) => WebError::NotFound(message),
+        ServiceError::Internal(message) => WebError::Internal(message),
+    }
 }

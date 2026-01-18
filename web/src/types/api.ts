@@ -177,6 +177,7 @@ export interface ListModelsResponse {
 export interface UpdateSessionRequest {
   model?: string;
   agent_type?: 'claude' | 'codex' | 'gemini';
+  agent_mode?: 'build' | 'plan';
 }
 
 export interface SetDefaultModelRequest {

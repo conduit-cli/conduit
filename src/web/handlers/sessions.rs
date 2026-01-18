@@ -9,10 +9,13 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::agent::{
-    load_claude_history_with_debug, load_codex_history_with_debug, AgentType, ModelRegistry,
+    load_claude_history_with_debug, load_codex_history_with_debug, AgentMode, AgentType,
+    ModelRegistry,
 };
-use crate::core::ConduitCore;
-use crate::data::{SessionTab, SessionTabStore};
+use crate::core::services::{
+    CreateSessionParams, ServiceError, SessionService, UpdateSessionParams,
+};
+use crate::data::SessionTab;
 use crate::ui::components::MessageRole;
 use crate::web::error::WebError;
 use crate::web::state::WebAppState;
@@ -56,23 +59,6 @@ impl From<SessionTab> for SessionResponse {
     }
 }
 
-pub(crate) fn ensure_session_model(
-    core: &ConduitCore,
-    store: &SessionTabStore,
-    mut session: SessionTab,
-) -> Result<SessionTab, WebError> {
-    if session.model.is_some() {
-        return Ok(session);
-    }
-
-    let default_model = core.config().default_model_for(session.agent_type);
-    session.model = Some(default_model);
-    store
-        .update(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to update session model: {}", e)))?;
-    Ok(session)
-}
-
 /// Response for listing sessions.
 #[derive(Debug, Serialize)]
 pub struct ListSessionsResponse {
@@ -92,6 +78,7 @@ pub struct CreateSessionRequest {
 pub struct UpdateSessionRequest {
     pub model: Option<String>,
     pub agent_type: Option<String>,
+    pub agent_mode: Option<String>,
 }
 
 /// List all sessions.
@@ -99,18 +86,7 @@ pub async fn list_sessions(
     State(state): State<WebAppState>,
 ) -> Result<Json<ListSessionsResponse>, WebError> {
     let core = state.core().await;
-    let store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    let sessions = store
-        .get_all()
-        .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-    let sessions = sessions
-        .into_iter()
-        .map(|session| ensure_session_model(&core, store, session))
-        .collect::<Result<Vec<_>, WebError>>()?;
+    let sessions = SessionService::list_sessions(&core).map_err(|err| map_service_error(err))?;
 
     Ok(Json(ListSessionsResponse {
         sessions: sessions.into_iter().map(SessionResponse::from).collect(),
@@ -123,16 +99,7 @@ pub async fn get_session(
     Path(id): Path<Uuid>,
 ) -> Result<Json<SessionResponse>, WebError> {
     let core = state.core().await;
-    let store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    let session = store
-        .get_by_id(id)
-        .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
-        .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
-
-    let session = ensure_session_model(&core, store, session)?;
+    let session = SessionService::get_session(&core, id).map_err(|err| map_service_error(err))?;
 
     Ok(Json(SessionResponse::from(session)))
 }
@@ -156,43 +123,15 @@ pub async fn create_session(
     };
 
     let core = state.core().await;
-    let store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    // Get the next tab index
-    let sessions = store
-        .get_all()
-        .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-    let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
-
-    let model = if let Some(model_id) = req.model {
-        if ModelRegistry::find_model(agent_type, &model_id).is_none() {
-            return Err(WebError::BadRequest(format!(
-                "Invalid model '{}' for agent type {:?}",
-                model_id, agent_type
-            )));
-        }
-        Some(model_id)
-    } else {
-        Some(core.config().default_model_for(agent_type))
-    };
-
-    // Create session model
-    let session = SessionTab::new(
-        next_index,
-        agent_type,
-        req.workspace_id,
-        None, // agent_session_id will be set when agent starts
-        model,
-        None, // pr_number
-    );
-
-    // Save to database
-    store
-        .create(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to create session: {}", e)))?;
+    let session = SessionService::create_session(
+        &core,
+        CreateSessionParams {
+            workspace_id: req.workspace_id,
+            agent_type,
+            model: req.model,
+        },
+    )
+    .map_err(|err| map_service_error(err))?;
 
     Ok((StatusCode::CREATED, Json(SessionResponse::from(session))))
 }
@@ -203,20 +142,7 @@ pub async fn close_session(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
     let core = state.core().await;
-    let store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    // Check if session exists
-    let _session = store
-        .get_by_id(id)
-        .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
-        .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
-
-    // Delete session
-    store
-        .delete(id)
-        .map_err(|e| WebError::Internal(format!("Failed to close session: {}", e)))?;
+    SessionService::close_session(&core, id).map_err(|err| map_service_error(err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -228,63 +154,55 @@ pub async fn update_session(
     Json(req): Json<UpdateSessionRequest>,
 ) -> Result<Json<SessionResponse>, WebError> {
     let core = state.core().await;
-    let store = core
-        .session_tab_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
-    // Get existing session
-    let mut session = store
-        .get_by_id(id)
-        .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
-        .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
-
-    // Cannot change model or agent_type if session is already running (has agent_session_id)
-    if session.agent_session_id.is_some() && (req.model.is_some() || req.agent_type.is_some()) {
-        return Err(WebError::BadRequest(
-            "Cannot change model or agent type on a running session".to_string(),
-        ));
-    }
-
-    // Update agent_type if provided
-    let agent_type_changed = if let Some(ref agent_type_str) = req.agent_type {
-        let new_agent_type = match agent_type_str.to_lowercase().as_str() {
-            "claude" => AgentType::Claude,
-            "codex" => AgentType::Codex,
-            "gemini" => AgentType::Gemini,
-            _ => {
-                return Err(WebError::BadRequest(format!(
+    let agent_type = req
+        .agent_type
+        .as_ref()
+        .map(
+            |agent_type_str| match agent_type_str.to_lowercase().as_str() {
+                "claude" => Ok(AgentType::Claude),
+                "codex" => Ok(AgentType::Codex),
+                "gemini" => Ok(AgentType::Gemini),
+                _ => Err(WebError::BadRequest(format!(
                     "Invalid agent type: {}. Must be one of: claude, codex, gemini",
                     agent_type_str
-                )));
-            }
-        };
-        let changed = session.agent_type != new_agent_type;
-        session.agent_type = new_agent_type;
-        changed
-    } else {
-        false
-    };
+                ))),
+            },
+        )
+        .transpose()?;
 
-    // Validate and update model if provided
-    if let Some(ref model_id) = req.model {
-        if ModelRegistry::find_model(session.agent_type, model_id).is_none() {
-            return Err(WebError::BadRequest(format!(
-                "Invalid model '{}' for agent type {:?}",
-                model_id, session.agent_type
-            )));
-        }
-        session.model = Some(model_id.clone());
-    } else if agent_type_changed {
-        // If agent type changed but no model provided, use the new agent type's default
-        session.model = Some(core.config().default_model_for(session.agent_type));
-    }
+    let agent_mode = req
+        .agent_mode
+        .as_ref()
+        .map(|mode| match mode.to_lowercase().as_str() {
+            "build" => Ok(AgentMode::Build),
+            "plan" => Ok(AgentMode::Plan),
+            _ => Err(WebError::BadRequest(format!(
+                "Invalid agent mode: {}. Must be 'build' or 'plan'",
+                mode
+            ))),
+        })
+        .transpose()?;
 
-    // Update in database
-    store
-        .update(&session)
-        .map_err(|e| WebError::Internal(format!("Failed to update session: {}", e)))?;
+    let session = SessionService::update_session(
+        &core,
+        id,
+        UpdateSessionParams {
+            model: req.model.clone(),
+            agent_type,
+            agent_mode,
+        },
+    )
+    .map_err(|err| map_service_error(err))?;
 
     Ok(Json(SessionResponse::from(session)))
+}
+
+fn map_service_error(error: ServiceError) -> WebError {
+    match error {
+        ServiceError::InvalidInput(message) => WebError::BadRequest(message),
+        ServiceError::NotFound(message) => WebError::NotFound(message),
+        ServiceError::Internal(message) => WebError::Internal(message),
+    }
 }
 
 /// A single event/message in session history.

@@ -33,7 +33,9 @@ impl StatusManagerConfig {
         Self {
             initial_scan: web_status.initial_scan,
             concurrency: web_status.status_scan_concurrency.max(1),
-            selected_refresh_interval: Duration::from_millis(web_status.selected_refresh_interval_ms),
+            selected_refresh_interval: Duration::from_millis(
+                web_status.selected_refresh_interval_ms,
+            ),
             pr_refresh_interval: Duration::from_millis(web_status.pr_refresh_interval_ms),
         }
     }
@@ -130,11 +132,7 @@ impl StatusManager {
             return;
         }
 
-        if self
-            .inner
-            .initial_scan_started
-            .swap(true, Ordering::SeqCst)
-        {
+        if self.inner.initial_scan_started.swap(true, Ordering::SeqCst) {
             return;
         }
 

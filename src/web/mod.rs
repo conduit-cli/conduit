@@ -9,9 +9,9 @@ mod error;
 pub mod handlers;
 pub mod routes;
 mod server;
+mod state;
 mod status_manager;
 mod status_types;
-mod state;
 pub mod ws;
 
 pub use error::WebError;

@@ -1638,10 +1638,11 @@ impl App {
                         self.state
                             .model_selector_state
                             .set_default_model(agent_type, model_id.clone());
-                        self.config_mut()
-                            .set_default_model(agent_type, model_id.clone());
-
-                        if let Err(err) = crate::config::save_default_model(agent_type, &model_id) {
+                        if let Err(err) = crate::core::services::ConfigService::set_default_model(
+                            &mut self.core,
+                            agent_type,
+                            &model_id,
+                        ) {
                             tracing::warn!(error = %err, "Failed to save default model");
                             self.state.set_timed_footer_message(
                                 format!("Failed to save default model: {err}"),
