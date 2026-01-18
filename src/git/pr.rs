@@ -5,8 +5,76 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+
+#[derive(Debug, Clone, Copy)]
+pub struct GhStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+}
+
+struct GhStatusCache {
+    checked_at: Instant,
+    status: GhStatus,
+}
+
+const GH_STATUS_TTL: Duration = Duration::from_secs(30);
+static GH_STATUS_CACHE: OnceLock<Mutex<GhStatusCache>> = OnceLock::new();
+
+fn refresh_gh_status() -> GhStatus {
+    let installed = Command::new("gh")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    let authenticated = if installed {
+        Command::new("gh")
+            .args(["auth", "status"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    GhStatus {
+        installed,
+        authenticated,
+    }
+}
+
+fn gh_status_cached() -> GhStatus {
+    let now = Instant::now();
+    let cache = GH_STATUS_CACHE.get_or_init(|| {
+        let checked_at = now.checked_sub(GH_STATUS_TTL).unwrap_or(now);
+        Mutex::new(GhStatusCache {
+            checked_at,
+            status: GhStatus {
+                installed: false,
+                authenticated: false,
+            },
+        })
+    });
+
+    let mut guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let guard = poisoned.into_inner();
+            return guard.status;
+        }
+    };
+
+    if now.duration_since(guard.checked_at) >= GH_STATUS_TTL {
+        guard.status = refresh_gh_status();
+        guard.checked_at = now;
+    }
+
+    guard.status
+}
 
 /// PR state matching GitHub's actual states
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -257,6 +325,11 @@ struct GhPrView {
 pub struct PrManager;
 
 impl PrManager {
+    /// Cached GitHub CLI status (installed/authenticated).
+    pub fn gh_status() -> GhStatus {
+        gh_status_cached()
+    }
+
     /// Get repository name from git remote URL or directory name
     pub fn get_repo_name(working_dir: &Path) -> Option<String> {
         // Try git remote origin URL first
@@ -301,20 +374,12 @@ impl PrManager {
 
     /// Check if GitHub CLI (gh) is installed
     pub fn is_gh_installed() -> bool {
-        Command::new("gh")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        gh_status_cached().installed
     }
 
     /// Check if gh is authenticated
     pub fn is_gh_authenticated() -> bool {
-        Command::new("gh")
-            .args(["auth", "status"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        gh_status_cached().authenticated
     }
 
     /// Get current branch name

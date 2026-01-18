@@ -564,10 +564,15 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   // Can only change model if session hasn't started (no agent_session_id) and not processing
   const canChangeModel = !session?.agent_session_id && !isProcessing;
 
-  const handleModelSelect = useCallback((modelId: string) => {
+  const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
     if (!session) return;
+    // Only include agent_type in the request if it's different from current
+    const data: { model: string; agent_type?: 'claude' | 'codex' | 'gemini' } = { model: modelId };
+    if (newAgentType !== session.agent_type) {
+      data.agent_type = newAgentType;
+    }
     updateSessionMutation.mutate(
-      { id: session.id, data: { model: modelId } },
+      { id: session.id, data },
       {
         onSuccess: () => {
           setShowModelSelector(false);

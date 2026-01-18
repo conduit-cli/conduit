@@ -183,7 +183,7 @@ export function ChatInput({
         {/* Left: Agent Mode + Model + Agent Type */}
         <div className="flex items-center gap-2">
           {agentMode && <span className="text-accent">{agentMode}</span>}
-          {modelDisplayName && (
+          {modelDisplayName ? (
             canChangeModel && onModelClick ? (
               <button
                 onClick={onModelClick}
@@ -193,6 +193,15 @@ export function ChatInput({
               </button>
             ) : (
               <span className="text-text">{modelDisplayName}</span>
+            )
+          ) : (
+            canChangeModel && onModelClick && (
+              <button
+                onClick={onModelClick}
+                className="text-text-muted transition-colors hover:text-accent hover:underline"
+              >
+                Select model
+              </button>
             )
           )}
           {agentType && (
@@ -204,7 +213,7 @@ export function ChatInput({
                   : 'Gemini CLI'}
             </span>
           )}
-          {!modelDisplayName && !agentType && <span>Press Enter to send, Shift+Enter for new line</span>}
+          {!modelDisplayName && !agentType && !canChangeModel && <span>Press Enter to send, Shift+Enter for new line</span>}
         </div>
 
         {/* Right: Git stats + Branch */}

@@ -70,20 +70,22 @@ function latestUsageFromEvents(wsEvents: AgentEvent[], historyEvents: SessionEve
 
 function AppContent() {
   const { data: bootstrap, isLoading: isBootstrapping } = useBootstrap();
-  const { data: workspaces = [] } = useWorkspaces({ enabled: !!bootstrap });
-  const { data: sessions = [] } = useSessions({ enabled: !!bootstrap });
+  const workspacesQuery = useWorkspaces({ enabled: !!bootstrap });
+  const sessionsQuery = useSessions({ enabled: !!bootstrap });
   const { data: uiState } = useUiState({ enabled: !!bootstrap });
   const updateUiState = useUpdateUiState();
   const closeSession = useCloseSession();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [autoCreateEnabled, setAutoCreateEnabled] = useState(true);
   const [historyReady, setHistoryReady] = useState(false);
   const previousActiveSessionId = useRef<string | null>(null);
+  const bootstrapApplied = useRef(false);
 
   const resolvedUiState = uiState ?? bootstrap?.ui_state;
-  const resolvedWorkspaces = workspaces.length > 0 ? workspaces : bootstrap?.workspaces ?? [];
-  const resolvedSessions = sessions.length > 0 ? sessions : bootstrap?.sessions ?? [];
+  const resolvedWorkspaces = workspacesQuery.data ?? bootstrap?.workspaces ?? [];
+  const resolvedSessions = sessionsQuery.data ?? bootstrap?.sessions ?? [];
 
   const sortedSessions = useMemo(
     () => [...resolvedSessions].sort((a, b) => a.tab_index - b.tab_index),
@@ -100,7 +102,7 @@ function AppContent() {
   const {
     data: workspaceSession,
     isLoading: isLoadingWorkspaceSession,
-  } = useWorkspaceSession(selectedWorkspaceId);
+  } = useWorkspaceSession(selectedWorkspaceId, { enabled: autoCreateEnabled });
 
   const wsEvents = useSessionEvents(activeSessionId);
   const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
@@ -131,16 +133,18 @@ function AppContent() {
   }, [sortedSessions, resolvedUiState, updateUiState]);
 
   useEffect(() => {
-    if (!bootstrap) return;
+    if (!bootstrap || bootstrapApplied.current) return;
     if (!activeSessionId && bootstrap.active_session) {
       setActiveSessionId(bootstrap.active_session.id);
     }
     if (!selectedWorkspaceId && bootstrap.active_workspace) {
       setSelectedWorkspaceId(bootstrap.active_workspace.id);
     }
+    bootstrapApplied.current = true;
   }, [bootstrap, activeSessionId, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!autoCreateEnabled) return;
     if (!selectedWorkspaceId || !workspaceSession) return;
     if (workspaceSession.workspace_id !== selectedWorkspaceId) return;
     if (workspaceSession.id === activeSessionId) return;
@@ -149,7 +153,7 @@ function AppContent() {
       active_session_id: workspaceSession.id,
       last_workspace_id: selectedWorkspaceId,
     });
-  }, [activeSessionId, selectedWorkspaceId, updateUiState, workspaceSession]);
+  }, [activeSessionId, autoCreateEnabled, selectedWorkspaceId, updateUiState, workspaceSession]);
 
   useEffect(() => {
     if (activeSessionId || orderedSessions.length === 0 || !resolvedUiState) return;
@@ -200,10 +204,12 @@ function AppContent() {
   }, [activeSessionId, activeSession?.workspace_id, selectedWorkspaceId, updateUiState]);
 
   const handleSelectWorkspace = (workspace: Workspace) => {
+    setAutoCreateEnabled(true);
     setSelectedWorkspaceId(workspace.id);
   };
 
   const handleSelectSession = (session: Session) => {
+    setAutoCreateEnabled(true);
     setActiveSessionId(session.id);
     updateUiState.mutate({
       active_session_id: session.id,
@@ -237,8 +243,13 @@ function AppContent() {
         const nextSession = orderedSessions[nextIndex];
         setActiveSessionId(nextSession.id);
         updateUiState.mutate({ active_session_id: nextSession.id });
+        if (nextSession.workspace_id) {
+          setSelectedWorkspaceId(nextSession.workspace_id);
+          updateUiState.mutate({ last_workspace_id: nextSession.workspace_id });
+        }
       } else {
         // Last tab
+        setAutoCreateEnabled(false);
         setActiveSessionId(null);
         updateUiState.mutate({ active_session_id: null });
       }

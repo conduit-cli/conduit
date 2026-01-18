@@ -370,17 +370,27 @@ pub async fn get_workspace_status(
         .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
 
-    // Get git diff stats
-    let git_stats = GitDiffStats::from_working_dir(&workspace.path);
+    // Get git diff stats (blocking git calls off the async runtime)
+    let workspace_path = workspace.path.clone();
+    let git_stats =
+        tokio::task::spawn_blocking(move || GitDiffStats::from_working_dir(&workspace_path))
+            .await
+            .map_err(|err| WebError::Internal(format!("Git status task failed: {}", err)))?;
     let git_stats_response = if git_stats.has_changes() {
         Some(GitDiffStatsResponse::from(git_stats))
     } else {
         None
     };
 
-    // Get PR status (only if gh is available)
-    let pr_status_response = if PrManager::is_gh_installed() && PrManager::is_gh_authenticated() {
-        PrManager::get_existing_pr(&workspace.path).and_then(|pr| {
+    // Get PR status (only if gh is available); run in blocking task
+    let workspace_path = workspace.path.clone();
+    let pr_status_response = tokio::task::spawn_blocking(move || {
+        let gh_status = PrManager::gh_status();
+        if !gh_status.installed || !gh_status.authenticated {
+            return None;
+        }
+
+        PrManager::get_existing_pr(&workspace_path).and_then(|pr| {
             if pr.exists {
                 Some(PrStatusResponse {
                     number: pr.number?,
@@ -398,9 +408,9 @@ pub async fn get_workspace_status(
                 None
             }
         })
-    } else {
-        None
-    };
+    })
+    .await
+    .map_err(|err| WebError::Internal(format!("PR status task failed: {}", err)))?;
 
     Ok(Json(WorkspaceStatusResponse {
         git_stats: git_stats_response,

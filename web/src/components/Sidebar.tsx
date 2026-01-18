@@ -22,7 +22,7 @@ interface WorkspaceItemProps {
 
 function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) {
   const { data: status } = useWorkspaceStatus(workspace.id, {
-    enabled: true,
+    enabled: !!isSelected,
     refetchInterval: isSelected ? 5000 : false,
     staleTime: isSelected ? 2000 : 60000,
   });

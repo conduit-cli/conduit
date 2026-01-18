@@ -9,7 +9,7 @@ interface ModelSelectorDialogProps {
   onClose: () => void;
   currentModel: string | null;
   agentType: 'claude' | 'codex' | 'gemini';
-  onSelect: (modelId: string) => void;
+  onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => void;
   isUpdating?: boolean;
 }
 
@@ -17,7 +17,7 @@ export function ModelSelectorDialog({
   isOpen,
   onClose,
   currentModel,
-  agentType: _agentType,
+  agentType,
   onSelect,
   isUpdating = false,
 }: ModelSelectorDialogProps) {
@@ -27,13 +27,13 @@ export function ModelSelectorDialog({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { data: modelsData, isLoading } = useModels();
 
-  // Filter models based on search query and current agent type
+  // Filter models based on search query - show all agent types
   const filteredGroups = useMemo(() => {
     if (!modelsData?.groups) return [];
 
     const query = searchQuery.toLowerCase().trim();
 
-    // Filter models within each group
+    // Show all models, filtered by search query
     return modelsData.groups
       .map((group) => ({
         ...group,
@@ -51,10 +51,10 @@ export function ModelSelectorDialog({
 
   // Flatten models for keyboard navigation
   const flatModels = useMemo(() => {
-    const models: { model: ModelInfo; groupIndex: number }[] = [];
-    filteredGroups.forEach((group, groupIndex) => {
+    const models: { model: ModelInfo; groupAgentType: 'claude' | 'codex' | 'gemini' }[] = [];
+    filteredGroups.forEach((group) => {
       group.models.forEach((model) => {
-        models.push({ model, groupIndex });
+        models.push({ model, groupAgentType: group.agent_type as 'claude' | 'codex' | 'gemini' });
       });
     });
     return models;
@@ -108,14 +108,14 @@ export function ModelSelectorDialog({
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (flatModels[selectedIndex]) {
-        handleSelect(flatModels[selectedIndex].model.id);
+        handleSelect(flatModels[selectedIndex].model.id, flatModels[selectedIndex].groupAgentType);
       }
     }
   };
 
-  const handleSelect = (modelId: string) => {
+  const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini') => {
     if (isUpdating) return;
-    onSelect(modelId);
+    onSelect(modelId, modelAgentType);
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDialogElement>) => {
@@ -184,15 +184,16 @@ export function ModelSelectorDialog({
                   </div>
                   {/* Models in group */}
                   {group.models.map((model) => {
-                    const isSelected = model.id === currentModel;
+                    const isSelected = model.id === currentModel && model.agent_type === agentType;
                     const isHighlighted = currentFlatIndex === selectedIndex;
                     const flatIndex = currentFlatIndex;
+                    const groupAgentType = group.agent_type as 'claude' | 'codex' | 'gemini';
                     currentFlatIndex++;
 
                     return (
                       <button
-                        key={model.id}
-                        onClick={() => handleSelect(model.id)}
+                        key={`${group.agent_type}-${model.id}`}
+                        onClick={() => handleSelect(model.id, groupAgentType)}
                         onMouseEnter={() => setSelectedIndex(flatIndex)}
                         disabled={isUpdating}
                         className={cn(
@@ -241,7 +242,7 @@ export function ModelSelectorDialog({
           <button
             onClick={() => {
               if (flatModels[selectedIndex]) {
-                handleSelect(flatModels[selectedIndex].model.id);
+                handleSelect(flatModels[selectedIndex].model.id, flatModels[selectedIndex].groupAgentType);
               }
             }}
             disabled={isUpdating || flatModels.length === 0}

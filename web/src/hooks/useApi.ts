@@ -189,7 +189,10 @@ export function useAutoCreateWorkspace() {
 
 // Get or create session for a workspace
 // This auto-creates a session if one doesn't exist, matching TUI behavior
-export function useWorkspaceSession(workspaceId: string | null) {
+export function useWorkspaceSession(
+  workspaceId: string | null,
+  options?: { enabled?: boolean }
+) {
   const queryClient = useQueryClient();
 
   return useQuery({
@@ -200,7 +203,7 @@ export function useWorkspaceSession(workspaceId: string | null) {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
       return session;
     },
-    enabled: !!workspaceId,
+    enabled: (options?.enabled ?? true) && !!workspaceId,
     staleTime: Infinity, // Session won't change unless we create a new one
   });
 }

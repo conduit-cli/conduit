@@ -73,6 +73,7 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateSessionRequest {
     pub model: Option<String>,
+    pub agent_type: Option<String>,
 }
 
 /// List all sessions.
@@ -200,14 +201,30 @@ pub async fn update_session(
         .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
 
-    // Cannot change model if session is already running (has agent_session_id)
-    if session.agent_session_id.is_some() && req.model.is_some() {
+    // Cannot change model or agent_type if session is already running (has agent_session_id)
+    if session.agent_session_id.is_some() && (req.model.is_some() || req.agent_type.is_some()) {
         return Err(WebError::BadRequest(
-            "Cannot change model on a running session".to_string(),
+            "Cannot change model or agent type on a running session".to_string(),
         ));
     }
 
-    // Validate model if provided
+    // Update agent_type if provided
+    if let Some(ref agent_type_str) = req.agent_type {
+        let new_agent_type = match agent_type_str.to_lowercase().as_str() {
+            "claude" => AgentType::Claude,
+            "codex" => AgentType::Codex,
+            "gemini" => AgentType::Gemini,
+            _ => {
+                return Err(WebError::BadRequest(format!(
+                    "Invalid agent type: {}. Must be one of: claude, codex, gemini",
+                    agent_type_str
+                )));
+            }
+        };
+        session.agent_type = new_agent_type;
+    }
+
+    // Validate and update model if provided
     if let Some(ref model_id) = req.model {
         if ModelRegistry::find_model(session.agent_type, model_id).is_none() {
             return Err(WebError::BadRequest(format!(
