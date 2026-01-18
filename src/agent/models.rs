@@ -13,8 +13,8 @@ pub struct ModelInfo {
     pub alias: String,
     /// Description of model capabilities
     pub description: String,
-    /// Whether this is a new model (shows badge)
-    pub is_new: bool,
+    /// Whether this is the default model for the agent type
+    pub is_default: bool,
     /// Agent type this model belongs to
     pub agent_type: AgentType,
     /// Maximum context window in tokens
@@ -35,14 +35,14 @@ impl ModelInfo {
             display_name: display_name.to_string(),
             alias: alias.to_string(),
             description: description.to_string(),
-            is_new: false,
+            is_default: false,
             agent_type,
             context_window,
         }
     }
 
-    pub fn with_new_badge(mut self) -> Self {
-        self.is_new = true;
+    pub fn as_default(mut self) -> Self {
+        self.is_default = true;
         self
     }
 }
@@ -71,7 +71,8 @@ impl ModelRegistry {
                 "opus",
                 "Most powerful, best for complex reasoning",
                 Self::CLAUDE_CONTEXT_WINDOW,
-            ),
+            )
+            .as_default(),
             ModelInfo::new(
                 AgentType::Claude,
                 "sonnet",
@@ -102,7 +103,7 @@ impl ModelRegistry {
                 "Latest Codex model",
                 Self::CODEX_CONTEXT_WINDOW,
             )
-            .with_new_badge(),
+            .as_default(),
             ModelInfo::new(
                 AgentType::Codex,
                 "gpt-5.2",
@@ -132,7 +133,8 @@ impl ModelRegistry {
                 "gemini-2.5-pro",
                 "Highest quality Gemini model",
                 Self::GEMINI_CONTEXT_WINDOW,
-            ),
+            )
+            .as_default(),
             ModelInfo::new(
                 AgentType::Gemini,
                 "gemini-2.5-flash",
@@ -156,8 +158,7 @@ impl ModelRegistry {
                 "gemini-3-pro-preview",
                 "Preview Gemini 3 model",
                 Self::GEMINI_CONTEXT_WINDOW,
-            )
-            .with_new_badge(),
+            ),
             ModelInfo::new(
                 AgentType::Gemini,
                 "gemini-3-flash-preview",
@@ -165,8 +166,7 @@ impl ModelRegistry {
                 "gemini-3-flash-preview",
                 "Preview Gemini 3 flash model",
                 Self::GEMINI_CONTEXT_WINDOW,
-            )
-            .with_new_badge(),
+            ),
         ]
     }
 

@@ -157,7 +157,7 @@ export interface ModelInfo {
   id: string;
   display_name: string;
   description: string;
-  is_new: boolean;
+  is_default: boolean;
   agent_type: 'claude' | 'codex' | 'gemini';
   context_window: number;
 }

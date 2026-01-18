@@ -142,13 +142,18 @@ pub async fn create_session(
 
     let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
 
+    // Use default model if none provided
+    let model = req
+        .model
+        .or_else(|| Some(ModelRegistry::default_model(agent_type)));
+
     // Create session model
     let session = SessionTab::new(
         next_index,
         agent_type,
         req.workspace_id,
         None, // agent_session_id will be set when agent starts
-        req.model,
+        model,
         None, // pr_number
     );
 
@@ -209,7 +214,7 @@ pub async fn update_session(
     }
 
     // Update agent_type if provided
-    if let Some(ref agent_type_str) = req.agent_type {
+    let agent_type_changed = if let Some(ref agent_type_str) = req.agent_type {
         let new_agent_type = match agent_type_str.to_lowercase().as_str() {
             "claude" => AgentType::Claude,
             "codex" => AgentType::Codex,
@@ -221,8 +226,12 @@ pub async fn update_session(
                 )));
             }
         };
+        let changed = session.agent_type != new_agent_type;
         session.agent_type = new_agent_type;
-    }
+        changed
+    } else {
+        false
+    };
 
     // Validate and update model if provided
     if let Some(ref model_id) = req.model {
@@ -233,6 +242,9 @@ pub async fn update_session(
             )));
         }
         session.model = Some(model_id.clone());
+    } else if agent_type_changed {
+        // If agent type changed but no model provided, use the new agent type's default
+        session.model = Some(ModelRegistry::default_model(session.agent_type));
     }
 
     // Update in database

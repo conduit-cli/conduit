@@ -12,7 +12,7 @@ pub struct ModelInfoResponse {
     pub id: String,
     pub display_name: String,
     pub description: String,
-    pub is_new: bool,
+    pub is_default: bool,
     pub agent_type: String,
     pub context_window: i64,
 }
@@ -52,7 +52,7 @@ pub async fn list_models() -> Result<Json<ListModelsResponse>, WebError> {
                         id: m.id,
                         display_name: m.display_name,
                         description: m.description,
-                        is_new: m.is_new,
+                        is_default: m.is_default,
                         agent_type: agent_type_str.clone(),
                         context_window: m.context_window,
                     })

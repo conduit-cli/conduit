@@ -208,9 +208,9 @@ export function ModelSelectorDialog({
                             <span className="font-medium text-text">
                               {model.display_name}
                             </span>
-                            {model.is_new && (
-                              <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
-                                NEW
+                            {model.is_default && (
+                              <span className="rounded bg-text-muted/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                                DEFAULT
                               </span>
                             )}
                           </div>
