@@ -605,7 +605,9 @@ impl App {
         let expanded_repos = self.state.sidebar_data.expanded_repo_ids();
 
         // Collect all repo/workspace data first to avoid borrow conflicts
-        let repo_workspace_data: Vec<(Uuid, String, Vec<(Uuid, String, String)>)> = {
+        type RepoWorkspaceData = Vec<(Uuid, String, Vec<(Uuid, String, String)>)>;
+
+        let repo_workspace_data: RepoWorkspaceData = {
             let Some(repo_dao) = self.repo_dao() else {
                 self.state.sidebar_data = SidebarData::new();
                 return;
@@ -3597,9 +3599,7 @@ impl App {
     /// Add a project to the sidebar (repository only, no workspace)
     /// Returns the repository ID - either existing or newly created
     fn add_project_to_sidebar(&mut self, path: std::path::PathBuf) -> Option<uuid::Uuid> {
-        let Some(repo_dao) = self.repo_dao() else {
-            return None;
-        };
+        let repo_dao = self.repo_dao()?;
 
         // Check if project already exists
         if let Ok(Some(existing_repo)) = repo_dao.get_by_path(&path) {
@@ -3632,9 +3632,7 @@ impl App {
     fn add_repository(&mut self) -> Option<uuid::Uuid> {
         let path = self.state.add_repo_dialog_state.expanded_path();
 
-        let Some(repo_dao) = self.repo_dao() else {
-            return None;
-        };
+        let repo_dao = self.repo_dao()?;
 
         // Check if project already exists
         if let Ok(Some(existing_repo)) = repo_dao.get_by_path(&path) {

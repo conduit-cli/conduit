@@ -66,7 +66,7 @@ pub async fn get_bootstrap(
         .workspace_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
-    let sessions = SessionService::list_sessions(&core).map_err(|err| map_service_error(err))?;
+    let sessions = SessionService::list_sessions(&core).map_err(map_service_error)?;
     let workspaces = workspace_store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list workspaces: {}", e)))?;

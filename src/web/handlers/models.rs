@@ -43,7 +43,7 @@ pub async fn set_default_model(
     {
         let mut core = state.core_mut().await;
         ConfigService::set_default_model(&mut core, agent_type, &payload.model_id)
-            .map_err(|err| map_service_error(err))?;
+            .map_err(map_service_error)?;
     }
 
     Ok(StatusCode::NO_CONTENT)

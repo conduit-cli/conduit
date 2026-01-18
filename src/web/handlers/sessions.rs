@@ -90,7 +90,7 @@ pub async fn list_sessions(
     State(state): State<WebAppState>,
 ) -> Result<Json<ListSessionsResponse>, WebError> {
     let core = state.core().await;
-    let sessions = SessionService::list_sessions(&core).map_err(|err| map_service_error(err))?;
+    let sessions = SessionService::list_sessions(&core).map_err(map_service_error)?;
 
     Ok(Json(ListSessionsResponse {
         sessions: sessions.into_iter().map(SessionResponse::from).collect(),
@@ -103,7 +103,7 @@ pub async fn get_session(
     Path(id): Path<Uuid>,
 ) -> Result<Json<SessionResponse>, WebError> {
     let core = state.core().await;
-    let session = SessionService::get_session(&core, id).map_err(|err| map_service_error(err))?;
+    let session = SessionService::get_session(&core, id).map_err(map_service_error)?;
 
     Ok(Json(SessionResponse::from(session)))
 }
@@ -135,7 +135,7 @@ pub async fn create_session(
             model: req.model,
         },
     )
-    .map_err(|err| map_service_error(err))?;
+    .map_err(map_service_error)?;
 
     Ok((StatusCode::CREATED, Json(SessionResponse::from(session))))
 }
@@ -146,7 +146,7 @@ pub async fn close_session(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
     let core = state.core().await;
-    SessionService::close_session(&core, id).map_err(|err| map_service_error(err))?;
+    SessionService::close_session(&core, id).map_err(map_service_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -196,7 +196,7 @@ pub async fn update_session(
             agent_mode,
         },
     )
-    .map_err(|err| map_service_error(err))?;
+    .map_err(map_service_error)?;
 
     Ok(Json(SessionResponse::from(session)))
 }
@@ -458,8 +458,7 @@ pub async fn get_session_history(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InputHistoryResponse>, WebError> {
     let core = state.core().await;
-    let history =
-        SessionService::get_input_history(&core, id).map_err(|err| map_service_error(err))?;
+    let history = SessionService::get_input_history(&core, id).map_err(map_service_error)?;
     Ok(Json(InputHistoryResponse { history }))
 }
 

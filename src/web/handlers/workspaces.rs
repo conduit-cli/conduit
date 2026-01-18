@@ -434,7 +434,7 @@ pub async fn get_or_create_session(
 ) -> Result<Json<SessionResponse>, WebError> {
     let core = state.core().await;
     let session = SessionService::get_or_create_session_for_workspace(&core, workspace_id)
-        .map_err(|err| map_service_error(err))?;
+        .map_err(map_service_error)?;
 
     Ok(Json(SessionResponse::from(session)))
 }
