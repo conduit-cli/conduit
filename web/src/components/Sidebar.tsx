@@ -5,7 +5,6 @@ import {
   Plus,
   ChevronDown,
   ChevronRight,
-  Bot,
   GitBranch,
   GitPullRequest,
   MoreHorizontal,
@@ -197,7 +196,7 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
       {/* Logo */}
       <div className="flex items-center gap-3 border-b border-border px-4 py-4">
         <div className="flex size-8 items-center justify-center rounded-lg bg-accent/20">
-          <Bot className="h-5 w-5 text-accent" />
+          <img src="/conduit-logo.svg" alt="Conduit" className="h-6 w-6" />
         </div>
         <span className="text-lg font-semibold">Conduit</span>
       </div>
