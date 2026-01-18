@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { HistoryMessage } from './HistoryMessage';
 import { ChatMessage } from './ChatMessage';
+import { ToolRunMessage } from './ToolRunMessage';
 import { ChatInput } from './ChatInput';
 import { QueuePanel } from './QueuePanel';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
@@ -693,49 +694,106 @@ export function ChatView({
     setPendingControlResponse(controlResponse);
   };
 
-  const visibleWsEvents = useMemo(
-    () => {
-      const toolIdToName = new Map<string, string>();
-      wsEvents.forEach((event) => {
-        if (event.type === 'ToolStarted') {
-          toolIdToName.set(event.tool_id, event.tool_name);
-        }
-      });
+  type ToolRunEvent = {
+    type: 'ToolRun';
+    tool_id?: string;
+    tool_name?: string;
+    arguments?: unknown;
+    status: 'running' | 'success' | 'error';
+    output?: string;
+  };
 
-      return wsEvents.filter((event) => {
-        if (
-          event.type === 'SessionInit' ||
-          event.type === 'Raw' ||
-          event.type === 'TokenUsage' ||
-          event.type === 'ContextCompaction' ||
-          event.type === 'ControlRequest'
-        ) {
-          return false;
-        }
-        if (event.type === 'ToolStarted' && INLINE_PROMPT_TOOLS.has(event.tool_name)) {
-          return false;
-        }
-        if (event.type === 'ToolStarted' && event.tool_name === 'Bash') {
-          return false;
-        }
-        if (
-          event.type === 'ToolCompleted' &&
-          toolIdToName.get(event.tool_id) === 'Bash'
-        ) {
-          return false;
-        }
-        if (inlinePrompt && event.type === 'ToolCompleted' && event.tool_id === inlinePrompt.toolUseId) {
-          return false;
-        }
+  type RenderableEvent = typeof wsEvents[number] | ToolRunEvent;
+
+  const renderableWsEvents = useMemo(() => {
+    const toolIdToName = new Map<string, string>();
+    wsEvents.forEach((event) => {
+      if (event.type === 'ToolStarted') {
+        toolIdToName.set(event.tool_id, event.tool_name);
+      }
+    });
+
+    const merged: RenderableEvent[] = [];
+    const toolIndexById = new Map<string, number>();
+
+    const shouldSkip = (event: typeof wsEvents[number]) => {
+      if (
+        event.type === 'SessionInit' ||
+        event.type === 'Raw' ||
+        event.type === 'TokenUsage' ||
+        event.type === 'ContextCompaction' ||
+        event.type === 'ControlRequest'
+      ) {
         return true;
-      });
-    },
-    [wsEvents, inlinePrompt]
-  );
+      }
+      if (event.type === 'ToolStarted' && INLINE_PROMPT_TOOLS.has(event.tool_name)) {
+        return true;
+      }
+      if (event.type === 'ToolStarted' && event.tool_name === 'Bash') {
+        return true;
+      }
+      if (event.type === 'ToolCompleted' && toolIdToName.get(event.tool_id) === 'Bash') {
+        return true;
+      }
+      if (inlinePrompt && event.type === 'ToolCompleted' && event.tool_id === inlinePrompt.toolUseId) {
+        return true;
+      }
+      return false;
+    };
+
+    for (const event of wsEvents) {
+      if (shouldSkip(event)) {
+        continue;
+      }
+
+      if (event.type === 'ToolStarted') {
+        const run: ToolRunEvent = {
+          type: 'ToolRun',
+          tool_id: event.tool_id,
+          tool_name: event.tool_name,
+          arguments: event.arguments,
+          status: 'running',
+        };
+        toolIndexById.set(event.tool_id, merged.length);
+        merged.push(run);
+        continue;
+      }
+
+      if (event.type === 'ToolCompleted') {
+        const output = event.success ? (event.result ?? '') : (event.error ?? event.result ?? '');
+        const status = event.success ? 'success' : 'error';
+        const existingIndex = toolIndexById.get(event.tool_id);
+        if (existingIndex !== undefined) {
+          const existing = merged[existingIndex];
+          if (existing.type === 'ToolRun') {
+            merged[existingIndex] = {
+              ...existing,
+              status,
+              output,
+            };
+            continue;
+          }
+        }
+
+        merged.push({
+          type: 'ToolRun',
+          tool_id: event.tool_id,
+          tool_name: toolIdToName.get(event.tool_id),
+          status,
+          output,
+        });
+        continue;
+      }
+
+      merged.push(event);
+    }
+
+    return merged;
+  }, [inlinePrompt, wsEvents]);
 
   // Check if we have content to display
   const hasHistory = historyEvents.length > 0;
-  const hasWsEvents = visibleWsEvents.length > 0;
+  const hasWsEvents = renderableWsEvents.length > 0;
   const hasOptimisticMessages = optimisticUserMessages.length > 0;
   const hasContent = hasHistory || hasWsEvents || hasOptimisticMessages;
   const rawEventsForView = useMemo(() => {
@@ -1022,8 +1080,18 @@ export function ChatView({
               <HistoryMessage key={`optimistic-${index}`} event={{ role: 'user', content: message }} />
             ))}
             {/* Real-time messages from WebSocket */}
-            {visibleWsEvents.map((event, index) => (
-              <ChatMessage key={`ws-${index}`} event={event} />
+            {renderableWsEvents.map((event, index) => (
+              event.type === 'ToolRun' ? (
+                <ToolRunMessage
+                  key={`ws-tool-${event.tool_id ?? index}`}
+                  toolName={event.tool_name}
+                  toolArgs={event.arguments}
+                  status={event.status}
+                  output={event.output}
+                />
+              ) : (
+                <ChatMessage key={`ws-${index}`} event={event} />
+              )
             ))}
             {inlinePrompt && (
               <InlinePrompt

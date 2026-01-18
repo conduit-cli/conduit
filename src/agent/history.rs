@@ -733,9 +733,8 @@ fn convert_claude_entry_with_tools(
                                         if let Some(tool_info) = tool_uses.get(tool_use_id) {
                                             let result_content = block
                                                 .get("content")
-                                                .and_then(|c| c.as_str())
-                                                .unwrap_or("")
-                                                .to_string();
+                                                .map(extract_tool_result_content)
+                                                .unwrap_or_default();
                                             let is_error = block
                                                 .get("is_error")
                                                 .and_then(|e| e.as_bool())
@@ -838,9 +837,8 @@ fn convert_claude_entry_with_tools(
                 if let Some(tool_info) = tool_uses.get(tool_use_id) {
                     let content = entry
                         .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                        .map(extract_tool_result_content)
+                        .unwrap_or_default();
                     let is_error = entry
                         .get("is_error")
                         .and_then(|e| e.as_bool())
@@ -926,6 +924,34 @@ fn format_tool_args(tool_name: &str, input: &Value) -> String {
             // Default: serialize the whole input
             fallback()
         }
+    }
+}
+
+fn extract_tool_result_content(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(items) => {
+            let mut parts = Vec::new();
+            for item in items {
+                if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                    parts.push(text.to_string());
+                    continue;
+                }
+                if let Some(text) = item.get("content").and_then(|t| t.as_str()) {
+                    parts.push(text.to_string());
+                    continue;
+                }
+                if let Some(text) = item.as_str() {
+                    parts.push(text.to_string());
+                    continue;
+                }
+                parts.push(item.to_string());
+            }
+            parts.join("\n")
+        }
+        Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+        Value::Null => String::new(),
+        other => other.to_string(),
     }
 }
 
