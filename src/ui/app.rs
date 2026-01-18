@@ -7947,14 +7947,14 @@ impl App {
                             .as_ref()
                             .map(|p| p.render_as_lines(chat_area.width as usize));
 
-                    session.chat_view.render_with_indicator(
-                        chat_area,
-                        f.buffer_mut(),
-                        thinking_line,
-                        queue_lines,
-                        prompt_lines,
-                        self.config.ui.show_chat_scrollbar,
-                    );
+                        session.chat_view.render_with_indicator(
+                            chat_area,
+                            f.buffer_mut(),
+                            thinking_line,
+                            queue_lines,
+                            prompt_lines,
+                            self.config.ui.show_chat_scrollbar,
+                        );
 
                         // Check if inline prompt is active
                         let has_inline_prompt = session.inline_prompt.is_some();
