@@ -540,12 +540,17 @@ impl ChatView {
         }
     }
 
-    /// Calculate content area with padding for margins and scrollbar
-    fn content_area(area: Rect) -> Option<Rect> {
+    /// Calculate content area with padding for left margin and optional scrollbar.
+    fn content_area(area: Rect, show_scrollbar: bool) -> Option<Rect> {
+        let width = if show_scrollbar {
+            area.width.saturating_sub(4) // 2 left margin + 1 scrollbar + 1 gap
+        } else {
+            area.width.saturating_sub(2) // 2 left margin
+        };
         let content = Rect {
             x: area.x.saturating_add(2),
             y: area.y,
-            width: area.width.saturating_sub(4), // 2 left margin + 1 scrollbar + 1 gap
+            width,
             height: area.height,
         };
         if content.width < 3 || content.height < 1 {
@@ -554,18 +559,8 @@ impl ChatView {
         Some(content)
     }
 
-    pub(crate) fn content_area_for(area: Rect) -> Option<Rect> {
-        Self::content_area(area)
-    }
-
-    /// Calculate scrollbar area (rightmost column)
-    fn scrollbar_area(area: Rect) -> Rect {
-        Rect {
-            x: area.x + area.width.saturating_sub(1),
-            y: area.y,
-            width: 1,
-            height: area.height,
-        }
+    pub(crate) fn content_area_for(area: Rect, show_scrollbar: bool) -> Option<Rect> {
+        Self::content_area(area, show_scrollbar)
     }
 
     /// Add a message to the chat
@@ -864,8 +859,15 @@ impl ChatView {
             && self.selection_anchor != self.selection_head
     }
 
-    pub fn begin_selection(&mut self, click_x: u16, click_y: u16, area: Rect) -> bool {
-        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area) else {
+    pub fn begin_selection(
+        &mut self,
+        click_x: u16,
+        click_y: u16,
+        area: Rect,
+        show_scrollbar: bool,
+    ) -> bool {
+        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area, show_scrollbar)
+        else {
             return false;
         };
         self.selection_anchor = Some(point);
@@ -880,11 +882,13 @@ impl ChatView {
         click_y: u16,
         area: Rect,
         is_streaming: bool,
+        show_scrollbar: bool,
     ) -> bool {
         if self.selection_anchor.is_none() {
             return false;
         }
-        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area) else {
+        let Some(point) = self.selection_point_from_mouse(click_x, click_y, area, show_scrollbar)
+        else {
             return false;
         };
         self.selection_head = Some(point);
@@ -892,7 +896,7 @@ impl ChatView {
         // Lock scroll position during streaming to prevent auto-scroll from
         // disrupting the active selection.
         if is_streaming && self.selection_scroll_lock.is_none() {
-            let Some(content) = Self::content_area(area) else {
+            let Some(content) = Self::content_area(area, show_scrollbar) else {
                 return true;
             };
             let cached_len = self.flat_cache.len();
@@ -966,8 +970,9 @@ impl ChatView {
         click_x: u16,
         click_y: u16,
         area: Rect,
+        show_scrollbar: bool,
     ) -> Option<SelectionPoint> {
-        let content = Self::content_area(area)?;
+        let content = Self::content_area(area, show_scrollbar)?;
         if click_x < content.x
             || click_y < content.y
             || click_x >= content.x + content.width
@@ -1321,8 +1326,13 @@ impl ChatView {
         area: Rect,
         show_thinking_line: bool,
         queue_lines_len: usize,
+        show_scrollbar: bool,
     ) -> Option<ScrollbarMetrics> {
-        let content = Self::content_area(area)?;
+        if !show_scrollbar {
+            return None;
+        }
+
+        let content = Self::content_area(area, true)?;
 
         self.ensure_cache(content.width);
         self.ensure_flat_cache();
@@ -1352,7 +1362,12 @@ impl ChatView {
         }
 
         Some(ScrollbarMetrics {
-            area: Self::scrollbar_area(area),
+            area: Rect {
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y,
+                width: 1,
+                height: area.height,
+            },
             total: total_lines,
             visible: visible_height,
         })
@@ -2162,7 +2177,7 @@ impl ChatView {
 
     /// Render the chat view
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        self.render_with_indicator(area, buf, None, None, None);
+        self.render_with_indicator(area, buf, None, None, None, false);
     }
 
     /// Render the chat view with optional indicators and prompt lines.
@@ -2178,8 +2193,9 @@ impl ChatView {
         thinking_line: Option<Line<'static>>,
         queue_lines: Option<Vec<Line<'static>>>,
         prompt_lines: Option<Vec<Line<'static>>>,
+        show_scrollbar: bool,
     ) {
-        let Some(content) = Self::content_area(area) else {
+        let Some(content) = Self::content_area(area, show_scrollbar) else {
             return;
         };
 
@@ -2308,13 +2324,20 @@ impl ChatView {
         };
         Paragraph::new(highlighted).render(render_area, buf);
 
-        render_minimal_scrollbar(
-            Self::scrollbar_area(area),
-            buf,
-            total_lines,
-            visible_height,
-            scroll_from_top,
-        );
+        if show_scrollbar {
+            render_minimal_scrollbar(
+                Rect {
+                    x: area.x + area.width.saturating_sub(1),
+                    y: area.y,
+                    width: 1,
+                    height: area.height,
+                },
+                buf,
+                total_lines,
+                visible_height,
+                scroll_from_top,
+            );
+        }
     }
 
     fn invalidate_theme_cache_if_needed(&mut self) {

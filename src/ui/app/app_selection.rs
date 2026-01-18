@@ -38,7 +38,12 @@ impl App {
                     self.state.sidebar_state.set_focused(false);
                 }
                 session.input_box.clear_selection();
-                if session.chat_view.begin_selection(x, y, chat_area) {
+                if session.chat_view.begin_selection(
+                    x,
+                    y,
+                    chat_area,
+                    self.config.ui.show_chat_scrollbar,
+                ) {
                     self.state.selection_drag = Some(SelectionDragTarget::Chat);
                     return true;
                 }
@@ -93,9 +98,13 @@ impl App {
                             session.chat_view.scroll_down(1);
                             scrolled_lines = scrolled_lines.saturating_add(1);
                         }
-                        session
-                            .chat_view
-                            .update_selection(x, y, chat_area, session.is_processing);
+                        session.chat_view.update_selection(
+                            x,
+                            y,
+                            chat_area,
+                            session.is_processing,
+                            self.config.ui.show_chat_scrollbar,
+                        );
                         handled = true;
                     }
                 }

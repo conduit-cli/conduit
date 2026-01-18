@@ -51,6 +51,8 @@ pub struct Config {
     pub steer: SteerConfig,
     /// Selection and clipboard configuration
     pub selection: SelectionConfig,
+    /// UI configuration
+    pub ui: UiConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -112,10 +114,20 @@ pub struct SelectionConfig {
     pub clear_selection_after_copy: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct UiConfig {
+    pub show_chat_scrollbar: bool,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlSelectionConfig {
     pub auto_copy_selection: Option<bool>,
     pub clear_selection_after_copy: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlUiConfig {
+    pub show_chat_scrollbar: Option<bool>,
 }
 
 /// TOML representation of default model
@@ -160,6 +172,9 @@ impl Default for Config {
             selection: SelectionConfig {
                 auto_copy_selection: true,
                 clear_selection_after_copy: true,
+            },
+            ui: UiConfig {
+                show_chat_scrollbar: false,
             },
         }
     }
@@ -229,6 +244,8 @@ pub struct TomlConfig {
     pub steer: Option<TomlSteerConfig>,
     /// Selection configuration
     pub selection: Option<TomlSelectionConfig>,
+    /// UI configuration
+    pub ui: Option<TomlUiConfig>,
 }
 
 impl TomlKeybindings {
@@ -599,6 +616,13 @@ impl Config {
                         {
                             config.selection.clear_selection_after_copy =
                                 clear_selection_after_copy;
+                        }
+                    }
+
+                    // Load UI configuration
+                    if let Some(ui) = toml_config.ui {
+                        if let Some(show_chat_scrollbar) = ui.show_chat_scrollbar {
+                            config.ui.show_chat_scrollbar = show_chat_scrollbar;
                         }
                     }
                 }

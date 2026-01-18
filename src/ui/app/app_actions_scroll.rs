@@ -67,7 +67,9 @@ impl App {
                     self.state.tab_manager.active_session_mut(),
                     self.state.chat_area,
                 ) {
-                    if let Some(content) = ChatView::content_area_for(chat_area) {
+                    if let Some(content) =
+                        ChatView::content_area_for(chat_area, self.config.ui.show_chat_scrollbar)
+                    {
                         let mut extra_len = 0usize;
                         if session.is_processing {
                             extra_len += 1;
@@ -96,7 +98,9 @@ impl App {
                     self.state.tab_manager.active_session_mut(),
                     self.state.chat_area,
                 ) {
-                    if let Some(content) = ChatView::content_area_for(chat_area) {
+                    if let Some(content) =
+                        ChatView::content_area_for(chat_area, self.config.ui.show_chat_scrollbar)
+                    {
                         let mut extra_len = 0usize;
                         if session.is_processing {
                             extra_len += 1;

@@ -280,6 +280,7 @@ impl App {
                     area,
                     session.is_processing,
                     session.queued_messages.len(),
+                    self.config.ui.show_chat_scrollbar,
                 )
             }
             ScrollDragTarget::Input => {
