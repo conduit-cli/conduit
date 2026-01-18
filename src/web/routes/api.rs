@@ -6,8 +6,8 @@ use axum::{
 };
 
 use crate::web::handlers::{
-    bootstrap, external_sessions, models, queue, repositories, sessions, themes, ui_state,
-    workspaces,
+    bootstrap, external_sessions, models, onboarding, queue, repositories, sessions, themes,
+    ui_state, workspaces,
 };
 use crate::web::state::WebAppState;
 
@@ -76,6 +76,11 @@ pub fn api_routes() -> Router<WebAppState> {
             "/sessions/{id}/queue/{message_id}",
             delete(queue::delete_queue_message),
         )
+        // Onboarding routes
+        .route("/onboarding/base-dir", get(onboarding::get_base_dir))
+        .route("/onboarding/base-dir", post(onboarding::set_base_dir))
+        .route("/onboarding/projects", get(onboarding::list_projects))
+        .route("/onboarding/add-project", post(onboarding::add_project))
         // External session import
         .route(
             "/external-sessions",

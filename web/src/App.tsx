@@ -1,11 +1,20 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Layout, ChatView } from './components';
+import {
+  Layout,
+  ChatView,
+  OnboardingEmptyState,
+  BaseDirDialog,
+  ProjectPickerDialog,
+  AddProjectDialog,
+  CreateWorkspaceDialog,
+} from './components';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
 import { SessionImportDialog } from './components/SessionImportDialog';
 import { WebSocketProvider, ThemeProvider } from './hooks';
 import {
   useBootstrap,
+  useRepositories,
   useWorkspaces,
   useSessions,
   useUiState,
@@ -16,8 +25,9 @@ import {
   useSessionEvents,
   useWorkspaceSession,
   useCloseSession,
+  useOnboardingBaseDir,
 } from './hooks';
-import type { Workspace, Session, SessionEvent, AgentEvent } from './types';
+import type { Repository, Workspace, Session, SessionEvent, AgentEvent } from './types';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -72,6 +82,7 @@ function latestUsageFromEvents(wsEvents: AgentEvent[], historyEvents: SessionEve
 
 function AppContent() {
   const { data: bootstrap, isLoading: isBootstrapping } = useBootstrap();
+  const repositoriesQuery = useRepositories({ enabled: !!bootstrap });
   const workspacesQuery = useWorkspaces({ enabled: !!bootstrap });
   const sessionsQuery = useSessions({ enabled: !!bootstrap });
   const { data: uiState } = useUiState({ enabled: !!bootstrap });
@@ -85,12 +96,18 @@ function AppContent() {
   const [historyReady, setHistoryReady] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isBaseDirDialogOpen, setIsBaseDirDialogOpen] = useState(false);
+  const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
+  const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
+  const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
   const previousActiveSessionId = useRef<string | null>(null);
   const bootstrapApplied = useRef(false);
 
   const resolvedUiState = uiState ?? bootstrap?.ui_state;
+  const resolvedRepositories = repositoriesQuery.data ?? [];
   const resolvedWorkspaces = workspacesQuery.data ?? bootstrap?.workspaces ?? [];
   const resolvedSessions = sessionsQuery.data ?? bootstrap?.sessions ?? [];
+  const { data: onboardingBaseDir } = useOnboardingBaseDir({ enabled: !!bootstrap });
 
   const sortedSessions = useMemo(
     () => [...resolvedSessions].sort((a, b) => a.tab_index - b.tab_index),
@@ -293,12 +310,40 @@ function AppContent() {
   };
 
   const handleNewSession = () => {
-    // TODO: Open new session dialog
-    console.log('New session requested');
+    if (resolvedRepositories.length === 0) {
+      if (onboardingBaseDir?.base_dir) {
+        setIsProjectPickerOpen(true);
+      } else {
+        setIsBaseDirDialogOpen(true);
+      }
+      return;
+    }
+
+    if (resolvedWorkspaces.length === 0) {
+      if (resolvedRepositories.length > 0) {
+        setCreateWorkspaceRepo(resolvedRepositories[0]);
+      }
+      return;
+    }
+
+    if (!selectedWorkspaceId) {
+      if (resolvedWorkspaces.length > 0) {
+        setSelectedWorkspaceId(resolvedWorkspaces[0].id);
+      }
+      return;
+    }
+
+    setAutoCreateEnabled(true);
   };
 
   const handleOpenImport = () => {
     setIsImportDialogOpen(true);
+  };
+
+  const handleOnboardingAdded = () => {
+    setIsBaseDirDialogOpen(false);
+    setIsProjectPickerOpen(false);
+    setIsAddProjectOpen(false);
   };
 
   const handleImportedSession = (session: Session) => {
@@ -334,7 +379,16 @@ function AppContent() {
         id: 'new-session',
         label: 'Start New Session',
         onSelect: handleNewSession,
-        disabled: true,
+      },
+      {
+        id: 'add-project',
+        label: 'Add Project',
+        onSelect: () => setIsAddProjectOpen(true),
+      },
+      {
+        id: 'set-projects-dir',
+        label: 'Set Projects Directory',
+        onSelect: () => setIsBaseDirDialogOpen(true),
       },
     ],
     [handleNewSession, handleOpenImport, handleToggleSidebar, isSidebarOpen]
@@ -351,11 +405,14 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  const showOnboarding = resolvedRepositories.length === 0;
+
   return (
     <>
       <Layout
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
+        onCreateWorkspace={(repository) => setCreateWorkspaceRepo(repository)}
         sessions={orderedSessions}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
@@ -370,17 +427,56 @@ function AppContent() {
         onImportSession={handleOpenImport}
         isBootstrapping={isBootstrapping}
       >
-        <ChatView
-          session={activeSession}
-          onNewSession={handleNewSession}
-          isLoadingSession={isLoadingSession}
-          onForkedSession={handleImportedSession}
-        />
+        {showOnboarding ? (
+          <OnboardingEmptyState
+            onAddProject={() => setIsAddProjectOpen(true)}
+            onSetBaseDir={() => setIsBaseDirDialogOpen(true)}
+            onImportSession={handleOpenImport}
+          />
+        ) : (
+          <ChatView
+            session={activeSession}
+            onNewSession={handleNewSession}
+            isLoadingSession={isLoadingSession}
+            onForkedSession={handleImportedSession}
+          />
+        )}
       </Layout>
       <SessionImportDialog
         isOpen={isImportDialogOpen}
         onClose={() => setIsImportDialogOpen(false)}
         onImported={handleImportedSession}
+      />
+      {createWorkspaceRepo && (
+        <CreateWorkspaceDialog
+          repositoryId={createWorkspaceRepo.id}
+          repositoryName={createWorkspaceRepo.name}
+          isOpen={!!createWorkspaceRepo}
+          onClose={() => setCreateWorkspaceRepo(null)}
+          onSuccess={(workspace) => {
+            setCreateWorkspaceRepo(null);
+            setSelectedWorkspaceId(workspace.id);
+            updateUiState.mutate({ last_workspace_id: workspace.id });
+          }}
+        />
+      )}
+      <BaseDirDialog
+        isOpen={isBaseDirDialogOpen}
+        onClose={() => setIsBaseDirDialogOpen(false)}
+        onSaved={() => {
+          setIsBaseDirDialogOpen(false);
+          setIsProjectPickerOpen(true);
+        }}
+      />
+      <ProjectPickerDialog
+        isOpen={isProjectPickerOpen}
+        onClose={() => setIsProjectPickerOpen(false)}
+        onAdded={handleOnboardingAdded}
+      />
+      <AddProjectDialog
+        isOpen={isAddProjectOpen}
+        onClose={() => setIsAddProjectOpen(false)}
+        onAdded={handleOnboardingAdded}
       />
       <CommandPalette
         isOpen={isCommandPaletteOpen}

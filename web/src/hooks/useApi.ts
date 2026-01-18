@@ -12,6 +12,8 @@ import type {
   SetDefaultModelRequest,
   AddQueueMessageRequest,
   UpdateQueueMessageRequest,
+  OnboardingProjectsResponse,
+  AddOnboardingProjectRequest,
 } from '../types';
 
 // Query keys
@@ -35,6 +37,8 @@ export const queryKeys = {
   sessionQueue: (id: string) => ['sessions', id, 'queue'] as const,
   externalSessions: (agentType?: string | null) =>
     ['external-sessions', agentType ?? 'all'] as const,
+  onboardingBaseDir: ['onboarding', 'base-dir'] as const,
+  onboardingProjects: ['onboarding', 'projects'] as const,
   uiState: ['ui', 'state'] as const,
   bootstrap: ['bootstrap'] as const,
 };
@@ -80,10 +84,12 @@ export function useAgents() {
 }
 
 // Repositories
-export function useRepositories() {
+export function useRepositories(options?: { enabled?: boolean; staleTime?: number }) {
   return useQuery({
     queryKey: queryKeys.repositories,
     queryFn: api.getRepositories,
+    enabled: options?.enabled,
+    staleTime: options?.staleTime,
   });
 }
 
@@ -111,6 +117,46 @@ export function useDeleteRepository() {
     mutationFn: (id: string) => api.deleteRepository(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+    },
+  });
+}
+
+// Onboarding
+export function useOnboardingBaseDir(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.onboardingBaseDir,
+    queryFn: api.getOnboardingBaseDir,
+    enabled: options?.enabled ?? true,
+    staleTime: 0,
+  });
+}
+
+export function useSetOnboardingBaseDir() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (baseDir: string) => api.setOnboardingBaseDir(baseDir),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboardingBaseDir });
+    },
+  });
+}
+
+export function useOnboardingProjects(options?: { enabled?: boolean }) {
+  return useQuery<OnboardingProjectsResponse>({
+    queryKey: queryKeys.onboardingProjects,
+    queryFn: api.listOnboardingProjects,
+    enabled: options?.enabled ?? true,
+    staleTime: 0,
+  });
+}
+
+export function useAddOnboardingProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: AddOnboardingProjectRequest) => api.addOnboardingProject(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboardingProjects });
     },
   });
 }

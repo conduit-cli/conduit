@@ -9,3 +9,7 @@ export * from './ThemeSwitcher';
 export * from './CreateWorkspaceDialog';
 export * from './SessionTabs';
 export * from './InlinePrompt';
+export * from './onboarding/OnboardingEmptyState';
+export * from './onboarding/BaseDirDialog';
+export * from './onboarding/ProjectPickerDialog';
+export * from './onboarding/AddProjectDialog';

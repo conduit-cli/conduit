@@ -33,6 +33,10 @@ import type {
   ForkSessionResponse,
   PrPreflightResponse,
   PrCreateResponse,
+  OnboardingBaseDirResponse,
+  OnboardingProjectsResponse,
+  AddOnboardingProjectRequest,
+  AddOnboardingProjectResponse,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -318,6 +322,31 @@ export async function getUiState(): Promise<UiState> {
 
 export async function updateUiState(data: Partial<UiState>): Promise<UiState> {
   return request('/ui/state', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// Onboarding
+export async function getOnboardingBaseDir(): Promise<OnboardingBaseDirResponse> {
+  return request('/onboarding/base-dir');
+}
+
+export async function setOnboardingBaseDir(base_dir: string): Promise<OnboardingBaseDirResponse> {
+  return request('/onboarding/base-dir', {
+    method: 'POST',
+    body: JSON.stringify({ base_dir }),
+  });
+}
+
+export async function listOnboardingProjects(): Promise<OnboardingProjectsResponse> {
+  return request('/onboarding/projects');
+}
+
+export async function addOnboardingProject(
+  data: AddOnboardingProjectRequest
+): Promise<AddOnboardingProjectResponse> {
+  return request('/onboarding/add-project', {
     method: 'POST',
     body: JSON.stringify(data),
   });

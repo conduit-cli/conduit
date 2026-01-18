@@ -242,6 +242,28 @@ export interface UiState {
   last_workspace_id: string | null;
 }
 
+export interface OnboardingBaseDirResponse {
+  base_dir: string | null;
+}
+
+export interface OnboardingProjectEntry {
+  name: string;
+  path: string;
+  modified_at: string;
+}
+
+export interface OnboardingProjectsResponse {
+  projects: OnboardingProjectEntry[];
+}
+
+export interface AddOnboardingProjectRequest {
+  path: string;
+}
+
+export interface AddOnboardingProjectResponse {
+  repository: Repository;
+}
+
 // Model types
 export interface ModelInfo {
   id: string;

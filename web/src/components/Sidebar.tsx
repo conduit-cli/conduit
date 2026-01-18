@@ -166,9 +166,14 @@ function RepositorySection({
 interface SidebarProps {
   selectedWorkspaceId?: string | null;
   onSelectWorkspace?: (workspace: Workspace) => void;
+  onCreateWorkspace?: (repository: Repository) => void;
 }
 
-export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps) {
+export function Sidebar({
+  selectedWorkspaceId,
+  onSelectWorkspace,
+  onCreateWorkspace,
+}: SidebarProps) {
   const { data: repositories = [] } = useRepositories();
   const { data: workspaces = [] } = useWorkspaces();
   const { data: agents = [] } = useAgents();
@@ -184,6 +189,10 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
   }, {} as Record<string, Workspace[]>);
 
   const handleNewWorkspace = (repository: Repository) => {
+    if (onCreateWorkspace) {
+      onCreateWorkspace(repository);
+      return;
+    }
     setCreateWorkspaceRepo(repository);
   };
 

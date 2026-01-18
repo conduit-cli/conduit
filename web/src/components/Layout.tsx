@@ -2,12 +2,13 @@ import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { SessionTabs } from './SessionTabs';
-import type { Session, Workspace, WorkspaceStatus } from '../types';
+import type { Repository, Session, Workspace, WorkspaceStatus } from '../types';
 
 interface LayoutProps {
   children: ReactNode;
   selectedWorkspaceId?: string | null;
   onSelectWorkspace?: (workspace: Workspace) => void;
+  onCreateWorkspace?: (repository: Repository) => void;
   sessions: Session[];
   activeSessionId: string | null;
   onSelectSession: (session: Session) => void;
@@ -27,6 +28,7 @@ export function Layout({
   children,
   selectedWorkspaceId,
   onSelectWorkspace,
+  onCreateWorkspace,
   sessions,
   activeSessionId,
   onSelectSession,
@@ -95,6 +97,7 @@ export function Layout({
         <Sidebar
           selectedWorkspaceId={selectedWorkspaceId}
           onSelectWorkspace={onSelectWorkspace}
+          onCreateWorkspace={onCreateWorkspace}
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">
