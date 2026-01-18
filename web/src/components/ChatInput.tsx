@@ -1,5 +1,5 @@
-import { useRef, useEffect, type KeyboardEvent } from 'react';
-import { Send, Loader2 } from 'lucide-react';
+import { useRef, useEffect, useState, type KeyboardEvent } from 'react';
+import { Send, Loader2, GitBranch } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 interface ChatInputProps {
@@ -21,14 +21,6 @@ interface ChatInputProps {
   canChangeModel?: boolean;
 }
 
-// Format branch name with ellipsis for long paths
-function formatBranch(branch: string): string {
-  if (branch.includes('/')) {
-    return '…/' + branch.split('/').pop();
-  }
-  return branch;
-}
-
 export function ChatInput({
   onSend,
   value,
@@ -46,8 +38,26 @@ export function ChatInput({
   canChangeModel = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const statusBarRef = useRef<HTMLDivElement>(null);
   const historyIndexRef = useRef<number | null>(null);
   const historyDraftRef = useRef('');
+  const [isCompact, setIsCompact] = useState(false);
+
+  // Responsive check for status bar - switch to compact mode when space is tight
+  useEffect(() => {
+    const statusBar = statusBarRef.current;
+    if (!statusBar) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // Switch to compact mode when width is under 400px
+        setIsCompact(entry.contentRect.width < 400);
+      }
+    });
+
+    observer.observe(statusBar);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!textareaRef.current) return;
@@ -179,33 +189,39 @@ export function ChatInput({
           )}
         </button>
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-text-muted">
+      <div
+        ref={statusBarRef}
+        className={cn(
+          "mt-2 flex text-xs text-text-muted",
+          isCompact ? "flex-col gap-1" : "items-center justify-between"
+        )}
+      >
         {/* Left: Agent Mode + Model + Agent Type */}
-        <div className="flex items-center gap-2">
-          {agentMode && <span className="text-accent">{agentMode}</span>}
+        <div className="flex items-center gap-2 min-w-0">
+          {agentMode && <span className="text-accent shrink-0">{agentMode}</span>}
           {modelDisplayName ? (
             canChangeModel && onModelClick ? (
               <button
                 onClick={onModelClick}
-                className="text-text transition-colors hover:text-accent hover:underline"
+                className="text-text transition-colors hover:text-accent hover:underline shrink-0"
               >
                 {modelDisplayName}
               </button>
             ) : (
-              <span className="text-text">{modelDisplayName}</span>
+              <span className="text-text shrink-0">{modelDisplayName}</span>
             )
           ) : (
             canChangeModel && onModelClick && (
               <button
                 onClick={onModelClick}
-                className="text-text-muted transition-colors hover:text-accent hover:underline"
+                className="text-text-muted transition-colors hover:text-accent hover:underline shrink-0"
               >
                 Select model
               </button>
             )
           )}
           {agentType && (
-            <span>
+            <span className="shrink-0">
               {agentType === 'claude'
                 ? 'Claude Code'
                 : agentType === 'codex'
@@ -213,21 +229,42 @@ export function ChatInput({
                   : 'Gemini CLI'}
             </span>
           )}
-          {!modelDisplayName && !agentType && !canChangeModel && <span>Press Enter to send, Shift+Enter for new line</span>}
+          {!modelDisplayName && !agentType && !canChangeModel && (
+            <span className="truncate">Press Enter to send, Shift+Enter for new line</span>
+          )}
         </div>
 
         {/* Right: Git stats + Branch */}
-        <div className="flex items-center gap-1.5">
-          {gitStats && (gitStats.additions > 0 || gitStats.deletions > 0) && (
-            <>
-              <span className="text-green-400">+{gitStats.additions}</span>
-              <span className="text-red-400">-{gitStats.deletions}</span>
-              <span>·</span>
-            </>
-          )}
-          {branch && <span className="max-w-48 truncate">{formatBranch(branch)}</span>}
-          {!gitStats && !branch && <span>Powered by Claude</span>}
-        </div>
+        {(gitStats || branch) && (
+          <div className={cn(
+            "flex items-center gap-2 min-w-0",
+            isCompact && "justify-end"
+          )}>
+            {gitStats && (gitStats.additions > 0 || gitStats.deletions > 0) && (
+              <div className="flex items-center gap-1 shrink-0 tabular-nums">
+                <span className="text-diff-add">+{gitStats.additions}</span>
+                <span className="text-diff-remove">-{gitStats.deletions}</span>
+              </div>
+            )}
+            {branch && (
+              <div
+                className="flex items-center gap-1.5 min-w-0 group"
+                title={branch}
+              >
+                <GitBranch className="h-3 w-3 shrink-0 text-text-muted/60" />
+                <span
+                  className={cn(
+                    "font-mono text-[11px] tracking-tight text-text-muted/80",
+                    "truncate",
+                    isCompact ? "max-w-[120px]" : "max-w-[200px]"
+                  )}
+                >
+                  {branch}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
