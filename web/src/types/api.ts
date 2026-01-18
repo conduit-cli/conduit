@@ -143,6 +143,7 @@ export interface PrStatus {
 export interface WorkspaceStatus {
   git_stats?: GitDiffStats;
   pr_status?: PrStatus;
+  updated_at?: string;
 }
 
 export interface UiState {

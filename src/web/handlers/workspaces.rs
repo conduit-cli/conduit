@@ -11,11 +11,11 @@ use uuid::Uuid;
 
 use crate::agent::AgentType;
 use crate::data::{SessionTab, Workspace};
-use crate::git::{CheckState, GitDiffStats, PrManager, PrState};
 use crate::util::names::{generate_branch_name, generate_workspace_name, get_git_username};
 use crate::web::error::WebError;
 use crate::web::handlers::sessions::SessionResponse;
 use crate::web::state::WebAppState;
+use crate::web::status_types::WorkspaceStatusResponse;
 
 /// Response for a single workspace.
 #[derive(Debug, Serialize)]
@@ -195,10 +195,13 @@ pub async fn create_workspace(
         .create(&workspace)
         .map_err(|e| WebError::Internal(format!("Failed to create workspace: {}", e)))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(WorkspaceResponse::from(workspace)),
-    ))
+    let response = WorkspaceResponse::from(workspace.clone());
+    state
+        .status_manager()
+        .register_workspace(workspace.id, workspace.path.clone());
+    state.status_manager().refresh_workspace(workspace.id);
+
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// Archive a workspace (soft delete).
@@ -221,6 +224,8 @@ pub async fn archive_workspace(
     store
         .archive(id, None)
         .map_err(|e| WebError::Internal(format!("Failed to archive workspace: {}", e)))?;
+
+    state.status_manager().remove_workspace(id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -246,41 +251,9 @@ pub async fn delete_workspace(
         .delete(id)
         .map_err(|e| WebError::Internal(format!("Failed to delete workspace: {}", e)))?;
 
+    state.status_manager().remove_workspace(id);
+
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Response for git diff statistics.
-#[derive(Debug, Serialize)]
-pub struct GitDiffStatsResponse {
-    pub additions: usize,
-    pub deletions: usize,
-    pub files_changed: usize,
-}
-
-impl From<GitDiffStats> for GitDiffStatsResponse {
-    fn from(stats: GitDiffStats) -> Self {
-        Self {
-            additions: stats.additions,
-            deletions: stats.deletions,
-            files_changed: stats.files_changed,
-        }
-    }
-}
-
-/// Response for PR status.
-#[derive(Debug, Serialize)]
-pub struct PrStatusResponse {
-    pub number: u32,
-    pub state: String,
-    pub checks_passing: bool,
-    pub url: Option<String>,
-}
-
-/// Response for workspace git/PR status.
-#[derive(Debug, Serialize)]
-pub struct WorkspaceStatusResponse {
-    pub git_stats: Option<GitDiffStatsResponse>,
-    pub pr_status: Option<PrStatusResponse>,
 }
 
 /// Auto-create a workspace with generated name/branch.
@@ -348,10 +321,13 @@ pub async fn auto_create_workspace(
         WebError::Internal(format!("Failed to save workspace: {}", e))
     })?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(WorkspaceResponse::from(workspace)),
-    ))
+    let response = WorkspaceResponse::from(workspace.clone());
+    state
+        .status_manager()
+        .register_workspace(workspace.id, workspace.path.clone());
+    state.status_manager().refresh_workspace(workspace.id);
+
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 /// Get workspace git status and PR info.
@@ -370,52 +346,16 @@ pub async fn get_workspace_status(
         .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
 
-    // Get git diff stats (blocking git calls off the async runtime)
-    let workspace_path = workspace.path.clone();
-    let git_stats =
-        tokio::task::spawn_blocking(move || GitDiffStats::from_working_dir(&workspace_path))
-            .await
-            .map_err(|err| WebError::Internal(format!("Git status task failed: {}", err)))?;
-    let git_stats_response = if git_stats.has_changes() {
-        Some(GitDiffStatsResponse::from(git_stats))
-    } else {
-        None
-    };
+    state
+        .status_manager()
+        .register_workspace(workspace.id, workspace.path.clone());
 
-    // Get PR status (only if gh is available); run in blocking task
-    let workspace_path = workspace.path.clone();
-    let pr_status_response = tokio::task::spawn_blocking(move || {
-        let gh_status = PrManager::gh_status();
-        if !gh_status.installed || !gh_status.authenticated {
-            return None;
-        }
-
-        PrManager::get_existing_pr(&workspace_path).and_then(|pr| {
-            if pr.exists {
-                Some(PrStatusResponse {
-                    number: pr.number?,
-                    state: match pr.state {
-                        PrState::Open => "open".to_string(),
-                        PrState::Merged => "merged".to_string(),
-                        PrState::Closed => "closed".to_string(),
-                        PrState::Draft => "draft".to_string(),
-                        PrState::Unknown => "unknown".to_string(),
-                    },
-                    checks_passing: matches!(pr.checks.state(), CheckState::Passing),
-                    url: pr.url,
-                })
-            } else {
-                None
-            }
-        })
-    })
-    .await
-    .map_err(|err| WebError::Internal(format!("PR status task failed: {}", err)))?;
-
-    Ok(Json(WorkspaceStatusResponse {
-        git_stats: git_stats_response,
-        pr_status: pr_status_response,
-    }))
+    Ok(Json(
+        state
+            .status_manager()
+            .get_status(workspace.id)
+            .unwrap_or_default(),
+    ))
 }
 
 /// Get or create a session for a workspace.

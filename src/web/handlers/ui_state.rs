@@ -123,6 +123,9 @@ pub async fn update_ui_state(
 
     if let Some(last_workspace_id) = payload.last_workspace_id {
         ui_state.last_workspace_id = last_workspace_id;
+        state
+            .status_manager()
+            .set_active_workspace(last_workspace_id);
     }
 
     save_ui_state(store, &ui_state)?;

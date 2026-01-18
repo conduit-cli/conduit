@@ -22,7 +22,7 @@ impl GitDiffStats {
     pub fn from_working_dir(working_dir: &Path) -> Self {
         // Get stats for staged and unstaged changes
         let output = Command::new("git")
-            .args(["diff", "--shortstat", "HEAD"])
+            .args(["--no-optional-locks", "diff", "--shortstat", "HEAD"])
             .current_dir(working_dir)
             .output();
 
@@ -37,7 +37,7 @@ impl GitDiffStats {
         // Fallback: if HEAD comparison fails (e.g., no commits yet), try unstaged-only diff
         if stats == GitDiffStats::default() {
             let unstaged = Command::new("git")
-                .args(["diff", "--shortstat"])
+                .args(["--no-optional-locks", "diff", "--shortstat"])
                 .current_dir(working_dir)
                 .output();
 

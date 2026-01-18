@@ -140,6 +140,7 @@ fn build_router(state: WebAppState, cors_permissive: bool) -> Router {
 /// This starts the Axum server and blocks until shutdown.
 pub async fn run_server(state: WebAppState, config: ServerConfig) -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    state.start_status_manager().await;
     let app = build_router(state, config.cors_permissive);
 
     tracing::info!("Starting web server at http://{}", addr);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRepositories, useWorkspaces, useAgents, useWorkspaceStatus } from '../hooks';
 import {
   FolderGit2,
@@ -21,11 +21,19 @@ interface WorkspaceItemProps {
 }
 
 function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) {
+  const [hasInitialStatus, setHasInitialStatus] = useState(false);
+  const shouldPoll = !!isSelected || !hasInitialStatus;
   const { data: status } = useWorkspaceStatus(workspace.id, {
-    enabled: !!isSelected,
-    refetchInterval: isSelected ? 5000 : false,
-    staleTime: isSelected ? 2000 : 60000,
+    enabled: true,
+    refetchInterval: shouldPoll ? 5000 : false,
+    staleTime: shouldPoll ? 2000 : Number.POSITIVE_INFINITY,
   });
+
+  useEffect(() => {
+    if (!hasInitialStatus && status?.updated_at) {
+      setHasInitialStatus(true);
+    }
+  }, [hasInitialStatus, status?.updated_at]);
 
   // Extract branch display name (show last part after / with ellipsis prefix)
   const branchDisplay = workspace.branch.includes('/')

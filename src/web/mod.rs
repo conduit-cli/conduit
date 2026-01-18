@@ -9,10 +9,14 @@ mod error;
 pub mod handlers;
 pub mod routes;
 mod server;
+mod status_manager;
+mod status_types;
 mod state;
 pub mod ws;
 
 pub use error::WebError;
 pub use server::{run_server, ServerConfig};
 pub use state::WebAppState;
+pub use status_manager::{StatusManager, StatusManagerConfig};
+pub use status_types::{GitDiffStatsResponse, PrStatusResponse, WorkspaceStatusResponse};
 pub use ws::{ClientMessage, ServerMessage, SessionManager};

@@ -53,6 +53,8 @@ pub struct Config {
     pub selection: SelectionConfig,
     /// UI configuration
     pub ui: UiConfig,
+    /// Web workspace status configuration
+    pub web_status: WebStatusConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -130,6 +132,22 @@ pub struct TomlUiConfig {
     pub show_chat_scrollbar: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct WebStatusConfig {
+    pub initial_scan: bool,
+    pub status_scan_concurrency: usize,
+    pub selected_refresh_interval_ms: u64,
+    pub pr_refresh_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlWebStatusConfig {
+    pub initial_scan: Option<bool>,
+    pub status_scan_concurrency: Option<usize>,
+    pub selected_refresh_interval_ms: Option<u64>,
+    pub pr_refresh_interval_ms: Option<u64>,
+}
+
 /// TOML representation of default model
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlDefaultModelConfig {
@@ -175,6 +193,12 @@ impl Default for Config {
             },
             ui: UiConfig {
                 show_chat_scrollbar: false,
+            },
+            web_status: WebStatusConfig {
+                initial_scan: true,
+                status_scan_concurrency: 2,
+                selected_refresh_interval_ms: 5000,
+                pr_refresh_interval_ms: 60000,
             },
         }
     }
@@ -246,6 +270,8 @@ pub struct TomlConfig {
     pub selection: Option<TomlSelectionConfig>,
     /// UI configuration
     pub ui: Option<TomlUiConfig>,
+    /// Web status configuration
+    pub web_status: Option<TomlWebStatusConfig>,
 }
 
 impl TomlKeybindings {
@@ -623,6 +649,24 @@ impl Config {
                     if let Some(ui) = toml_config.ui {
                         if let Some(show_chat_scrollbar) = ui.show_chat_scrollbar {
                             config.ui.show_chat_scrollbar = show_chat_scrollbar;
+                        }
+                    }
+                    // Load web status configuration
+                    if let Some(web_status) = toml_config.web_status {
+                        if let Some(initial_scan) = web_status.initial_scan {
+                            config.web_status.initial_scan = initial_scan;
+                        }
+                        if let Some(status_scan_concurrency) = web_status.status_scan_concurrency {
+                            config.web_status.status_scan_concurrency = status_scan_concurrency;
+                        }
+                        if let Some(selected_refresh_interval_ms) =
+                            web_status.selected_refresh_interval_ms
+                        {
+                            config.web_status.selected_refresh_interval_ms =
+                                selected_refresh_interval_ms;
+                        }
+                        if let Some(pr_refresh_interval_ms) = web_status.pr_refresh_interval_ms {
+                            config.web_status.pr_refresh_interval_ms = pr_refresh_interval_ms;
                         }
                     }
                 }

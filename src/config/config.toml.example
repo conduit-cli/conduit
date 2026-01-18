@@ -80,6 +80,21 @@
 # # Show a minimal scrollbar in the chat view (default: false)
 # show_chat_scrollbar = false
 #
+# ============================================================================
+# Web Workspace Status
+# ============================================================================
+# Configure how the web sidebar preloads and refreshes git/PR status.
+#
+# [web_status]
+# # Run an initial scan for all workspaces on startup
+# initial_scan = true
+# # Max number of concurrent status scans
+# status_scan_concurrency = 2
+# # Refresh interval (ms) for the selected workspace
+# selected_refresh_interval_ms = 5000
+# # Refresh interval (ms) for PR status on the selected workspace
+# pr_refresh_interval_ms = 60000
+#
 # Configure paths to external tools if they are not in your PATH or if
 # you want to use a specific version. All paths are optional - by default,
 # tools are auto-detected from your PATH.
