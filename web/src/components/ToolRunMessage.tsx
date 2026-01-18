@@ -8,6 +8,7 @@ import {
   GlobToolCard,
   GrepToolCard,
   TodoWriteToolCard,
+  TaskToolCard,
   type ToolStatus,
 } from './tools';
 
@@ -153,6 +154,20 @@ export function ToolRunMessage({
           <TodoWriteToolCard
             status={status}
             content={isSuccess ? stringifyArgs(toolArgs) : undefined}
+            error={!isSuccess ? content : undefined}
+          />
+        );
+        break;
+      }
+      case 'Task': {
+        const description = parsedArgs.description ? String(parsedArgs.description) : undefined;
+        const prompt = parsedArgs.prompt ? String(parsedArgs.prompt) : undefined;
+        body = (
+          <TaskToolCard
+            status={status}
+            description={description}
+            prompt={prompt}
+            output={isSuccess ? content : undefined}
             error={!isSuccess ? content : undefined}
           />
         );

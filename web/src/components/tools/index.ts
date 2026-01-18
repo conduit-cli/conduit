@@ -6,3 +6,4 @@ export { BashToolCard } from './BashToolCard';
 export { GlobToolCard } from './GlobToolCard';
 export { GrepToolCard } from './GrepToolCard';
 export { TodoWriteToolCard } from './TodoWriteToolCard';
+export { TaskToolCard } from './TaskToolCard';
