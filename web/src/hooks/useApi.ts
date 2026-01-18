@@ -7,7 +7,9 @@ import type {
   CreateWorkspaceRequest,
   CreateSessionRequest,
   UpdateSessionRequest,
+  Session,
   SessionEventsQuery,
+  SetDefaultModelRequest,
 } from '../types';
 
 // Query keys
@@ -240,7 +242,26 @@ export function useCloseSession() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.closeSession(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.sessions });
+      const previous = queryClient.getQueryData<Session[]>(queryKeys.sessions);
+      if (previous) {
+        queryClient.setQueryData(
+          queryKeys.sessions,
+          previous.filter((session) => session.id !== id)
+        );
+      }
+      return { previous };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKeys.sessions, context.previous);
+      }
+    },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
   });
@@ -264,6 +285,16 @@ export function useModels() {
     queryKey: queryKeys.models,
     queryFn: api.getModels,
     staleTime: 60000, // Models don't change often
+  });
+}
+
+export function useSetDefaultModel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SetDefaultModelRequest) => api.setDefaultModel(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.models });
+    },
   });
 }
 

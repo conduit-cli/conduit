@@ -11,7 +11,8 @@ use uuid::Uuid;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentType, ModelRegistry,
 };
-use crate::data::SessionTab;
+use crate::core::ConduitCore;
+use crate::data::{SessionTab, SessionTabStore};
 use crate::ui::components::MessageRole;
 use crate::web::error::WebError;
 use crate::web::state::WebAppState;
@@ -55,6 +56,23 @@ impl From<SessionTab> for SessionResponse {
     }
 }
 
+pub(crate) fn ensure_session_model(
+    core: &ConduitCore,
+    store: &SessionTabStore,
+    mut session: SessionTab,
+) -> Result<SessionTab, WebError> {
+    if session.model.is_some() {
+        return Ok(session);
+    }
+
+    let default_model = core.config().default_model_for(session.agent_type);
+    session.model = Some(default_model);
+    store
+        .update(&session)
+        .map_err(|e| WebError::Internal(format!("Failed to update session model: {}", e)))?;
+    Ok(session)
+}
+
 /// Response for listing sessions.
 #[derive(Debug, Serialize)]
 pub struct ListSessionsResponse {
@@ -89,6 +107,11 @@ pub async fn list_sessions(
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
 
+    let sessions = sessions
+        .into_iter()
+        .map(|session| ensure_session_model(&core, store, session))
+        .collect::<Result<Vec<_>, WebError>>()?;
+
     Ok(Json(ListSessionsResponse {
         sessions: sessions.into_iter().map(SessionResponse::from).collect(),
     }))
@@ -108,6 +131,8 @@ pub async fn get_session(
         .get_by_id(id)
         .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
+
+    let session = ensure_session_model(&core, store, session)?;
 
     Ok(Json(SessionResponse::from(session)))
 }
@@ -142,10 +167,17 @@ pub async fn create_session(
 
     let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
 
-    // Use default model if none provided
-    let model = req
-        .model
-        .or_else(|| Some(ModelRegistry::default_model(agent_type)));
+    let model = if let Some(model_id) = req.model {
+        if ModelRegistry::find_model(agent_type, &model_id).is_none() {
+            return Err(WebError::BadRequest(format!(
+                "Invalid model '{}' for agent type {:?}",
+                model_id, agent_type
+            )));
+        }
+        Some(model_id)
+    } else {
+        Some(core.config().default_model_for(agent_type))
+    };
 
     // Create session model
     let session = SessionTab::new(
@@ -244,7 +276,7 @@ pub async fn update_session(
         session.model = Some(model_id.clone());
     } else if agent_type_changed {
         // If agent type changed but no model provided, use the new agent type's default
-        session.model = Some(ModelRegistry::default_model(session.agent_type));
+        session.model = Some(core.config().default_model_for(session.agent_type));
     }
 
     // Update in database

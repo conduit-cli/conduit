@@ -1,10 +1,12 @@
 //! Models handler for the Conduit web API.
 
-use axum::Json;
-use serde::Serialize;
+use axum::{extract::State, http::StatusCode, Json};
+use serde::{Deserialize, Serialize};
 
 use crate::agent::{AgentType, ModelRegistry};
+use crate::config::save_default_model;
 use crate::web::error::WebError;
+use crate::web::state::WebAppState;
 
 /// Information about a single model.
 #[derive(Debug, Serialize)]
@@ -33,8 +35,13 @@ pub struct ListModelsResponse {
 }
 
 /// List all available models grouped by agent type.
-pub async fn list_models() -> Result<Json<ListModelsResponse>, WebError> {
+pub async fn list_models(
+    State(state): State<WebAppState>,
+) -> Result<Json<ListModelsResponse>, WebError> {
     let agent_types = [AgentType::Claude, AgentType::Codex, AgentType::Gemini];
+    let core = state.core().await;
+    let default_agent = core.config().default_agent;
+    let default_model = core.config().default_model_for(default_agent);
 
     let groups: Vec<ModelGroup> = agent_types
         .iter()
@@ -48,13 +55,16 @@ pub async fn list_models() -> Result<Json<ListModelsResponse>, WebError> {
                 icon: ModelRegistry::agent_icon(agent_type).to_string(),
                 models: models
                     .into_iter()
-                    .map(|m| ModelInfoResponse {
-                        id: m.id,
-                        display_name: m.display_name,
-                        description: m.description,
-                        is_default: m.is_default,
-                        agent_type: agent_type_str.clone(),
-                        context_window: m.context_window,
+                    .map(|m| {
+                        let is_default = m.agent_type == default_agent && m.id == default_model;
+                        ModelInfoResponse {
+                            id: m.id,
+                            display_name: m.display_name,
+                            description: m.description,
+                            is_default,
+                            agent_type: agent_type_str.clone(),
+                            context_window: m.context_window,
+                        }
                     })
                     .collect(),
             }
@@ -62,4 +72,46 @@ pub async fn list_models() -> Result<Json<ListModelsResponse>, WebError> {
         .collect();
 
     Ok(Json(ListModelsResponse { groups }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetDefaultModelRequest {
+    pub agent_type: String,
+    pub model_id: String,
+}
+
+/// Update the default model selection for the web UI.
+pub async fn set_default_model(
+    State(state): State<WebAppState>,
+    Json(payload): Json<SetDefaultModelRequest>,
+) -> Result<StatusCode, WebError> {
+    let agent_type = match payload.agent_type.to_lowercase().as_str() {
+        "claude" => AgentType::Claude,
+        "codex" => AgentType::Codex,
+        "gemini" => AgentType::Gemini,
+        _ => {
+            return Err(WebError::BadRequest(format!(
+                "Invalid agent type: {}. Must be one of: claude, codex, gemini",
+                payload.agent_type
+            )));
+        }
+    };
+
+    if ModelRegistry::find_model(agent_type, &payload.model_id).is_none() {
+        return Err(WebError::BadRequest(format!(
+            "Invalid model '{}' for agent type {:?}",
+            payload.model_id, agent_type
+        )));
+    }
+
+    {
+        let mut core = state.core_mut().await;
+        core.config_mut()
+            .set_default_model(agent_type, payload.model_id.clone());
+    }
+
+    save_default_model(agent_type, &payload.model_id)
+        .map_err(|err| WebError::Internal(format!("Failed to save default model: {}", err)))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }

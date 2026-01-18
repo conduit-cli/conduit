@@ -60,6 +60,7 @@ pub fn api_routes() -> Router<WebAppState> {
         .route("/sessions/{id}/events", get(sessions::get_session_events))
         // Model routes
         .route("/models", get(models::list_models))
+        .route("/models/default", patch(models::set_default_model))
         // Theme routes
         .route("/themes", get(themes::list_available_themes))
         .route("/themes/current", get(themes::get_current_theme))

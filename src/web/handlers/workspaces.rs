@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::agent::AgentType;
 use crate::data::{SessionTab, Workspace};
 use crate::util::names::{generate_branch_name, generate_workspace_name, get_git_username};
 use crate::web::error::WebError;
@@ -376,10 +375,16 @@ pub async fn get_or_create_session(
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
     // Try to find existing session for this workspace
-    if let Some(existing) = session_store
+    if let Some(mut existing) = session_store
         .get_by_workspace_id(workspace_id)
         .map_err(|e| WebError::Internal(format!("Failed to query session: {}", e)))?
     {
+        if existing.model.is_none() {
+            existing.model = Some(core.config().default_model_for(existing.agent_type));
+            session_store.update(&existing).map_err(|e| {
+                WebError::Internal(format!("Failed to update session model: {}", e))
+            })?;
+        }
         return Ok(Json(SessionResponse::from(existing)));
     }
 
@@ -393,19 +398,20 @@ pub async fn get_or_create_session(
         .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", workspace_id)))?;
 
-    // No existing session - create new one with default agent (Claude)
+    // No existing session - create new one with default agent
     let sessions = session_store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
 
     let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
 
+    let default_agent = core.config().default_agent;
     let session = SessionTab::new(
         next_index,
-        AgentType::Claude, // Default agent
+        default_agent,
         Some(workspace_id),
         None, // agent_session_id will be set when agent starts
-        None, // model - use default
+        Some(core.config().default_model_for(default_agent)),
         None, // pr_number
     );
 

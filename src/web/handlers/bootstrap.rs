@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::data::{SessionTab, Workspace};
 use crate::web::error::WebError;
-use crate::web::handlers::sessions::SessionResponse;
+use crate::web::handlers::sessions::{ensure_session_model, SessionResponse};
 use crate::web::handlers::ui_state::{load_ui_state, state_store, WebUiStateResponse};
 use crate::web::handlers::workspaces::WorkspaceResponse;
 use crate::web::state::WebAppState;
@@ -71,6 +71,10 @@ pub async fn get_bootstrap(
     let sessions = session_store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list sessions: {}", e)))?;
+    let sessions = sessions
+        .into_iter()
+        .map(|session| ensure_session_model(&core, session_store, session))
+        .collect::<Result<Vec<_>, WebError>>()?;
     let workspaces = workspace_store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list workspaces: {}", e)))?;

@@ -5,7 +5,15 @@ import { ChatInput } from './ChatInput';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
 import { RawEventsPanel } from './RawEventsPanel';
 import { ModelSelectorDialog } from './ModelSelectorDialog';
-import { useSessionEvents, useWebSocket, useWorkspace, useWorkspaceStatus, useRawSessionEvents, useUpdateSession } from '../hooks';
+import {
+  useSessionEvents,
+  useWebSocket,
+  useWorkspace,
+  useWorkspaceStatus,
+  useRawSessionEvents,
+  useUpdateSession,
+  useSetDefaultModel,
+} from '../hooks';
 import { getSessionEventsPage } from '../lib/api';
 import type { Session, UserQuestion, SessionEvent, HistoryDebugEntry, AgentEvent } from '../types';
 import { MessageSquarePlus, Loader2, Bug } from 'lucide-react';
@@ -130,6 +138,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const { sendPrompt, respondToControl } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
+  const setDefaultModelMutation = useSetDefaultModel();
   const [historyEvents, setHistoryEvents] = useState<SessionEvent[]>([]);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -581,6 +590,13 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     );
   }, [session, updateSessionMutation]);
 
+  const handleSetDefaultModel = useCallback(
+    (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
+      setDefaultModelMutation.mutate({ agent_type: newAgentType, model_id: modelId });
+    },
+    [setDefaultModelMutation]
+  );
+
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
     return (
@@ -746,7 +762,9 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         currentModel={session?.model ?? null}
         agentType={session?.agent_type ?? 'claude'}
         onSelect={handleModelSelect}
+        onSetDefault={handleSetDefaultModel}
         isUpdating={updateSessionMutation.isPending}
+        isSettingDefault={setDefaultModelMutation.isPending}
       />
     </div>
   );

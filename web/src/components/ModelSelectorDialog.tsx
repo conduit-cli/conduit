@@ -10,7 +10,9 @@ interface ModelSelectorDialogProps {
   currentModel: string | null;
   agentType: 'claude' | 'codex' | 'gemini';
   onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => void;
+  onSetDefault: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => void;
   isUpdating?: boolean;
+  isSettingDefault?: boolean;
 }
 
 export function ModelSelectorDialog({
@@ -19,13 +21,16 @@ export function ModelSelectorDialog({
   currentModel,
   agentType,
   onSelect,
+  onSetDefault,
   isUpdating = false,
+  isSettingDefault = false,
 }: ModelSelectorDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { data: modelsData, isLoading } = useModels();
+  const isBusy = isUpdating || isSettingDefault;
 
   // Filter models based on search query - show all agent types
   const filteredGroups = useMemo(() => {
@@ -83,14 +88,14 @@ export function ModelSelectorDialog({
 
     const handleCancel = (e: Event) => {
       e.preventDefault();
-      if (!isUpdating) {
+      if (!isBusy) {
         onClose();
       }
     };
 
     dialog.addEventListener('cancel', handleCancel);
     return () => dialog.removeEventListener('cancel', handleCancel);
-  }, [onClose, isUpdating]);
+  }, [onClose, isBusy]);
 
   // Reset selected index when search changes
   useEffect(() => {
@@ -114,12 +119,17 @@ export function ModelSelectorDialog({
   };
 
   const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini') => {
-    if (isUpdating) return;
+    if (isBusy) return;
     onSelect(modelId, modelAgentType);
   };
 
+  const handleSetDefault = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini') => {
+    if (isBusy) return;
+    onSetDefault(modelId, modelAgentType);
+  };
+
   const handleBackdropClick = (e: React.MouseEvent<HTMLDialogElement>) => {
-    if (e.target === dialogRef.current && !isUpdating) {
+    if (e.target === dialogRef.current && !isBusy) {
       onClose();
     }
   };
@@ -140,7 +150,7 @@ export function ModelSelectorDialog({
           <h2 className="text-lg font-semibold text-text">Select Model</h2>
           <button
             onClick={onClose}
-            disabled={isUpdating}
+            disabled={isBusy}
             className="rounded-md p-1 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
             aria-label="Close dialog"
           >
@@ -195,12 +205,12 @@ export function ModelSelectorDialog({
                         key={`${group.agent_type}-${model.id}`}
                         onClick={() => handleSelect(model.id, groupAgentType)}
                         onMouseEnter={() => setSelectedIndex(flatIndex)}
-                        disabled={isUpdating}
+                        disabled={isBusy}
                         className={cn(
                           'flex w-full items-center justify-between px-6 py-2.5 text-left transition-colors',
                           isHighlighted && 'bg-surface-elevated',
                           !isHighlighted && 'hover:bg-surface-elevated/50',
-                          isUpdating && 'cursor-not-allowed opacity-50'
+                          isBusy && 'cursor-not-allowed opacity-50'
                         )}
                       >
                         <div className="flex flex-col">
@@ -234,10 +244,30 @@ export function ModelSelectorDialog({
         <div className="flex shrink-0 justify-end gap-3 border-t border-border px-6 py-4">
           <button
             onClick={onClose}
-            disabled={isUpdating}
+            disabled={isBusy}
             className="rounded-lg px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
           >
             Cancel
+          </button>
+          <button
+            onClick={() => {
+              const selected = flatModels[selectedIndex];
+              if (selected) {
+                handleSetDefault(selected.model.id, selected.groupAgentType);
+              }
+            }}
+            disabled={
+              isBusy ||
+              flatModels.length === 0 ||
+              !!flatModels[selectedIndex]?.model.is_default
+            }
+            className={cn(
+              'flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-text transition-colors hover:bg-surface-elevated disabled:opacity-50',
+              isBusy && 'cursor-wait'
+            )}
+          >
+            {isSettingDefault && <Loader2 className="h-4 w-4 animate-spin" />}
+            Set Default
           </button>
           <button
             onClick={() => {
@@ -245,13 +275,13 @@ export function ModelSelectorDialog({
                 handleSelect(flatModels[selectedIndex].model.id, flatModels[selectedIndex].groupAgentType);
               }
             }}
-            disabled={isUpdating || flatModels.length === 0}
+            disabled={isBusy || flatModels.length === 0}
             className={cn(
               'flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-70',
-              isUpdating && 'cursor-wait'
+              isBusy && 'cursor-wait'
             )}
           >
-            {isUpdating && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
             {isUpdating ? 'Updating...' : 'Select Model'}
           </button>
         </div>

@@ -79,6 +79,7 @@ function AppContent() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [autoCreateEnabled, setAutoCreateEnabled] = useState(true);
+  const [suppressedWorkspaceIds, setSuppressedWorkspaceIds] = useState<Set<string>>(new Set());
   const [historyReady, setHistoryReady] = useState(false);
   const previousActiveSessionId = useRef<string | null>(null);
   const bootstrapApplied = useRef(false);
@@ -99,10 +100,13 @@ function AppContent() {
   const activeSession = orderedSessions.find((session) => session.id === activeSessionId) ?? null;
   const { data: activeWorkspace } = useWorkspace(activeSession?.workspace_id ?? '');
   const { data: workspaceStatus } = useWorkspaceStatus(activeSession?.workspace_id ?? null);
+  const allowAutoCreate =
+    autoCreateEnabled &&
+    (!selectedWorkspaceId || !suppressedWorkspaceIds.has(selectedWorkspaceId));
   const {
     data: workspaceSession,
     isLoading: isLoadingWorkspaceSession,
-  } = useWorkspaceSession(selectedWorkspaceId, { enabled: autoCreateEnabled });
+  } = useWorkspaceSession(selectedWorkspaceId, { enabled: allowAutoCreate });
 
   const wsEvents = useSessionEvents(activeSessionId);
   const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
@@ -205,6 +209,12 @@ function AppContent() {
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     setAutoCreateEnabled(true);
+    setSuppressedWorkspaceIds((prev) => {
+      if (!prev.has(workspace.id)) return prev;
+      const next = new Set(prev);
+      next.delete(workspace.id);
+      return next;
+    });
     setSelectedWorkspaceId(workspace.id);
   };
 
@@ -216,6 +226,12 @@ function AppContent() {
       last_workspace_id: session.workspace_id ?? null,
     });
     if (session.workspace_id) {
+      setSuppressedWorkspaceIds((prev) => {
+        if (!prev.has(session.workspace_id!)) return prev;
+        const next = new Set(prev);
+        next.delete(session.workspace_id!);
+        return next;
+      });
       setSelectedWorkspaceId(session.workspace_id);
     }
   };
@@ -235,11 +251,20 @@ function AppContent() {
   const handleCloseSession = (sessionId: string) => {
     const currentIndex = orderedSessions.findIndex((s) => s.id === sessionId);
     const isActiveTab = sessionId === activeSessionId;
+    const sessionToClose = orderedSessions.find((session) => session.id === sessionId) ?? null;
+    if (sessionToClose?.workspace_id) {
+      setSuppressedWorkspaceIds((prev) => {
+        const next = new Set(prev);
+        next.add(sessionToClose.workspace_id!);
+        return next;
+      });
+    }
 
     if (isActiveTab) {
       if (orderedSessions.length > 1) {
         // Prefer next tab, fallback to previous
-        const nextIndex = currentIndex < orderedSessions.length - 1 ? currentIndex + 1 : currentIndex - 1;
+        const nextIndex =
+          currentIndex < orderedSessions.length - 1 ? currentIndex + 1 : currentIndex - 1;
         const nextSession = orderedSessions[nextIndex];
         setActiveSessionId(nextSession.id);
         updateUiState.mutate({ active_session_id: nextSession.id });

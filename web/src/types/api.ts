@@ -178,3 +178,8 @@ export interface UpdateSessionRequest {
   model?: string;
   agent_type?: 'claude' | 'codex' | 'gemini';
 }
+
+export interface SetDefaultModelRequest {
+  agent_type: 'claude' | 'codex' | 'gemini';
+  model_id: string;
+}

@@ -17,6 +17,7 @@ import type {
   CreateWorkspaceRequest,
   CreateSessionRequest,
   UpdateSessionRequest,
+  SetDefaultModelRequest,
   WorkspaceStatus,
   UiState,
   BootstrapResponse,
@@ -151,6 +152,13 @@ export async function updateSession(id: string, data: UpdateSessionRequest): Pro
 // Models
 export async function getModels(): Promise<ListModelsResponse> {
   return request('/models');
+}
+
+export async function setDefaultModel(payload: SetDefaultModelRequest): Promise<void> {
+  await request('/models/default', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }
 
 function buildSessionEventsQuery(query?: SessionEventsQuery) {
