@@ -13,6 +13,7 @@ import {
   useSessionEventsFromApi,
   useSessionEvents,
   useWorkspaceSession,
+  useCloseSession,
 } from './hooks';
 import type { Workspace, Session, SessionEvent, AgentEvent } from './types';
 
@@ -73,6 +74,7 @@ function AppContent() {
   const { data: sessions = [] } = useSessions({ enabled: !!bootstrap });
   const { data: uiState } = useUiState({ enabled: !!bootstrap });
   const updateUiState = useUpdateUiState();
+  const closeSession = useCloseSession();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -224,6 +226,32 @@ function AppContent() {
     });
   };
 
+  const handleCloseSession = (sessionId: string) => {
+    const currentIndex = orderedSessions.findIndex((s) => s.id === sessionId);
+    const isActiveTab = sessionId === activeSessionId;
+
+    if (isActiveTab) {
+      if (orderedSessions.length > 1) {
+        // Prefer next tab, fallback to previous
+        const nextIndex = currentIndex < orderedSessions.length - 1 ? currentIndex + 1 : currentIndex - 1;
+        const nextSession = orderedSessions[nextIndex];
+        setActiveSessionId(nextSession.id);
+        updateUiState.mutate({ active_session_id: nextSession.id });
+      } else {
+        // Last tab
+        setActiveSessionId(null);
+        updateUiState.mutate({ active_session_id: null });
+      }
+    }
+
+    // Remove from tab_order
+    const newTabOrder = (resolvedUiState?.tab_order ?? []).filter((id) => id !== sessionId);
+    updateUiState.mutate({ tab_order: newTabOrder });
+
+    // Close the session via API
+    closeSession.mutate(sessionId);
+  };
+
   const handleNewSession = () => {
     // TODO: Open new session dialog
     console.log('New session requested');
@@ -237,6 +265,7 @@ function AppContent() {
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onReorderSessions={handleReorderSessions}
+        onCloseSession={handleCloseSession}
         workspaces={resolvedWorkspaces}
         activeWorkspace={activeWorkspace ?? null}
         workspaceStatus={workspaceStatus ?? null}

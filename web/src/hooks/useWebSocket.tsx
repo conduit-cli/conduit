@@ -8,6 +8,7 @@ import type { AgentEvent, ServerMessage } from '../types';
 interface WebSocketContextValue {
   ws: ConduitWebSocket;
   connectionState: ConnectionState;
+  processingSessionIds: Set<string>;
   sendInput: (sessionId: string, input: string) => void;
   sendPrompt: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
   startSession: (sessionId: string, prompt: string, workingDir: string, model?: string) => void;
@@ -24,6 +25,7 @@ interface WebSocketProviderProps {
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [processingSessionIds, setProcessingSessionIds] = useState<Set<string>>(new Set());
   const runningSessionsRef = useRef(new Set<string>());
   const pendingPromptsRef = useRef(new Map<string, { prompt: string; workingDir: string; model?: string }>());
   const ws = getWebSocket();
@@ -37,10 +39,29 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       if (message.type === 'session_ended') {
         runningSessionsRef.current.delete(message.session_id);
+        setProcessingSessionIds((prev) => {
+          const next = new Set(prev);
+          next.delete(message.session_id);
+          return next;
+        });
       }
 
       if (message.type === 'agent_event') {
         runningSessionsRef.current.add(message.session_id);
+        const event = message.event;
+        if (event.type === 'TurnStarted') {
+          setProcessingSessionIds((prev) => {
+            const next = new Set(prev);
+            next.add(message.session_id);
+            return next;
+          });
+        } else if (event.type === 'TurnCompleted' || event.type === 'TurnFailed') {
+          setProcessingSessionIds((prev) => {
+            const next = new Set(prev);
+            next.delete(message.session_id);
+            return next;
+          });
+        }
       }
 
       if (message.type === 'error' && message.session_id) {
@@ -112,6 +133,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const value: WebSocketContextValue = {
     ws,
     connectionState,
+    processingSessionIds,
     sendInput,
     sendPrompt,
     startSession,
@@ -135,6 +157,12 @@ export function useWebSocket(): WebSocketContextValue {
 export function useWebSocketConnection(): ConnectionState {
   const { connectionState } = useWebSocket();
   return connectionState;
+}
+
+// Hook for accessing which sessions are currently processing
+export function useProcessingSessions(): Set<string> {
+  const { processingSessionIds } = useWebSocket();
+  return processingSessionIds;
 }
 
 // Hook for subscribing to session events

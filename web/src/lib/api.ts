@@ -11,10 +11,12 @@ import type {
   ListWorkspacesResponse,
   ListSessionsResponse,
   ListSessionEventsResponse,
+  ListModelsResponse,
   AgentsResponse,
   CreateRepositoryRequest,
   CreateWorkspaceRequest,
   CreateSessionRequest,
+  UpdateSessionRequest,
   WorkspaceStatus,
   UiState,
   BootstrapResponse,
@@ -137,6 +139,18 @@ export async function createSession(data: CreateSessionRequest): Promise<Session
 
 export async function closeSession(id: string): Promise<void> {
   await request(`/sessions/${id}`, { method: 'DELETE' });
+}
+
+export async function updateSession(id: string, data: UpdateSessionRequest): Promise<Session> {
+  return request(`/sessions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+// Models
+export async function getModels(): Promise<ListModelsResponse> {
+  return request('/models');
 }
 
 function buildSessionEventsQuery(query?: SessionEventsQuery) {

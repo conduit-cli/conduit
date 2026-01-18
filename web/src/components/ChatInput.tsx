@@ -16,6 +16,9 @@ interface ChatInputProps {
   agentMode?: string | null;
   gitStats?: { additions: number; deletions: number } | null;
   branch?: string | null;
+  // Model selection
+  onModelClick?: () => void;
+  canChangeModel?: boolean;
 }
 
 // Format branch name with ellipsis for long paths
@@ -39,6 +42,8 @@ export function ChatInput({
   agentMode,
   gitStats,
   branch,
+  onModelClick,
+  canChangeModel = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyIndexRef = useRef<number | null>(null);
@@ -178,7 +183,18 @@ export function ChatInput({
         {/* Left: Agent Mode + Model + Agent Type */}
         <div className="flex items-center gap-2">
           {agentMode && <span className="text-accent">{agentMode}</span>}
-          {modelDisplayName && <span className="text-text">{modelDisplayName}</span>}
+          {modelDisplayName && (
+            canChangeModel && onModelClick ? (
+              <button
+                onClick={onModelClick}
+                className="text-text transition-colors hover:text-accent hover:underline"
+              >
+                {modelDisplayName}
+              </button>
+            ) : (
+              <span className="text-text">{modelDisplayName}</span>
+            )
+          )}
           {agentType && (
             <span>
               {agentType === 'claude'

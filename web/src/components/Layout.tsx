@@ -12,6 +12,7 @@ interface LayoutProps {
   activeSessionId: string | null;
   onSelectSession: (session: Session) => void;
   onReorderSessions: (sessionIds: string[]) => void;
+  onCloseSession: (sessionId: string) => void;
   workspaces: Workspace[];
   activeWorkspace?: Workspace | null;
   workspaceStatus?: WorkspaceStatus | null;
@@ -29,6 +30,7 @@ export function Layout({
   activeSessionId,
   onSelectSession,
   onReorderSessions,
+  onCloseSession,
   workspaces,
   activeWorkspace,
   workspaceStatus,
@@ -108,6 +110,7 @@ export function Layout({
           workspaces={workspaces}
           onSelectSession={onSelectSession}
           onReorderSessions={onReorderSessions}
+          onCloseSession={onCloseSession}
         />
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>

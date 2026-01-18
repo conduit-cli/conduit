@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
+import { X, Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { useProcessingSessions } from '../hooks';
 import type { Session, Workspace } from '../types';
 
 interface SessionTabsProps {
@@ -8,6 +10,7 @@ interface SessionTabsProps {
   workspaces: Workspace[];
   onSelectSession: (session: Session) => void;
   onReorderSessions: (sessionIds: string[]) => void;
+  onCloseSession: (sessionId: string) => void;
 }
 
 function sessionLabel(session: Session, workspaces: Workspace[]): string {
@@ -23,7 +26,10 @@ export function SessionTabs({
   workspaces,
   onSelectSession,
   onReorderSessions,
+  onCloseSession,
 }: SessionTabsProps) {
+  const processingSessionIds = useProcessingSessions();
+
   useEffect(() => {
     if (sessions.length === 0) return;
 
@@ -54,11 +60,19 @@ export function SessionTabs({
         const nextIndex = (activeIndex + direction + sessions.length) % sessions.length;
         onSelectSession(sessions[nextIndex]);
       }
+
+      if (event.key === 'w' || event.key === 'W') {
+        event.preventDefault();
+        const activeSession = sessions[activeIndex];
+        if (!processingSessionIds.has(activeSession.id)) {
+          onCloseSession(activeSession.id);
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [sessions, activeSessionId, onSelectSession, onReorderSessions]);
+  }, [sessions, activeSessionId, onSelectSession, onReorderSessions, onCloseSession, processingSessionIds]);
 
   if (sessions.length === 0) {
     return null;
@@ -69,13 +83,14 @@ export function SessionTabs({
       {sessions.map((session) => {
         const label = sessionLabel(session, workspaces);
         const isActive = session.id === activeSessionId;
+        const isProcessing = processingSessionIds.has(session.id);
         return (
           <button
             key={session.id}
             onClick={() => onSelectSession(session)}
             aria-selected={isActive}
             className={cn(
-              'flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs transition-colors',
+              'group flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs transition-colors',
               isActive
                 ? 'bg-accent/20 text-text'
                 : 'text-text-muted hover:bg-surface-elevated hover:text-text'
@@ -92,6 +107,36 @@ export function SessionTabs({
               )}
             />
             <span className="max-w-36 truncate">{label}</span>
+            {isProcessing ? (
+              <span className="ml-1 p-0.5" aria-label="Processing">
+                <Loader2 className="h-3 w-3 animate-spin text-text-muted" />
+              </span>
+            ) : (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseSession(session.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    onCloseSession(session.id);
+                  }
+                }}
+                className={cn(
+                  'ml-1 rounded-full p-0.5 transition-colors',
+                  'opacity-0 group-hover:opacity-100',
+                  'hover:bg-surface hover:text-text',
+                  isActive && 'opacity-100'
+                )}
+                aria-label={`Close ${label}`}
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
           </button>
         );
       })}

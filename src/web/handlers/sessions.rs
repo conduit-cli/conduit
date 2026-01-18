@@ -69,6 +69,12 @@ pub struct CreateSessionRequest {
     pub model: Option<String>,
 }
 
+/// Request to update an existing session.
+#[derive(Debug, Deserialize)]
+pub struct UpdateSessionRequest {
+    pub model: Option<String>,
+}
+
 /// List all sessions.
 pub async fn list_sessions(
     State(state): State<WebAppState>,
@@ -175,6 +181,49 @@ pub async fn close_session(
         .map_err(|e| WebError::Internal(format!("Failed to close session: {}", e)))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Update an existing session.
+pub async fn update_session(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> Result<Json<SessionResponse>, WebError> {
+    let core = state.core().await;
+    let store = core
+        .session_tab_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    // Get existing session
+    let mut session = store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get session: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Session {} not found", id)))?;
+
+    // Cannot change model if session is already running (has agent_session_id)
+    if session.agent_session_id.is_some() && req.model.is_some() {
+        return Err(WebError::BadRequest(
+            "Cannot change model on a running session".to_string(),
+        ));
+    }
+
+    // Validate model if provided
+    if let Some(ref model_id) = req.model {
+        if ModelRegistry::find_model(session.agent_type, model_id).is_none() {
+            return Err(WebError::BadRequest(format!(
+                "Invalid model '{}' for agent type {:?}",
+                model_id, session.agent_type
+            )));
+        }
+        session.model = Some(model_id.clone());
+    }
+
+    // Update in database
+    store
+        .update(&session)
+        .map_err(|e| WebError::Internal(format!("Failed to update session: {}", e)))?;
+
+    Ok(Json(SessionResponse::from(session)))
 }
 
 /// A single event/message in session history.

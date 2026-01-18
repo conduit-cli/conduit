@@ -4,7 +4,8 @@ import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
 import { RawEventsPanel } from './RawEventsPanel';
-import { useSessionEvents, useWebSocket, useWorkspace, useWorkspaceStatus, useRawSessionEvents } from '../hooks';
+import { ModelSelectorDialog } from './ModelSelectorDialog';
+import { useSessionEvents, useWebSocket, useWorkspace, useWorkspaceStatus, useRawSessionEvents, useUpdateSession } from '../hooks';
 import { getSessionEventsPage } from '../lib/api';
 import type { Session, UserQuestion, SessionEvent, HistoryDebugEntry, AgentEvent } from '../types';
 import { MessageSquarePlus, Loader2, Bug } from 'lucide-react';
@@ -128,6 +129,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const isPinnedToBottom = useRef(true);
   const { sendPrompt, respondToControl } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
+  const updateSessionMutation = useUpdateSession();
   const [historyEvents, setHistoryEvents] = useState<SessionEvent[]>([]);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -140,6 +142,7 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
   const [inlinePrompt, setInlinePrompt] = useState<InlinePromptData | null>(null);
   const [pendingControlResponse, setPendingControlResponse] = useState<unknown | null>(null);
   const [showRawEvents, setShowRawEvents] = useState(false);
+  const [showModelSelector, setShowModelSelector] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, string[]>>({});
   const lastHistoryUserCount = useRef<Record<string, number>>({});
@@ -558,6 +561,21 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
     return [...historyMessages, ...optimisticUserMessages];
   }, [historyEvents, optimisticUserMessages, session]);
 
+  // Can only change model if session hasn't started (no agent_session_id) and not processing
+  const canChangeModel = !session?.agent_session_id && !isProcessing;
+
+  const handleModelSelect = useCallback((modelId: string) => {
+    if (!session) return;
+    updateSessionMutation.mutate(
+      { id: session.id, data: { model: modelId } },
+      {
+        onSuccess: () => {
+          setShowModelSelector(false);
+        },
+      }
+    );
+  }, [session, updateSessionMutation]);
+
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
     return (
@@ -712,6 +730,18 @@ export function ChatView({ session, onNewSession, isLoadingSession }: ChatViewPr
         agentMode={session?.agent_mode}
         gitStats={status?.git_stats}
         branch={workspace?.branch}
+        onModelClick={() => setShowModelSelector(true)}
+        canChangeModel={canChangeModel}
+      />
+
+      {/* Model selector dialog */}
+      <ModelSelectorDialog
+        isOpen={showModelSelector}
+        onClose={() => setShowModelSelector(false)}
+        currentModel={session?.model ?? null}
+        agentType={session?.agent_type ?? 'claude'}
+        onSelect={handleModelSelect}
+        isUpdating={updateSessionMutation.isPending}
       />
     </div>
   );

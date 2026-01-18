@@ -151,3 +151,28 @@ export interface UiState {
   sidebar_open: boolean;
   last_workspace_id: string | null;
 }
+
+// Model types
+export interface ModelInfo {
+  id: string;
+  display_name: string;
+  description: string;
+  is_new: boolean;
+  agent_type: 'claude' | 'codex' | 'gemini';
+  context_window: number;
+}
+
+export interface ModelGroup {
+  agent_type: string;
+  section_title: string;
+  icon: string;
+  models: ModelInfo[];
+}
+
+export interface ListModelsResponse {
+  groups: ModelGroup[];
+}
+
+export interface UpdateSessionRequest {
+  model?: string;
+}

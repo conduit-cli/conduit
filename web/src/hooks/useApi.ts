@@ -6,6 +6,7 @@ import type {
   CreateRepositoryRequest,
   CreateWorkspaceRequest,
   CreateSessionRequest,
+  UpdateSessionRequest,
   SessionEventsQuery,
 } from '../types';
 
@@ -13,6 +14,7 @@ import type {
 export const queryKeys = {
   health: ['health'] as const,
   agents: ['agents'] as const,
+  models: ['models'] as const,
   repositories: ['repositories'] as const,
   repository: (id: string) => ['repositories', id] as const,
   workspaces: ['workspaces'] as const,
@@ -238,6 +240,27 @@ export function useCloseSession() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     },
+  });
+}
+
+export function useUpdateSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateSessionRequest }) =>
+      api.updateSession(id, data),
+    onSuccess: (updatedSession) => {
+      queryClient.setQueryData(queryKeys.session(updatedSession.id), updatedSession);
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
+// Models
+export function useModels() {
+  return useQuery({
+    queryKey: queryKeys.models,
+    queryFn: api.getModels,
+    staleTime: 60000, // Models don't change often
   });
 }
 

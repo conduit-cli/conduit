@@ -1,11 +1,13 @@
 //! REST API route definitions.
 
 use axum::{
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 
-use crate::web::handlers::{bootstrap, repositories, sessions, themes, ui_state, workspaces};
+use crate::web::handlers::{
+    bootstrap, models, repositories, sessions, themes, ui_state, workspaces,
+};
 use crate::web::state::WebAppState;
 
 /// Build the API router with all REST endpoints.
@@ -53,8 +55,11 @@ pub fn api_routes() -> Router<WebAppState> {
         .route("/sessions", get(sessions::list_sessions))
         .route("/sessions", post(sessions::create_session))
         .route("/sessions/{id}", get(sessions::get_session))
+        .route("/sessions/{id}", patch(sessions::update_session))
         .route("/sessions/{id}", delete(sessions::close_session))
         .route("/sessions/{id}/events", get(sessions::get_session_events))
+        // Model routes
+        .route("/models", get(models::list_models))
         // Theme routes
         .route("/themes", get(themes::list_available_themes))
         .route("/themes/current", get(themes::get_current_theme))
