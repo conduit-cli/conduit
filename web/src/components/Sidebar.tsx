@@ -12,6 +12,7 @@ import {
 import { cn } from '../lib/cn';
 import type { Repository, Workspace } from '../types';
 import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
+import { Logo } from './Logo';
 
 interface WorkspaceItemProps {
   workspace: Workspace;
@@ -196,7 +197,7 @@ export function Sidebar({ selectedWorkspaceId, onSelectWorkspace }: SidebarProps
       {/* Logo */}
       <div className="flex items-center gap-3 border-b border-border px-4 py-4">
         <div className="flex size-8 items-center justify-center rounded-lg bg-accent/20">
-          <img src="/conduit-logo.svg" alt="Conduit" className="h-6 w-6" />
+          <Logo className="h-6 w-6" />
         </div>
         <span className="text-lg font-semibold">Conduit</span>
       </div>
