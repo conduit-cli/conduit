@@ -30,7 +30,7 @@ A new tab opens with your project loaded.
 |----------|--------|
 | `Ctrl+N` | New project/tab |
 | `Alt+1-9` | Switch to tab 1-9 |
-| `Tab` | Toggle Build/Plan mode (Claude) |
+| `Tab` | Toggle Build/Plan mode |
 | `Ctrl+T` | Toggle sidebar |
 | `Ctrl+P` | Command palette |
 | `Ctrl+Q` | Quit |
@@ -47,12 +47,14 @@ Each tab runs independently — you can have Claude working on one task while Co
 
 ## Toggle Build/Plan Mode
 
-When using Claude Code, press `Tab` to switch between:
+Press `Tab` to switch between:
 
 - **Build Mode** (default) — Agent can read, write, and execute commands
 - **Plan Mode** — Read-only analysis, no modifications
 
 The status bar shows the current mode.
+
+Plan mode relies on prompt guidance for Codex and Gemini, so treat it as best-effort.
 
 ## View Token Usage
 

@@ -7,7 +7,7 @@ Conduit is a multi-agent terminal user interface (TUI) that lets you run AI codi
 - **Multi-Agent Tabs** — Run up to 10 concurrent AI sessions in tabs, switch instantly with `Alt+1-9`
 - **Session Persistence** — All conversations are saved and can be resumed later
 - **Git Integration** — Automatic worktree management, branch status, and PR tracking
-- **Build & Plan Modes** — Toggle between full execution and read-only analysis (Claude)
+- **Build & Plan Modes** — Toggle between full execution and read-only analysis
 - **Customizable** — Configure keybindings, themes, and tool paths
 - **Token Tracking** — Real-time usage and cost estimation in the status bar
 

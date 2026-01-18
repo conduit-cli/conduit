@@ -56,7 +56,7 @@ conduit debug-keys
 | `Ctrl+T` | Toggle sidebar |
 | `Ctrl+G` | Toggle view mode (Chat/Raw Events) |
 | `Ctrl+O` | Show model selector |
-| `Ctrl+\` | Toggle Build/Plan mode (Claude only)* |
+| `Ctrl+\` | Toggle Build/Plan mode* |
 | `Alt+I` | Import session |
 | `?` or `:help` | Show help |
 

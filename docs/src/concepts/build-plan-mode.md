@@ -1,6 +1,6 @@
 # Build vs Plan Mode
 
-Claude Code supports two operational modes.
+Conduit supports two operational modes across agents.
 
 ## Build Mode (Default)
 
@@ -48,4 +48,4 @@ The status bar shows the current mode:
 
 ## Note
 
-Plan mode only affects Claude Code. Codex CLI runs in full automation mode.
+Plan mode is strictly enforced by Claude Code. Codex and Gemini follow the prompt guidance, so treat it as best-effort.

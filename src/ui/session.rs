@@ -22,10 +22,12 @@ use crate::ui::components::{
 pub struct AgentSession {
     /// Unique identifier for this session
     pub id: Uuid,
-    /// Type of agent (Claude or Codex)
+    /// Type of agent (Claude, Codex, or Gemini)
     pub agent_type: AgentType,
-    /// Agent mode (Build vs Plan) - only applicable to Claude
+    /// Agent mode (Build vs Plan)
     pub agent_mode: AgentMode,
+    /// Last agent mode that received a mode prompt (Plan/Build switch)
+    pub last_mode_prompt: Option<AgentMode>,
     /// Selected model for this session
     pub model: Option<String>,
     /// Associated workspace ID (for project context)
@@ -120,6 +122,7 @@ impl AgentSession {
             id: Uuid::new_v4(),
             agent_type,
             agent_mode: AgentMode::default(),
+            last_mode_prompt: None,
             model: None,
             workspace_id: None,
             working_dir: None,
@@ -242,9 +245,9 @@ impl AgentSession {
         self.agent_type = agent_type;
         self.capabilities = AgentCapabilities::for_agent(agent_type);
         self.model = model;
+        self.last_mode_prompt = None;
 
-        // Clamp agent mode - Codex doesn't support Plan mode
-        if agent_type == AgentType::Codex && self.agent_mode == AgentMode::Plan {
+        if !self.capabilities.supports_plan_mode {
             self.agent_mode = AgentMode::Build;
         }
 
@@ -505,21 +508,21 @@ mod tests {
 
         assert!(agent_changed);
         assert_eq!(session.agent_type, AgentType::Codex);
-        assert!(!session.capabilities.supports_plan_mode);
+        assert!(session.capabilities.supports_plan_mode);
         assert_eq!(session.model, Some("gpt-4".to_string()));
     }
 
     #[test]
-    fn test_set_agent_and_model_clamps_plan_mode_for_codex() {
+    fn test_set_agent_and_model_preserves_plan_mode() {
         // Start with Claude in Plan mode
         let mut session = AgentSession::new(AgentType::Claude);
         session.agent_mode = AgentMode::Plan;
         assert_eq!(session.agent_mode, AgentMode::Plan);
 
-        // Switch to Codex - should clamp to Build
+        // Switch to Codex - should preserve Plan mode
         session.set_agent_and_model(AgentType::Codex, Some("gpt-4".to_string()));
 
-        assert_eq!(session.agent_mode, AgentMode::Build);
+        assert_eq!(session.agent_mode, AgentMode::Plan);
     }
 
     #[test]
@@ -550,7 +553,7 @@ mod tests {
     fn test_codex_session_has_correct_capabilities() {
         let session = AgentSession::new(AgentType::Codex);
 
-        assert!(!session.capabilities.supports_plan_mode);
+        assert!(session.capabilities.supports_plan_mode);
         assert_eq!(session.agent_type, AgentType::Codex);
     }
 

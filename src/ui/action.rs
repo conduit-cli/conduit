@@ -196,7 +196,7 @@ pub enum Action {
     // ========== Agent Selection ==========
     /// Confirm agent selection
     SelectAgent,
-    /// Toggle between Build and Plan mode (Claude only)
+    /// Toggle between Build and Plan mode
     ToggleAgentMode,
 
     // ========== Session Import ==========

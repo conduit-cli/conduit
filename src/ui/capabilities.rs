@@ -18,13 +18,13 @@ impl AgentCapabilities {
                 supports_follow_up: false,
             },
             AgentType::Codex => Self {
-                supports_plan_mode: false,
+                supports_plan_mode: true,
                 supports_interactive_input: false,
                 supports_steer: false,
                 supports_follow_up: false,
             },
             AgentType::Gemini => Self {
-                supports_plan_mode: false,
+                supports_plan_mode: true,
                 supports_interactive_input: false,
                 supports_steer: false,
                 supports_follow_up: false,

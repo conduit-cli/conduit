@@ -163,9 +163,9 @@ pub struct SessionTab {
     pub tab_index: i32,
     /// Associated workspace ID (optional)
     pub workspace_id: Option<Uuid>,
-    /// Agent type (Claude or Codex)
+    /// Agent type (Claude, Codex, or Gemini)
     pub agent_type: AgentType,
-    /// Agent mode (Build or Plan) - only applicable to Claude
+    /// Agent mode (Build or Plan)
     pub agent_mode: Option<String>,
     /// Agent session ID (for resume and history loading)
     pub agent_session_id: Option<String>,
@@ -221,7 +221,7 @@ impl SessionTab {
 pub struct ForkSeed {
     /// Unique identifier
     pub id: Uuid,
-    /// Agent type (Claude or Codex)
+    /// Agent type (Claude, Codex, or Gemini)
     pub agent_type: AgentType,
     /// Parent agent session ID
     pub parent_session_id: Option<String>,

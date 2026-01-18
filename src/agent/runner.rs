@@ -17,8 +17,8 @@ pub enum AgentType {
 
 /// Agent mode (Build vs Plan)
 ///
-/// Build mode (default): Claude can read, write, and execute commands
-/// Plan mode: Claude can only read and analyze, no modifications allowed
+/// Build mode (default): agent can read, write, and execute commands
+/// Plan mode: read-only analysis, no modifications allowed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AgentMode {
     #[default]
@@ -113,7 +113,7 @@ pub struct AgentStartConfig {
     pub model: Option<String>,
     /// Optional image paths to attach to the initial prompt
     pub images: Vec<PathBuf>,
-    /// Agent mode (Build vs Plan) - only used by Claude
+    /// Agent mode (Build vs Plan)
     pub agent_mode: AgentMode,
     /// Optional input format override (e.g. "stream-json" for Claude)
     pub input_format: Option<String>,

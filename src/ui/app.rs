@@ -42,6 +42,7 @@ use crate::ui::action::Action;
 use crate::ui::app_prompt;
 use crate::ui::app_queue;
 use crate::ui::app_state::{AppState, PendingForkRequest};
+use crate::ui::capabilities::AgentCapabilities;
 use crate::ui::components::{
     dialog_content_area, AddRepoDialog, AgentSelector, BaseDirDialog, ChatMessage, CommandPalette,
     ConfirmationContext, ConfirmationDialog, ConfirmationType, DefaultModelSelection, ErrorDialog,
@@ -147,6 +148,7 @@ const AGENT_TERMINATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SHELL_COMMAND_OUTPUT_LIMIT: usize = 1024 * 1024;
 // Bound process reaping after a timeout.
 const SHELL_COMMAND_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+const PLAN_MODE_INLINE_REMINDER_ENV: &str = "CONDUIT_PLAN_MODE_INLINE_REMINDER";
 
 /// Main application state
 pub struct App {
@@ -2949,10 +2951,10 @@ impl App {
 
     /// Clamp unsupported agent modes to a safe default.
     fn clamp_agent_mode(agent_type: AgentType, mode: AgentMode) -> AgentMode {
-        if matches!(agent_type, AgentType::Codex | AgentType::Gemini) && mode == AgentMode::Plan {
-            AgentMode::Build
-        } else {
+        if AgentCapabilities::for_agent(agent_type).supports_plan_mode {
             mode
+        } else {
+            AgentMode::Build
         }
     }
 
@@ -3942,23 +3944,23 @@ impl App {
         _y: u16,
         status_bar_area: Rect,
     ) -> Option<Effect> {
-        // Status bar format (Claude): "  Build  ModelName Agent"
-        // Status bar format (Codex):  "  ModelName Agent"
+        // Status bar format (with plan mode): "  Build  ModelName Agent"
+        // Status bar format (without plan mode): "  ModelName Agent"
         //
         // Layout with positions:
         // - 2 chars: leading spaces
-        // - For Claude: 5 chars ("Build") or 4 chars ("Plan") + 2 chars separator
+        // - For plan mode: 5 chars ("Build") or 4 chars ("Plan") + 2 chars separator
         // - Model name (variable length)
         // - 1 char space + Agent name
 
         let relative_x = x.saturating_sub(status_bar_area.x) as usize;
 
         // Extract info from session in a limited scope
-        let (is_claude, mode_width, model_width, agent_width, model, shell_mode) = {
+        let (show_mode, mode_width, model_width, agent_width, model, shell_mode) = {
             let session = self.state.tab_manager.active_session()?;
 
-            let is_claude = session.agent_type == AgentType::Claude;
-            let mode_width = if is_claude {
+            let show_mode = session.capabilities.supports_plan_mode;
+            let mode_width = if show_mode {
                 session.agent_mode.display_name().len()
             } else {
                 0
@@ -3983,7 +3985,7 @@ impl App {
             let model = session.model.clone();
 
             (
-                is_claude,
+                show_mode,
                 mode_width,
                 model_width,
                 agent_width,
@@ -4000,7 +4002,7 @@ impl App {
         // Leading spaces: 2 chars
         let leading: usize = 2;
 
-        if is_claude {
+        if show_mode {
             // Mode area: leading + mode_width (with 1 char padding each side)
             let mode_start = leading.saturating_sub(1); // 1 char before
             let mode_end = leading + mode_width + 1; // 1 char after
@@ -4025,7 +4027,7 @@ impl App {
                 self.state.input_mode = InputMode::SelectingModel;
             }
         } else {
-            // Codex: no mode area, just model/agent
+            // No mode area, just model/agent
             let model_start = leading.saturating_sub(1); // 1 char before model
             let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
 
@@ -5763,8 +5765,10 @@ impl App {
             )
         };
 
-        let mut prompt = prompt;
+        let display_prompt = prompt;
+        let mut agent_prompt = display_prompt.clone();
         let mut stdin_payload = stdin_payload;
+        let use_inline_plan_prompt = Self::plan_prompt_inline_enabled();
 
         // Validate working directory exists before showing user message
         if !working_dir.exists() {
@@ -5782,7 +5786,7 @@ impl App {
 
         // Capture original user message for title generation BEFORE agent-specific transformations
         // (e.g., Codex placeholder stripping, Claude image-path appends)
-        let prompt_for_title = prompt.clone();
+        let prompt_for_title = display_prompt.clone();
         let working_dir_for_title = working_dir.clone();
 
         // Add user message to chat and start processing (after validation passes)
@@ -5790,11 +5794,11 @@ impl App {
         if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
             if !hidden {
                 let display = MessageDisplay::User {
-                    content: prompt.clone(),
+                    content: display_prompt.clone(),
                 };
                 session.chat_view.push(display.to_chat_message());
                 // Store pending message for persistence (cleared on agent confirmation)
-                session.pending_user_message = Some(prompt.clone());
+                session.pending_user_message = Some(display_prompt.clone());
             }
             session.start_processing();
         }
@@ -5824,10 +5828,10 @@ impl App {
             agent_type,
             AgentType::Codex | AgentType::Claude | AgentType::Gemini
         ) {
-            prompt = Self::strip_image_placeholders(prompt, &image_placeholders);
+            agent_prompt = Self::strip_image_placeholders(agent_prompt, &image_placeholders);
         }
 
-        if prompt.trim().is_empty() && images.is_empty() && stdin_payload.is_none() {
+        if agent_prompt.trim().is_empty() && images.is_empty() && stdin_payload.is_none() {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 session.stop_processing();
                 let display = MessageDisplay::Error {
@@ -5841,6 +5845,17 @@ impl App {
             return Ok(effects);
         }
 
+        if !hidden {
+            let mode_prompt = self
+                .state
+                .tab_manager
+                .session_mut(tab_index)
+                .and_then(|session| Self::take_mode_prompt(session, use_inline_plan_prompt));
+            if let Some(mode_prompt) = mode_prompt {
+                agent_prompt = Self::prepend_mode_prompt(&mode_prompt, &agent_prompt);
+            }
+        }
+
         // Record user input for debug view (post-processing)
         // For hidden prompts (like fork seeds), redact content to avoid storing ~500KB
         let mut debug_payload = serde_json::json!({
@@ -5848,16 +5863,16 @@ impl App {
             "hidden": hidden,
         });
         if hidden {
-            debug_payload["prompt_len"] = serde_json::json!(prompt.len());
+            debug_payload["prompt_len"] = serde_json::json!(agent_prompt.len());
             debug_payload["prompt_hash"] =
-                serde_json::json!(app_prompt::compute_seed_prompt_hash(&prompt));
+                serde_json::json!(app_prompt::compute_seed_prompt_hash(&agent_prompt));
             if let Some(ref payload) = stdin_payload {
                 debug_payload["stdin_payload_len"] = serde_json::json!(payload.len());
                 debug_payload["stdin_payload_hash"] =
                     serde_json::json!(app_prompt::compute_seed_prompt_hash(payload));
             }
         } else {
-            debug_payload["prompt"] = serde_json::json!(&prompt);
+            debug_payload["prompt"] = serde_json::json!(&agent_prompt);
         }
         if !images.is_empty() {
             let image_paths: Vec<String> = images
@@ -5878,7 +5893,7 @@ impl App {
                     "submit_prompt_for_tab: building JSONL for Claude with {} images",
                     images.len()
                 );
-                stdin_payload = Some(Self::build_user_prompt_jsonl(&prompt, &images)?);
+                stdin_payload = Some(Self::build_user_prompt_jsonl(&agent_prompt, &images)?);
             }
         }
 
@@ -5911,7 +5926,7 @@ impl App {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 if let Some(ref input_tx) = session.agent_input_tx {
                     let input_tx = input_tx.clone();
-                    let prompt_to_send = prompt.clone();
+                    let prompt_to_send = agent_prompt.clone();
                     let images_to_send = images.clone();
                     tokio::spawn(async move {
                         let input = AgentInput::CodexPrompt {
@@ -5936,7 +5951,7 @@ impl App {
         let prompt_for_agent = if agent_type == AgentType::Claude {
             String::new()
         } else {
-            prompt.clone()
+            agent_prompt.clone()
         };
 
         let mut config = AgentStartConfig::new(prompt_for_agent, working_dir)
@@ -6188,6 +6203,75 @@ impl App {
         }
 
         cleaned.trim().to_string()
+    }
+
+    fn plan_prompt_inline_enabled() -> bool {
+        env::var(PLAN_MODE_INLINE_REMINDER_ENV)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    fn plan_file_prompt_info(session: &AgentSession) -> (String, bool) {
+        if let Some(path) = Self::read_plan_file_path_for_session(session) {
+            return (path, true);
+        }
+
+        let path = if let Some(ref working_dir) = session.working_dir {
+            working_dir.join(".claude").join("plans").join("plan.md")
+        } else if let Some(home_dir) = dirs::home_dir() {
+            home_dir.join(".claude").join("plans").join("plan.md")
+        } else {
+            PathBuf::from(".claude").join("plans").join("plan.md")
+        };
+
+        (path.display().to_string(), false)
+    }
+
+    fn take_mode_prompt(
+        session: &mut AgentSession,
+        use_inline_plan_prompt: bool,
+    ) -> Option<String> {
+        if !session.capabilities.supports_plan_mode {
+            return None;
+        }
+
+        match session.agent_mode {
+            AgentMode::Plan => {
+                if session.last_mode_prompt == Some(AgentMode::Plan) {
+                    return None;
+                }
+                let prompt = if use_inline_plan_prompt {
+                    let (plan_path, exists) = Self::plan_file_prompt_info(session);
+                    app_prompt::build_plan_mode_prompt_inline(&plan_path, exists)
+                } else {
+                    app_prompt::plan_mode_prompt_default().to_string()
+                };
+                session.last_mode_prompt = Some(AgentMode::Plan);
+                Some(prompt)
+            }
+            AgentMode::Build => {
+                if session.last_mode_prompt == Some(AgentMode::Plan) {
+                    session.last_mode_prompt = Some(AgentMode::Build);
+                    Some(app_prompt::build_switch_prompt().to_string())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn prepend_mode_prompt(mode_prompt: &str, prompt: &str) -> String {
+        if prompt.trim().is_empty() {
+            mode_prompt.to_string()
+        } else {
+            format!("{mode_prompt}\n\n{prompt}")
+        }
     }
 
     fn resolve_external_editor(&self) -> Option<Vec<String>> {

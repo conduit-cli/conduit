@@ -105,12 +105,14 @@ If an agent is taking too long:
 - Press `Ctrl+C` once to clear the input
 - Press `Ctrl+C` twice quickly to interrupt the agent
 
-### Switch Modes (Claude Only)
+### Switch Modes
 
 Press `Tab` to toggle between:
 
 - **Build Mode** — Full capabilities
 - **Plan Mode** — Read-only analysis
+
+Plan mode is enforced by Claude Code; for Codex and Gemini it's a best-effort prompt reminder.
 
 ## Saving and Resuming
 
