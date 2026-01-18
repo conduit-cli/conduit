@@ -776,8 +776,12 @@ impl App {
                 if self.state.view_mode == ViewMode::Chat {
                     if let Some(chat_area) = self.state.chat_area {
                         if let Some(session) = self.state.tab_manager.active_session_mut() {
-                            let hover_changed =
-                                session.chat_view.update_file_path_hover(x, y, chat_area);
+                            let hover_changed = session.chat_view.update_file_path_hover(
+                                x,
+                                y,
+                                chat_area,
+                                self.config.ui.show_chat_scrollbar,
+                            );
 
                             if hover_changed {
                                 let is_hovered = session.chat_view.is_file_path_hovered();
@@ -817,7 +821,12 @@ impl App {
 
         // Get the active session and check for file path at click position
         let session = self.state.tab_manager.active_session_mut()?;
-        let path = session.chat_view.file_path_at_position(x, y, chat_area)?;
+        let path = session.chat_view.file_path_at_position(
+            x,
+            y,
+            chat_area,
+            self.config.ui.show_chat_scrollbar,
+        )?;
 
         // Try to open the file in a new tab
         let path_buf = std::path::PathBuf::from(&path);

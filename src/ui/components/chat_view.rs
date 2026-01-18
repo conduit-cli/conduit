@@ -1039,10 +1039,11 @@ impl ChatView {
         click_x: u16,
         click_y: u16,
         area: Rect,
+        show_scrollbar: bool,
     ) -> Option<String> {
         use super::file_path_detector::{detect_existing_paths, expand_tilde};
 
-        let content = Self::content_area(area)?;
+        let content = Self::content_area(area, show_scrollbar)?;
         if click_x < content.x
             || click_y < content.y
             || click_x >= content.x + content.width
@@ -1116,10 +1117,16 @@ impl ChatView {
 
     /// Update hover state for file paths at the given mouse position.
     /// Returns true if the hover state changed.
-    pub fn update_file_path_hover(&mut self, mouse_x: u16, mouse_y: u16, area: Rect) -> bool {
+    pub fn update_file_path_hover(
+        &mut self,
+        mouse_x: u16,
+        mouse_y: u16,
+        area: Rect,
+        show_scrollbar: bool,
+    ) -> bool {
         use super::file_path_detector::{detect_existing_paths, expand_tilde};
 
-        let content = match Self::content_area(area) {
+        let content = match Self::content_area(area, show_scrollbar) {
             Some(c) => c,
             None => {
                 let changed = self.hovered_file_path.is_some();
