@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
 pub struct GhStatus {
@@ -25,18 +26,22 @@ const GH_STATUS_TTL: Duration = Duration::from_secs(30);
 static GH_STATUS_CACHE: OnceLock<Mutex<GhStatusCache>> = OnceLock::new();
 
 fn refresh_gh_status() -> GhStatus {
-    let installed = Command::new("gh")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let installed = match Command::new("gh").arg("--version").output() {
+        Ok(output) => output.status.success(),
+        Err(error) => {
+            warn!(error = %error, "Failed to run gh --version");
+            false
+        }
+    };
 
     let authenticated = if installed {
-        Command::new("gh")
-            .args(["auth", "status"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        match Command::new("gh").args(["auth", "status"]).output() {
+            Ok(output) => output.status.success(),
+            Err(error) => {
+                warn!(error = %error, "Failed to run gh auth status");
+                false
+            }
+        }
     } else {
         false
     };

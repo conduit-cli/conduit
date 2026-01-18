@@ -329,7 +329,7 @@ export function useAgentSession(sessionId: string | null) {
         if (lastEvent.is_final) {
           setCurrentMessage('');
         } else {
-          setCurrentMessage((prev) => prev + lastEvent.text);
+          setCurrentMessage(lastEvent.text);
         }
         break;
     }

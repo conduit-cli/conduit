@@ -77,12 +77,6 @@ impl SessionService {
             .session_tab_store()
             .ok_or_else(|| ServiceError::Internal("Database not available".to_string()))?;
 
-        let sessions = store
-            .get_all()
-            .map_err(|e| ServiceError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-        let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
-
         let model = if let Some(model_id) = params.model {
             if ModelRegistry::find_model(params.agent_type, &model_id).is_none() {
                 return Err(ServiceError::InvalidInput(format!(
@@ -95,17 +89,10 @@ impl SessionService {
             Some(core.config().default_model_for(params.agent_type))
         };
 
-        let session = SessionTab::new(
-            next_index,
-            params.agent_type,
-            params.workspace_id,
-            None,
-            model,
-            None,
-        );
+        let session = SessionTab::new(0, params.agent_type, params.workspace_id, None, model, None);
 
-        store
-            .create(&session)
+        let session = store
+            .create_with_next_index(session)
             .map_err(|e| ServiceError::Internal(format!("Failed to create session: {}", e)))?;
 
         Ok(session)
@@ -138,6 +125,9 @@ impl SessionService {
         if let Some(agent_type) = params.agent_type {
             agent_type_changed = session.agent_type != agent_type;
             session.agent_type = agent_type;
+        }
+        if agent_type_changed && session.agent_type != AgentType::Claude {
+            session.agent_mode = None;
         }
 
         if let Some(agent_mode) = params.agent_mode {
@@ -188,18 +178,12 @@ impl SessionService {
             .session_tab_store()
             .ok_or_else(|| ServiceError::Internal("Database not available".to_string()))?;
 
-        let sessions = store
-            .get_all()
-            .map_err(|e| ServiceError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-        let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
-
         let model = params
             .model
             .or_else(|| Some(core.config().default_model_for(params.agent_type)));
 
         let mut session = SessionTab::new(
-            next_index,
+            0,
             params.agent_type,
             params.workspace_id,
             Some(params.agent_session_id),
@@ -208,8 +192,8 @@ impl SessionService {
         );
         session.title = params.title;
 
-        store
-            .create(&session)
+        let session = store
+            .create_with_next_index(session)
             .map_err(|e| ServiceError::Internal(format!("Failed to create session: {}", e)))?;
 
         Ok(session)
@@ -222,12 +206,6 @@ impl SessionService {
         let store = core
             .session_tab_store()
             .ok_or_else(|| ServiceError::Internal("Database not available".to_string()))?;
-
-        let sessions = store
-            .get_all()
-            .map_err(|e| ServiceError::Internal(format!("Failed to list sessions: {}", e)))?;
-
-        let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
 
         let model = if let Some(model_id) = params.model {
             if ModelRegistry::find_model(params.agent_type, &model_id).is_none() {
@@ -242,7 +220,7 @@ impl SessionService {
         };
 
         let mut session = SessionTab::new(
-            next_index,
+            0,
             params.agent_type,
             Some(params.workspace_id),
             None,
@@ -259,8 +237,8 @@ impl SessionService {
         }
         session.fork_seed_id = Some(params.fork_seed_id);
 
-        store
-            .create(&session)
+        let session = store
+            .create_with_next_index(session)
             .map_err(|e| ServiceError::Internal(format!("Failed to create session: {}", e)))?;
 
         Ok(session)
@@ -292,14 +270,9 @@ impl SessionService {
                 ServiceError::NotFound(format!("Workspace {} not found", workspace_id))
             })?;
 
-        let sessions = session_store
-            .get_all()
-            .map_err(|e| ServiceError::Internal(format!("Failed to list sessions: {}", e)))?;
-        let next_index = sessions.iter().map(|s| s.tab_index).max().unwrap_or(-1) + 1;
-
         let default_agent = core.config().default_agent;
         let session = SessionTab::new(
-            next_index,
+            0,
             default_agent,
             Some(workspace_id),
             None,
@@ -307,8 +280,8 @@ impl SessionService {
             None,
         );
 
-        session_store
-            .create(&session)
+        let session = session_store
+            .create_with_next_index(session)
             .map_err(|e| ServiceError::Internal(format!("Failed to create session: {}", e)))?;
 
         Ok(session)

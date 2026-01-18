@@ -20,6 +20,7 @@ export class ConduitWebSocket {
   private reconnectAttempts = 0;
   private reconnectTimeout: number | null = null;
   private pingInterval: number | null = null;
+  private shouldReconnect = true;
   private messageHandlers: Map<string, Set<(event: AgentEvent) => void>> = new Map();
   private activeSubscriptions: Set<string> = new Set();
 
@@ -40,7 +41,14 @@ export class ConduitWebSocket {
   }
 
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+    if (
+      this.ws?.readyState === WebSocket.OPEN
+      || this.ws?.readyState === WebSocket.CONNECTING
+    ) {
+      return;
+    }
+
+    this.shouldReconnect = true;
 
     this.ws = new WebSocket(this.url);
 
@@ -54,7 +62,9 @@ export class ConduitWebSocket {
     this.ws.onclose = () => {
       this.stopPing();
       this.options.onDisconnect?.();
-      this.attemptReconnect();
+      if (this.shouldReconnect) {
+        this.attemptReconnect();
+      }
     };
 
     this.ws.onerror = (error) => {
@@ -73,6 +83,7 @@ export class ConduitWebSocket {
   }
 
   disconnect(): void {
+    this.shouldReconnect = false;
     this.stopPing();
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);

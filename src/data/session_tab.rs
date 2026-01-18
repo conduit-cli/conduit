@@ -22,6 +22,22 @@ impl SessionTabStore {
     /// Insert a new session tab
     pub fn create(&self, tab: &SessionTab) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
+        Self::insert_with_conn(&conn, tab)
+    }
+
+    pub fn create_with_next_index(&self, mut tab: SessionTab) -> SqliteResult<SessionTab> {
+        let conn = self.conn.lock().unwrap();
+        let next_index: i32 = conn.query_row(
+            "SELECT COALESCE(MAX(tab_index), -1) + 1 FROM session_tabs",
+            [],
+            |row| row.get(0),
+        )?;
+        tab.tab_index = next_index;
+        Self::insert_with_conn(&conn, &tab)?;
+        Ok(tab)
+    }
+
+    fn insert_with_conn(conn: &Connection, tab: &SessionTab) -> SqliteResult<()> {
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
         let input_history = serialize_input_history(&tab.input_history);
         conn.execute(

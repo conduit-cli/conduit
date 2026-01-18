@@ -62,7 +62,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new ApiError(response.status, error);
   }
 
-  return response.json();
+  if (response.status === 204 || response.status === 205) {
+    return undefined as T;
+  }
+
+  const contentLength = response.headers.get('content-length');
+  if (contentLength === '0') {
+    return undefined as T;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 // Health

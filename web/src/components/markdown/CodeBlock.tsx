@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { cn } from '../../lib/cn';
 import { CopyButton } from '../ui/CopyButton';
 import { getHighlighter, normalizeLanguage, THEME_MAP } from '../../lib/shiki';
@@ -26,6 +27,10 @@ export function CodeBlock({
   const [isExpanded, setIsExpanded] = useState(false);
   const [shouldCollapse, setShouldCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const sanitizedHighlightedHtml = useMemo(
+    () => (highlightedHtml ? DOMPurify.sanitize(highlightedHtml) : null),
+    [highlightedHtml]
+  );
 
   const normalizedLang = normalizeLanguage(language);
   const lineCount = code.split('\n').length;
@@ -93,13 +98,13 @@ export function CodeBlock({
         )}
         style={!isExpanded && shouldCollapse ? { maxHeight } : undefined}
       >
-        {highlightedHtml ? (
+        {sanitizedHighlightedHtml ? (
           <div
             className={cn(
               'shiki-wrapper p-3',
               showLineNumbers && 'show-line-numbers'
             )}
-            dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizedHighlightedHtml }}
           />
         ) : (
           <pre className="p-3 text-sm text-text overflow-x-auto">
