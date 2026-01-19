@@ -355,7 +355,7 @@ mod tests {
 
         let body = serde_json::json!({
             "agent_type": "claude",
-            "model": "claude-sonnet-4-20250514"
+            "model": "sonnet"
         });
 
         let response = app
