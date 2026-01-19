@@ -10,6 +10,8 @@ interface LayoutProps {
   onSelectWorkspace?: (workspace: Workspace) => void;
   onCreateWorkspace?: (repository: Repository) => void;
   onArchiveWorkspace?: (workspace: Workspace) => void;
+  onAddProject?: () => void;
+  onBrowseProjects?: () => void;
   sessions: Session[];
   activeSessionId: string | null;
   onSelectSession: (session: Session) => void;
@@ -31,6 +33,8 @@ export function Layout({
   onSelectWorkspace,
   onCreateWorkspace,
   onArchiveWorkspace,
+  onAddProject,
+  onBrowseProjects,
   sessions,
   activeSessionId,
   onSelectSession,
@@ -101,6 +105,8 @@ export function Layout({
           onSelectWorkspace={onSelectWorkspace}
           onCreateWorkspace={onCreateWorkspace}
           onArchiveWorkspace={onArchiveWorkspace}
+          onAddProject={onAddProject}
+          onBrowseProjects={onBrowseProjects}
         />
       )}
       <div className="flex flex-1 flex-col overflow-hidden">

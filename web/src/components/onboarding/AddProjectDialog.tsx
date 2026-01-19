@@ -11,6 +11,7 @@ interface AddProjectDialogProps {
 
 export function AddProjectDialog({ isOpen, onClose, onAdded }: AddProjectDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const { mutate, isPending, error, reset } = useAddOnboardingProject();
   const [value, setValue] = useState('');
 
@@ -19,6 +20,10 @@ export function AddProjectDialog({ isOpen, onClose, onAdded }: AddProjectDialogP
     if (!dialog) return;
     if (isOpen) {
       dialog.showModal();
+      // Focus input after dialog animation
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     } else {
       dialog.close();
       reset();
@@ -83,6 +88,7 @@ export function AddProjectDialog({ isOpen, onClose, onAdded }: AddProjectDialogP
         <div className="px-6 py-5">
           <p className="text-sm text-text-muted">Enter the path to a local git repository.</p>
           <input
+            ref={inputRef}
             value={value}
             onChange={(event) => setValue(event.target.value)}
             className={cn(

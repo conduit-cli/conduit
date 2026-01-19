@@ -484,6 +484,18 @@ function AppContent() {
     setIsImportDialogOpen(true);
   };
 
+  const handleAddProject = () => {
+    setIsAddProjectOpen(true);
+  };
+
+  const handleBrowseProjects = () => {
+    if (onboardingBaseDir?.base_dir) {
+      setIsProjectPickerOpen(true);
+    } else {
+      setIsBaseDirDialogOpen(true);
+    }
+  };
+
   const handleOnboardingAdded = () => {
     setIsBaseDirDialogOpen(false);
     setIsProjectPickerOpen(false);
@@ -569,8 +581,14 @@ function AppContent() {
       },
       {
         id: 'add-project',
-        label: 'Add Project',
+        label: 'Add Project...',
         onSelect: () => setIsAddProjectOpen(true),
+      },
+      {
+        id: 'browse-projects',
+        label: 'Browse Projects...',
+        shortcut: 'Ctrl+N',
+        onSelect: handleBrowseProjects,
       },
       {
         id: 'set-projects-dir',
@@ -601,6 +619,7 @@ function AppContent() {
       activeSessionId,
       activeWorkspace,
       handleArchiveWorkspace,
+      handleBrowseProjects,
       handleCreatePr,
       handleCloseSession,
       handleCopyWorkspacePath,
@@ -627,10 +646,14 @@ function AppContent() {
         event.preventDefault();
         setIsCommandPaletteOpen((prev) => !prev);
       }
+      if ((event.metaKey || event.ctrlKey) && key === 'n') {
+        event.preventDefault();
+        handleBrowseProjects();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [onboardingBaseDir?.base_dir]);
 
   const showOnboarding = resolvedRepositories.length === 0;
 
@@ -641,6 +664,8 @@ function AppContent() {
         onSelectWorkspace={handleSelectWorkspace}
         onCreateWorkspace={(repository) => setCreateWorkspaceRepo(repository)}
         onArchiveWorkspace={handleArchiveWorkspace}
+        onAddProject={handleAddProject}
+        onBrowseProjects={handleBrowseProjects}
         sessions={orderedSessions}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}

@@ -19,6 +19,7 @@ export function ProjectPickerDialog({
   onAdded,
 }: ProjectPickerDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const { data: baseDir } = useOnboardingBaseDir({ enabled: isOpen });
   const {
     data,
@@ -35,6 +36,10 @@ export function ProjectPickerDialog({
     if (!dialog) return;
     if (isOpen) {
       dialog.showModal();
+      // Focus search input after dialog animation
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
     } else {
       dialog.close();
       reset();
@@ -114,6 +119,7 @@ export function ProjectPickerDialog({
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-elevated px-3 py-2">
             <Search className="h-4 w-4 text-text-muted" />
             <input
+              ref={searchInputRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search projects"

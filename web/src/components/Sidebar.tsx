@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useRepositories, useWorkspaces, useAgents, useWorkspaceStatus } from '../hooks';
+import { useEffect, useState, useRef } from 'react';
+import { useRepositories, useWorkspaces, useWorkspaceStatus } from '../hooks';
 import {
   FolderGit2,
   Plus,
@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   MoreHorizontal,
   Archive,
+  FolderOpen,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { Repository, Workspace } from '../types';
@@ -242,6 +243,8 @@ interface SidebarProps {
   onSelectWorkspace?: (workspace: Workspace) => void;
   onCreateWorkspace?: (repository: Repository) => void;
   onArchiveWorkspace?: (workspace: Workspace) => void;
+  onAddProject?: () => void;
+  onBrowseProjects?: () => void;
 }
 
 export function Sidebar({
@@ -249,20 +252,34 @@ export function Sidebar({
   onSelectWorkspace,
   onCreateWorkspace,
   onArchiveWorkspace,
+  onAddProject,
+  onBrowseProjects,
 }: SidebarProps) {
   const { data: repositories = [] } = useRepositories();
   const { data: workspaces = [] } = useWorkspaces();
-  const { data: agents = [] } = useAgents();
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
   const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
-
-  const availableAgents = agents.filter((a) => a.available);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
 
   // Group workspaces by repository
   const workspacesByRepo = repositories.reduce((acc, repo) => {
     acc[repo.id] = workspaces.filter((w) => w.repository_id === repo.id);
     return acc;
   }, {} as Record<string, Workspace[]>);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
+        setIsAddMenuOpen(false);
+      }
+    };
+    if (isAddMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isAddMenuOpen]);
 
   const handleNewWorkspace = (repository: Repository) => {
     if (onCreateWorkspace) {
@@ -321,25 +338,50 @@ export function Sidebar({
         )}
       </nav>
 
-      {/* Available agents indicator */}
-      <div className="border-t border-border p-3">
-        <div className="flex items-center justify-center gap-2 text-xs">
-          {availableAgents.map((agent) => (
-            <span
-              key={agent.id}
-              className={cn(
-                'rounded px-1.5 py-0.5',
-                agent.id === 'claude'
-                  ? 'bg-orange-400/10 text-orange-400'
-                  : agent.id === 'codex'
-                  ? 'bg-green-400/10 text-green-400'
-                  : 'bg-blue-400/10 text-blue-400'
-              )}
+      {/* Add Project footer */}
+      <div className="relative border-t border-border p-3" ref={addMenuRef}>
+        <button
+          onClick={() => setIsAddMenuOpen((prev) => !prev)}
+          className={cn(
+            'flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+            'text-text-muted hover:bg-surface-elevated hover:text-text',
+            isAddMenuOpen && 'bg-surface-elevated text-text'
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            <span>Add Project</span>
+          </div>
+          <ChevronDown
+            className={cn('h-4 w-4 transition-transform', isAddMenuOpen && 'rotate-180')}
+          />
+        </button>
+
+        {/* Dropdown menu */}
+        {isAddMenuOpen && (
+          <div className="absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-md border border-border bg-surface shadow-lg">
+            <button
+              onClick={() => {
+                setIsAddMenuOpen(false);
+                onAddProject?.();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
             >
-              {agent.name}
-            </span>
-          ))}
-        </div>
+              <Plus className="h-4 w-4" />
+              <span>Add Project...</span>
+            </button>
+            <button
+              onClick={() => {
+                setIsAddMenuOpen(false);
+                onBrowseProjects?.();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            >
+              <FolderOpen className="h-4 w-4" />
+              <span>Browse Projects...</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Create Workspace Dialog */}
