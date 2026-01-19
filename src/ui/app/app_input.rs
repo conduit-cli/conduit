@@ -781,7 +781,7 @@ impl App {
                                 x,
                                 y,
                                 chat_area,
-                                self.config.ui.show_chat_scrollbar,
+                                self.config().ui.show_chat_scrollbar,
                             );
 
                             if hover_changed {
@@ -826,7 +826,7 @@ impl App {
             x,
             y,
             chat_area,
-            self.config.ui.show_chat_scrollbar,
+            self.config().ui.show_chat_scrollbar,
         )?;
 
         // Try to open the file in a new tab

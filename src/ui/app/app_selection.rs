@@ -42,7 +42,7 @@ impl App {
                     x,
                     y,
                     chat_area,
-                    self.config.ui.show_chat_scrollbar,
+                    self.config().ui.show_chat_scrollbar,
                 ) {
                     self.state.selection_drag = Some(SelectionDragTarget::Chat);
                     return true;
@@ -103,7 +103,7 @@ impl App {
                             y,
                             chat_area,
                             session.is_processing,
-                            self.config.ui.show_chat_scrollbar,
+                            self.config().ui.show_chat_scrollbar,
                         );
                         handled = true;
                     }

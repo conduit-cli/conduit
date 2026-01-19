@@ -2800,7 +2800,7 @@ impl App {
                         .tab_manager
                         .active_session()
                         .and_then(|s| s.working_dir.clone())
-                        .unwrap_or_else(|| self.config.working_dir.clone());
+                        .unwrap_or_else(|| self.config().working_dir.clone());
                     expanded_path = base_dir.join(expanded_path);
                 }
 
@@ -3743,7 +3743,7 @@ impl App {
         new_session.project_name = project_name;
         new_session.workspace_name = workspace_name;
         new_session.pr_number = pr_number;
-        new_session.model = Some(self.config.default_model_for(agent_type));
+        new_session.model = Some(self.config().default_model_for(agent_type));
         new_session.init_context_for_model();
         new_session.update_status();
 
@@ -8019,7 +8019,7 @@ impl App {
                             thinking_line,
                             queue_lines,
                             prompt_lines,
-                            self.config.ui.show_chat_scrollbar,
+                            self.config().ui.show_chat_scrollbar,
                         );
 
                         // Check if inline prompt is active
