@@ -202,7 +202,7 @@ export function ChatInput({
 
   return (
     <div className="border-t border-border bg-surface p-4">
-      <div className="flex items-end gap-3">
+      <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <textarea
             ref={textareaRef}
