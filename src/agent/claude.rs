@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::agent::error::AgentError;
 use crate::agent::events::{
     AgentEvent, AssistantMessageEvent, ControlRequestEvent, ErrorEvent, SessionInitEvent,
-    TokenUsage, ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent,
+    TokenUsage, ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent, TurnFailedEvent,
 };
 use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
@@ -142,9 +142,22 @@ impl ClaudeCodeRunner {
                             is_fatal: true,
                         })];
                     }
+                    let detail = assistant
+                        .extract_text()
+                        .filter(|text| !text.trim().is_empty());
+                    let message = if let Some(detail_text) = detail.as_deref() {
+                        format!("Claude error ({}): {}", error, detail_text)
+                    } else {
+                        format!("Claude error: {}", error)
+                    };
+                    tracing::warn!(
+                        error_type = %error,
+                        detail = ?detail,
+                        "Claude assistant error"
+                    );
                     // Handle other error types as fatal errors
                     return vec![AgentEvent::Error(ErrorEvent {
-                        message: format!("Claude error: {}", error),
+                        message,
                         is_fatal: true,
                     })];
                 }
@@ -206,6 +219,22 @@ impl ClaudeCodeRunner {
                 })]
             }
             ClaudeRawEvent::Result(res) => {
+                if res.is_error.unwrap_or(false) {
+                    let detail = res
+                        .result
+                        .clone()
+                        .or(res.output.clone())
+                        .or(res.error.clone())
+                        .unwrap_or_else(|| "Unknown error".to_string());
+                    tracing::warn!(error = %detail, "Claude result error");
+                    return vec![
+                        AgentEvent::Error(ErrorEvent {
+                            message: format!("Claude error: {}", detail),
+                            is_fatal: true,
+                        }),
+                        AgentEvent::TurnFailed(TurnFailedEvent { error: detail }),
+                    ];
+                }
                 // Result event always signals turn completion
                 // Use default values if usage is not provided
                 let usage = res

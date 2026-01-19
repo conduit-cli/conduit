@@ -305,6 +305,8 @@ impl ClaudeUserEvent {
 pub struct ClaudeResultEvent {
     pub result: Option<String>,
     pub output: Option<String>,
+    pub is_error: Option<bool>,
+    pub error: Option<String>,
     pub session_id: Option<String>,
     pub usage: Option<ClaudeUsage>,
 }
@@ -427,9 +429,7 @@ mod tests {
                     Some("50884eed-28b7-431e-9ad8-78b326696ae7".to_string())
                 );
 
-                // Note: The error field is currently ignored by deserialization
-                // because ClaudeAssistantEvent doesn't have an error field.
-                // This test documents the current behavior.
+                assert_eq!(assistant.error, Some("authentication_failed".to_string()));
             }
             other => panic!("Expected Assistant event, got {:?}", other),
         }
@@ -452,6 +452,7 @@ mod tests {
                     result.session_id,
                     Some("50884eed-28b7-431e-9ad8-78b326696ae7".to_string())
                 );
+                assert_eq!(result.is_error, Some(true));
                 // Verify usage is parsed (even with zero values)
                 assert!(result.usage.is_some());
                 let usage = result.usage.unwrap();

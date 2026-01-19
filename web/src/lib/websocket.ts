@@ -177,6 +177,21 @@ export class ConduitWebSocket {
         handlers.forEach((handler) => handler(message.event));
       }
     }
+
+    if (message.type === 'error' && message.session_id) {
+      if (message.message.includes('already running')) {
+        return;
+      }
+      const handlers = this.messageHandlers.get(message.session_id);
+      if (handlers) {
+        const event: AgentEvent = {
+          type: 'Error',
+          message: message.message,
+          is_fatal: true,
+        };
+        handlers.forEach((handler) => handler(event));
+      }
+    }
   }
 
   private isConnected(): boolean {
