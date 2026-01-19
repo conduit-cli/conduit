@@ -60,6 +60,23 @@ function applyTabOrder(sessions: Session[], order: string[]): Session[] {
   return [...ordered, ...missing];
 }
 
+function parseGitHubRepo(repoUrl: string): string | null {
+  if (!repoUrl) return null;
+  if (repoUrl.startsWith('git@')) {
+    const match = repoUrl.match(/git@[^:]+:([^/]+\/[^/]+?)(?:\.git)?$/);
+    return match?.[1] ?? null;
+  }
+  try {
+    const url = new URL(repoUrl);
+    if (!url.hostname.endsWith('github.com')) return null;
+    const parts = url.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/');
+    if (parts.length < 2) return null;
+    return `${parts[0]}/${parts[1]}`;
+  } catch {
+    return null;
+  }
+}
+
 function latestUsageFromEvents(wsEvents: AgentEvent[], historyEvents: SessionEvent[]) {
   for (let index = wsEvents.length - 1; index >= 0; index -= 1) {
     const event = wsEvents[index];
@@ -412,7 +429,16 @@ function AppContent() {
   const handleOpenPr = () => {
     const prStatus = workspaceStatus?.pr_status;
     if (!prStatus) return;
-    const url = prStatus.url ?? `https://github.com/pull/${prStatus.number}`;
+    const repo = activeWorkspace
+      ? resolvedRepositories.find((candidate) => candidate.id === activeWorkspace.repository_id)
+      : null;
+    const fallbackRepo = repo?.repository_url ? parseGitHubRepo(repo.repository_url) : null;
+    const url =
+      prStatus.url ?? (fallbackRepo ? `https://github.com/${fallbackRepo}/pull/${prStatus.number}` : null);
+    if (!url) {
+      console.warn('Unable to open PR: missing repository URL');
+      return;
+    }
     window.open(url, '_blank', 'noopener');
   };
 
@@ -574,7 +600,9 @@ function AppContent() {
       activeSession,
       activeSessionId,
       activeWorkspace,
+      handleArchiveWorkspace,
       handleCreatePr,
+      handleCloseSession,
       handleCopyWorkspacePath,
       handleForkSession,
       handleNewSession,

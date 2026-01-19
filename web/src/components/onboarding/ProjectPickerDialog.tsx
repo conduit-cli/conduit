@@ -145,7 +145,7 @@ export function ProjectPickerDialog({
                     </div>
                     <button
                       onClick={() => handleAdd(project.path)}
-                      disabled={isPending && selectedPath === project.path}
+                      disabled={isPending}
                       className={cn(
                         'rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text',
                         isPending && selectedPath === project.path && 'opacity-70'

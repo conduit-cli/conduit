@@ -484,9 +484,17 @@ pub async fn auto_create_workspace(
     // Save to database
     workspace_store.create(&workspace).map_err(|e| {
         // If database save fails, try to clean up the worktree
-        let _ = core
+        if let Err(err) = core
             .worktree_manager()
-            .remove_worktree(&repo_path, &workspace.path);
+            .remove_worktree(&repo_path, &workspace.path)
+        {
+            tracing::warn!(
+                error = %err,
+                repo_path = %repo_path.display(),
+                workspace_path = %workspace.path.display(),
+                "Failed to remove worktree after workspace save failure"
+            );
+        }
         WebError::Internal(format!("Failed to save workspace: {}", e))
     })?;
 

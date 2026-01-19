@@ -350,11 +350,20 @@ export function RawEventCard({ event, index, defaultExpanded = false }: RawEvent
       )}
     >
       {/* Header - always visible */}
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setIsExpanded(!isExpanded)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setIsExpanded((prev) => !prev);
+          }
+        }}
         className={cn(
           'flex w-full items-center gap-2 px-3 py-2 text-left',
-          'hover:bg-surface-elevated/50 transition-colors duration-100'
+          'hover:bg-surface-elevated/50 transition-colors duration-100',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60'
         )}
       >
         <ChevronRight
@@ -402,7 +411,7 @@ export function RawEventCard({ event, index, defaultExpanded = false }: RawEvent
             <Copy className="h-3 w-3" />
           )}
         </button>
-      </button>
+      </div>
 
       {/* Expanded content */}
       {isExpanded && (

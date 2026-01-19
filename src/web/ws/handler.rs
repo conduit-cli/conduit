@@ -205,17 +205,51 @@ impl SessionManager {
             #[cfg(unix)]
             {
                 use std::process::Command;
-                let _ = Command::new("kill")
+                match Command::new("kill")
                     .arg("-TERM")
                     .arg(session.pid.to_string())
-                    .status();
+                    .status()
+                {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => {
+                        tracing::warn!(
+                            pid = session.pid,
+                            exit_status = ?status.code(),
+                            "Failed to terminate session process with kill"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            pid = session.pid,
+                            "Failed to execute kill for session process"
+                        );
+                    }
+                }
             }
             #[cfg(windows)]
             {
                 use std::process::Command;
-                let _ = Command::new("taskkill")
+                match Command::new("taskkill")
                     .args(["/PID", &session.pid.to_string(), "/F"])
-                    .status();
+                    .status()
+                {
+                    Ok(status) if status.success() => {}
+                    Ok(status) => {
+                        tracing::warn!(
+                            pid = session.pid,
+                            exit_status = ?status.code(),
+                            "Failed to terminate session process with taskkill"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            pid = session.pid,
+                            "Failed to execute taskkill for session process"
+                        );
+                    }
+                }
             }
         }
         Ok(())

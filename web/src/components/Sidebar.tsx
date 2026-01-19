@@ -16,13 +16,37 @@ import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
 import { Logo } from './Logo';
 
 interface WorkspaceItemProps {
+  repository: Repository;
   workspace: Workspace;
   isSelected?: boolean;
   onSelect?: () => void;
   onArchive?: () => void;
 }
 
-function WorkspaceItem({ workspace, isSelected, onSelect, onArchive }: WorkspaceItemProps) {
+function parseGitHubRepo(repoUrl: string | null | undefined): string | null {
+  if (!repoUrl) return null;
+  if (repoUrl.startsWith('git@')) {
+    const match = repoUrl.match(/git@[^:]+:([^/]+\/[^/]+?)(?:\.git)?$/);
+    return match?.[1] ?? null;
+  }
+  try {
+    const url = new URL(repoUrl);
+    if (!url.hostname.endsWith('github.com')) return null;
+    const parts = url.pathname.replace(/^\//, '').replace(/\.git$/, '').split('/');
+    if (parts.length < 2) return null;
+    return `${parts[0]}/${parts[1]}`;
+  } catch {
+    return null;
+  }
+}
+
+function WorkspaceItem({
+  repository,
+  workspace,
+  isSelected,
+  onSelect,
+  onArchive,
+}: WorkspaceItemProps) {
   const [hasInitialStatus, setHasInitialStatus] = useState(false);
   const shouldPoll = !!isSelected || !hasInitialStatus;
   const { data: status } = useWorkspaceStatus(workspace.id, {
@@ -44,6 +68,10 @@ function WorkspaceItem({ workspace, isSelected, onSelect, onArchive }: Workspace
 
   const gitStats = status?.git_stats;
   const prStatus = status?.pr_status;
+  const repoSlug = parseGitHubRepo(repository.repository_url);
+  const prUrl = prStatus
+    ? prStatus.url ?? (repoSlug ? `https://github.com/${repoSlug}/pull/${prStatus.number}` : null)
+    : null;
 
   return (
     <div
@@ -84,9 +112,9 @@ function WorkspaceItem({ workspace, isSelected, onSelect, onArchive }: Workspace
           )}
 
           {/* PR badge - clickable link to open PR */}
-          {prStatus && (
+          {prStatus && prUrl ? (
             <a
-              href={prStatus.url || `https://github.com/pull/${prStatus.number}`}
+              href={prUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
@@ -103,7 +131,22 @@ function WorkspaceItem({ workspace, isSelected, onSelect, onArchive }: Workspace
               #{prStatus.number}
               {prStatus.checks_passing && ' ✓'}
             </a>
-          )}
+          ) : prStatus ? (
+            <span
+              className={cn(
+                'flex items-center gap-1 rounded px-1.5 py-0.5',
+                prStatus.state === 'open' && 'bg-green-500/10 text-green-400',
+                prStatus.state === 'merged' && 'bg-purple-500/10 text-purple-400',
+                prStatus.state === 'closed' && 'bg-red-500/10 text-red-400',
+                prStatus.state === 'draft' && 'bg-orange-500/10 text-orange-400'
+              )}
+              aria-label={`PR #${prStatus.number}`}
+            >
+              <GitPullRequest className="h-3 w-3" />
+              #{prStatus.number}
+              {prStatus.checks_passing && ' ✓'}
+            </span>
+          ) : null}
 
           {onArchive && (
             <button
@@ -170,7 +213,7 @@ function RepositorySection({
           {/* New workspace button */}
           <button
             onClick={onNewWorkspace}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            className="group flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
           >
             <Plus className="h-3.5 w-3.5" />
             <span>New workspace</span>
@@ -181,6 +224,7 @@ function RepositorySection({
           {workspaces.map((workspace) => (
             <WorkspaceItem
               key={workspace.id}
+              repository={repository}
               workspace={workspace}
               isSelected={workspace.id === selectedWorkspaceId}
               onSelect={() => onSelectWorkspace?.(workspace)}

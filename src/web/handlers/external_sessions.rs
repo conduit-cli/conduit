@@ -205,9 +205,17 @@ fn ensure_workspace_for_external_session(
         let name = unique_workspace_name(base_name, &existing_names);
 
         let worktree_manager = WorktreeManager::new();
-        let branch = worktree_manager
-            .get_current_branch(&project)
-            .unwrap_or_else(|_| generate_branch_name(&get_git_username(), base_name));
+        let branch = match worktree_manager.get_current_branch(&project) {
+            Ok(branch) => branch,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    project = %project.display(),
+                    "Failed to read current branch for imported project"
+                );
+                generate_branch_name(&get_git_username(), base_name)
+            }
+        };
 
         let workspace = Workspace::new(repo.id, name, branch, project.clone());
         workspace_store

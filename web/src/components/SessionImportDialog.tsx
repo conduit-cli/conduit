@@ -35,9 +35,13 @@ export function SessionImportDialog({ isOpen, onClose, onImported }: SessionImpo
     if (!dialog) return;
 
     if (isOpen) {
-      dialog.showModal();
+      if (!dialog.open) {
+        dialog.showModal();
+      }
     } else {
-      dialog.close();
+      if (dialog.open) {
+        dialog.close();
+      }
       setQuery('');
       setFilter('all');
     }

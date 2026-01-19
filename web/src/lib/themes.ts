@@ -101,6 +101,7 @@ export function applyTheme(theme: Theme): void {
   root.style.setProperty('--color-pr-merged', colors.prMergedBg);
   root.style.setProperty('--color-pr-closed', colors.prClosedBg);
   root.style.setProperty('--color-pr-draft', colors.prDraftBg);
+  root.style.setProperty('--color-pr-unknown', colors.prUnknownBg);
 
   // Border colors
   root.style.setProperty('--color-border', colors.borderDefault);

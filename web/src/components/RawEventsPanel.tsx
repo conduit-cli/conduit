@@ -108,11 +108,16 @@ export function RawEventsPanel({ events, onClose }: RawEventsPanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevEventsLength = useRef(events.length);
 
+  const indexedEvents = useMemo(
+    () => events.map((event, index) => ({ event, index })),
+    [events]
+  );
+
   // Filter events based on selected category
   const filteredEvents = useMemo(() => {
-    if (filter === 'all') return events;
-    return events.filter((event) => getEventCategory(event) === filter);
-  }, [events, filter]);
+    if (filter === 'all') return indexedEvents;
+    return indexedEvents.filter(({ event }) => getEventCategory(event) === filter);
+  }, [indexedEvents, filter]);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -197,12 +202,8 @@ export function RawEventsPanel({ events, onClose }: RawEventsPanelProps) {
           </div>
         ) : (
           <div className="space-y-2">
-            {filteredEvents.map((event, index) => (
-              <RawEventCard
-                key={`event-${index}`}
-                event={event}
-                index={index}
-              />
+            {filteredEvents.map(({ event, index }) => (
+              <RawEventCard key={`event-${index}`} event={event} index={index} />
             ))}
           </div>
         )}
