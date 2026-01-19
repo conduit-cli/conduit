@@ -852,6 +852,21 @@ export function ChatView({
     updateSessionMutation.mutate({ id: session.id, data: { agent_mode: nextMode } });
   }, [effectiveAgentMode, session, updateSessionMutation]);
 
+  // Keyboard shortcut for toggling plan mode (Ctrl+Shift+P)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        if (canChangeMode) {
+          handleToggleAgentMode();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canChangeMode, handleToggleAgentMode]);
+
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
     return (
@@ -927,23 +942,6 @@ export function ChatView({
             </span>
           </div>
         )}
-
-          {session?.agent_type === 'claude' && (
-            <button
-              onClick={handleToggleAgentMode}
-              disabled={!canChangeMode}
-              className={cn(
-                'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
-                effectiveAgentMode === 'plan'
-                  ? 'bg-accent/20 text-accent'
-                  : 'text-text-muted hover:bg-surface-elevated hover:text-text',
-                !canChangeMode && 'cursor-not-allowed opacity-50'
-              )}
-              aria-label={`Switch to ${effectiveAgentMode === 'plan' ? 'build' : 'plan'} mode`}
-            >
-              {effectiveAgentMode === 'plan' ? 'Plan' : 'Build'}
-            </button>
-          )}
 
           <button
             onClick={handleForkSession}
@@ -1071,11 +1069,13 @@ export function ChatView({
         history={userMessageHistory}
         modelDisplayName={session?.model_display_name}
         agentType={session?.agent_type}
-        agentMode={session?.agent_mode}
+        agentMode={session?.agent_type === 'claude' ? effectiveAgentMode : undefined}
         gitStats={status?.git_stats}
         branch={workspace?.branch}
         onModelClick={() => setShowModelSelector(true)}
         canChangeModel={canChangeModel}
+        onModeToggle={session?.agent_type === 'claude' ? handleToggleAgentMode : undefined}
+        canChangeMode={canChangeMode}
         attachments={currentAttachments.map((attachment) => ({
           id: attachment.id,
           previewUrl: attachment.previewUrl,

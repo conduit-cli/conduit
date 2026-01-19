@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, type KeyboardEvent } from 'react';
 import { Send, Loader2, GitBranch, ListPlus, ImagePlus, X } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { ModeToggle } from './ModeToggle';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -26,6 +27,9 @@ interface ChatInputProps {
   // Model selection
   onModelClick?: () => void;
   canChangeModel?: boolean;
+  // Mode toggle
+  onModeToggle?: () => void;
+  canChangeMode?: boolean;
 }
 
 export function ChatInput({
@@ -50,6 +54,8 @@ export function ChatInput({
   branch,
   onModelClick,
   canChangeModel = false,
+  onModeToggle,
+  canChangeMode = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -306,7 +312,14 @@ export function ChatInput({
       >
         {/* Left: Agent Mode + Model + Agent Type */}
         <div className="flex items-center gap-2 min-w-0">
-          {agentMode && <span className="text-accent shrink-0">{agentMode}</span>}
+          {agentMode && onModeToggle && (
+            <ModeToggle
+              mode={agentMode as 'build' | 'plan'}
+              onToggle={onModeToggle}
+              disabled={!canChangeMode}
+              size="sm"
+            />
+          )}
           {modelDisplayName ? (
             canChangeModel && onModelClick ? (
               <button

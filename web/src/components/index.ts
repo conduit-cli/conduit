@@ -4,6 +4,7 @@ export * from './Header';
 export * from './ChatMessage';
 export * from './ChatInput';
 export * from './ChatView';
+export * from './ModeToggle';
 export * from './HistoryMessage';
 export * from './ThemeSwitcher';
 export * from './CreateWorkspaceDialog';

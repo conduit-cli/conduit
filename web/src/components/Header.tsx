@@ -66,7 +66,11 @@ export function Header({
                 ? 'Codex'
                 : 'Gemini'}
             </span>
-            {activeSession.agent_mode && <span className="text-text-muted">· {activeSession.agent_mode}</span>}
+            {activeSession.agent_mode && (
+              <span className="text-text-muted">
+                · {activeSession.agent_mode === 'plan' ? 'Plan' : 'Build'}
+              </span>
+            )}
             {activeSession.model_display_name && (
               <span className="text-text-muted">· {activeSession.model_display_name}</span>
             )}

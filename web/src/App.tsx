@@ -30,6 +30,7 @@ import {
   useWorkspaceArchivePreflight,
   useArchiveWorkspace,
   useWorkspaceActions,
+  useUpdateSession,
 } from './hooks';
 import type { Repository, Workspace, Session, SessionEvent, AgentEvent } from './types';
 
@@ -110,6 +111,7 @@ function AppContent() {
   const updateUiState = useUpdateUiState();
   const closeSession = useCloseSession();
   const archiveWorkspace = useArchiveWorkspace();
+  const updateSession = useUpdateSession();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -523,6 +525,16 @@ function AppContent() {
     onForkedSession: (session) => handleImportedSession(session),
   });
 
+  const canTogglePlanMode =
+    activeSession?.agent_type === 'claude' &&
+    !activeSession?.agent_session_id;
+
+  const handleTogglePlanMode = () => {
+    if (!activeSession || !canTogglePlanMode) return;
+    const nextMode = activeSession.agent_mode === 'plan' ? 'build' : 'plan';
+    updateSession.mutate({ id: activeSession.id, data: { agent_mode: nextMode } });
+  };
+
   const commands = useMemo<CommandPaletteItem[]>(
     () => [
       {
@@ -561,6 +573,14 @@ function AppContent() {
         label: 'Fork Session...',
         disabled: !activeSession,
         onSelect: handleForkSession,
+      },
+      {
+        id: 'toggle-plan-mode',
+        label: activeSession?.agent_mode === 'plan' ? 'Switch to Build Mode' : 'Switch to Plan Mode',
+        shortcut: 'Ctrl+Shift+P',
+        keywords: 'plan build mode toggle',
+        disabled: !canTogglePlanMode,
+        onSelect: handleTogglePlanMode,
       },
       {
         id: 'new-session',
@@ -618,6 +638,7 @@ function AppContent() {
       activeSession,
       activeSessionId,
       activeWorkspace,
+      canTogglePlanMode,
       handleArchiveWorkspace,
       handleBrowseProjects,
       handleCreatePr,
@@ -630,6 +651,7 @@ function AppContent() {
       handleOpenImport,
       handleOpenPr,
       handlePrevTab,
+      handleTogglePlanMode,
       handleToggleSidebar,
       isSidebarOpen,
       orderedSessions.length,
@@ -642,7 +664,7 @@ function AppContent() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
-      if ((event.metaKey || event.ctrlKey) && (key === 'k' || key === 'p')) {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && (key === 'k' || key === 'p')) {
         event.preventDefault();
         setIsCommandPaletteOpen((prev) => !prev);
       }
