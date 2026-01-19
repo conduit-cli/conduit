@@ -140,7 +140,7 @@ pub async fn create_session(
     Ok((StatusCode::CREATED, Json(SessionResponse::from(session))))
 }
 
-/// Close (delete) a session.
+/// Close (hide) a session.
 pub async fn close_session(
     State(state): State<WebAppState>,
     Path(id): Path<Uuid>,

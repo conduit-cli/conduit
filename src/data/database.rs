@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS app_state (
 CREATE TABLE IF NOT EXISTS session_tabs (
     id TEXT PRIMARY KEY,
     tab_index INTEGER NOT NULL,
+    is_open INTEGER NOT NULL DEFAULT 1,
     workspace_id TEXT,
     agent_type TEXT NOT NULL,
     agent_mode TEXT DEFAULT 'build',
@@ -395,6 +396,22 @@ CREATE TABLE IF NOT EXISTS fork_seeds_new (
             "UPDATE session_tabs SET input_history = '[]' WHERE input_history IS NULL",
             [],
         )?;
+
+        // Migration 10: Add is_open column to session_tabs table
+        let has_is_open: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='is_open'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_is_open {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN is_open INTEGER NOT NULL DEFAULT 1",
+                [],
+            )?;
+        }
 
         Ok(())
     }

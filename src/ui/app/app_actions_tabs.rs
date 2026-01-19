@@ -33,7 +33,7 @@ impl App {
             Action::CloseTab => {
                 let active = self.state.tab_manager.active_index();
                 self.stop_agent_for_tab(active);
-                self.state.tab_manager.close_tab(active);
+                self.close_tab_at_index(active);
                 if self.state.tab_manager.is_empty() {
                     self.state.stop_footer_spinner();
                     self.state.sidebar_state.visible = true;

@@ -306,7 +306,7 @@ function AppContent() {
     updateUiState.mutate({ tab_order: newTabOrder });
 
     // Close the session via API
-    closeSession.mutate(sessionId);
+    closeSession.mutate({ id: sessionId, workspaceId: sessionToClose?.workspace_id ?? null });
   };
 
   const handleNewSession = () => {

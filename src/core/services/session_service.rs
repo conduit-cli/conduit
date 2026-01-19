@@ -164,7 +164,7 @@ impl SessionService {
             .ok_or_else(|| ServiceError::Internal("Database not available".to_string()))?;
 
         store
-            .delete(id)
+            .set_open(id, false)
             .map_err(|e| ServiceError::Internal(format!("Failed to close session: {}", e)))?;
 
         Ok(())
@@ -256,6 +256,17 @@ impl SessionService {
             .get_by_workspace_id(workspace_id)
             .map_err(|e| ServiceError::Internal(format!("Failed to query session: {}", e)))?
         {
+            if !existing.is_open {
+                let mut reopened = existing.clone();
+                reopened.is_open = true;
+                reopened.tab_index = session_store.next_tab_index().map_err(|e| {
+                    ServiceError::Internal(format!("Failed to allocate tab index: {}", e))
+                })?;
+                session_store.update(&reopened).map_err(|e| {
+                    ServiceError::Internal(format!("Failed to reopen session: {}", e))
+                })?;
+                return Self::ensure_model(core, session_store, reopened);
+            }
             return Self::ensure_model(core, session_store, existing);
         }
 

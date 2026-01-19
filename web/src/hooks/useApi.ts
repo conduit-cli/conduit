@@ -371,8 +371,8 @@ export function useDeleteQueueMessage() {
 export function useCloseSession() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.closeSession(id),
-    onMutate: async (id) => {
+    mutationFn: ({ id }: { id: string; workspaceId?: string | null }) => api.closeSession(id),
+    onMutate: async ({ id }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.sessions });
       const previous = queryClient.getQueryData<Session[]>(queryKeys.sessions);
       if (previous) {
@@ -383,13 +383,18 @@ export function useCloseSession() {
       }
       return { previous };
     },
-    onError: (_error, _id, context) => {
+    onError: (_error, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(queryKeys.sessions, context.previous);
       }
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      if (variables.workspaceId) {
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.workspaceSession(variables.workspaceId),
+        });
+      }
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });

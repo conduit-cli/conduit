@@ -710,14 +710,8 @@ impl App {
             "Persisting session state"
         );
 
-        if let Err(e) = session_tab_dao.clear_all() {
-            eprintln!("Warning: Failed to clear session tabs: {}", e);
-            tracing::warn!(error = %e, "Failed to clear saved session tabs");
-            return;
-        }
-
         for tab in &snapshot.tabs {
-            if let Err(e) = session_tab_dao.create(tab) {
+            if let Err(e) = session_tab_dao.upsert(tab) {
                 eprintln!("Warning: Failed to save session tab: {}", e);
                 tracing::warn!(error = %e, tab_index = tab.tab_index, "Failed to save session tab");
             }
@@ -3017,6 +3011,8 @@ impl App {
         // Get default model before the mutable borrow
         let default_model = self.config().default_model_for(tab_agent_type);
 
+        let session_tab_dao = self.session_tab_dao_clone();
+
         // Store workspace info in session and restore chat history if available
         if let Some(session) = self.state.tab_manager.active_session_mut() {
             session.workspace_id = Some(workspace_id);
@@ -3024,6 +3020,14 @@ impl App {
             session.workspace_name = Some(workspace.name.clone());
 
             // Restore saved session data if available
+            if let Some(saved) = saved_tab.as_ref() {
+                session.id = saved.id;
+                if let Some(session_tab_dao) = session_tab_dao.as_ref() {
+                    if let Err(e) = session_tab_dao.set_open(saved.id, true) {
+                        tracing::warn!(error = %e, "Failed to mark saved session as open");
+                    }
+                }
+            }
             if let Some(saved) = saved_tab {
                 session.set_agent_and_model(saved.agent_type, saved.model);
                 if let Some(saved_mode) = saved_agent_mode {
@@ -3560,6 +3564,17 @@ impl App {
         Effect::RemoveProject { repo_id }
     }
 
+    fn close_tab_at_index(&mut self, index: usize) {
+        if let Some(session) = self.state.tab_manager.session(index) {
+            if let Some(session_tab_dao) = self.session_tab_dao_clone() {
+                if let Err(e) = session_tab_dao.set_open(session.id, false) {
+                    tracing::warn!(error = %e, "Failed to mark session as closed");
+                }
+            }
+        }
+        self.state.tab_manager.close_tab(index);
+    }
+
     /// Close any tabs that are using the specified workspace
     fn close_tabs_for_workspace(&mut self, workspace_id: uuid::Uuid) {
         // Unregister workspace from git tracker
@@ -3585,7 +3600,7 @@ impl App {
 
         for idx in indices_to_close.into_iter().rev() {
             self.stop_agent_for_tab(idx);
-            self.state.tab_manager.close_tab(idx);
+            self.close_tab_at_index(idx);
         }
 
         // Switch to sidebar navigation if all tabs are closed
@@ -6926,7 +6941,7 @@ impl App {
                     if let Some(ref tracker) = self.git_tracker {
                         tracker.untrack_workspace(workspace_id);
                     }
-                    self.state.tab_manager.close_tab(new_index);
+                    self.close_tab_at_index(new_index);
                     let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                     self.state.tab_manager.switch_to(fallback);
                     // Restore pre-fork UI state
@@ -6945,7 +6960,7 @@ impl App {
                     if let Some(ref tracker) = self.git_tracker {
                         tracker.untrack_workspace(workspace_id);
                     }
-                    self.state.tab_manager.close_tab(new_index);
+                    self.close_tab_at_index(new_index);
                     let fallback = prev_index.min(self.state.tab_manager.len().saturating_sub(1));
                     self.state.tab_manager.switch_to(fallback);
                     // Restore pre-fork UI state

@@ -161,6 +161,8 @@ pub struct SessionTab {
     pub id: Uuid,
     /// Tab index (ordering)
     pub tab_index: i32,
+    /// Whether this session tab is currently open
+    pub is_open: bool,
     /// Associated workspace ID (optional)
     pub workspace_id: Option<Uuid>,
     /// Agent type (Claude, Codex, or Gemini)
@@ -200,6 +202,7 @@ impl SessionTab {
         Self {
             id: Uuid::new_v4(),
             tab_index,
+            is_open: true,
             workspace_id,
             agent_type,
             agent_mode: None,
