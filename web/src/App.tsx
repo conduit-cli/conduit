@@ -8,6 +8,7 @@ import {
   ProjectPickerDialog,
   AddProjectDialog,
   CreateWorkspaceDialog,
+  ConfirmDialog,
 } from './components';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
 import { SessionImportDialog } from './components/SessionImportDialog';
@@ -26,6 +27,9 @@ import {
   useWorkspaceSession,
   useCloseSession,
   useOnboardingBaseDir,
+  useWorkspaceArchivePreflight,
+  useArchiveWorkspace,
+  useWorkspaceActions,
 } from './hooks';
 import type { Repository, Workspace, Session, SessionEvent, AgentEvent } from './types';
 
@@ -88,6 +92,7 @@ function AppContent() {
   const { data: uiState } = useUiState({ enabled: !!bootstrap });
   const updateUiState = useUpdateUiState();
   const closeSession = useCloseSession();
+  const archiveWorkspace = useArchiveWorkspace();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -100,6 +105,7 @@ function AppContent() {
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
+  const [archiveWorkspaceTarget, setArchiveWorkspaceTarget] = useState<Workspace | null>(null);
   const previousActiveSessionId = useRef<string | null>(null);
   const bootstrapApplied = useRef(false);
 
@@ -121,6 +127,10 @@ function AppContent() {
   const activeSession = orderedSessions.find((session) => session.id === activeSessionId) ?? null;
   const { data: activeWorkspace } = useWorkspace(activeSession?.workspace_id ?? '');
   const { data: workspaceStatus } = useWorkspaceStatus(activeSession?.workspace_id ?? null);
+  const selectedWorkspace =
+    activeWorkspace ??
+    resolvedWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ??
+    null;
   const allowAutoCreate =
     autoCreateEnabled &&
     (!selectedWorkspaceId || !suppressedWorkspaceIds.has(selectedWorkspaceId));
@@ -139,6 +149,10 @@ function AppContent() {
     [wsEvents, historyEvents]
   );
   const isLoadingSession = isLoadingWorkspaceSession && !activeSessionId;
+  const { data: archivePreflight } = useWorkspaceArchivePreflight(
+    archiveWorkspaceTarget?.id ?? null,
+    { enabled: !!archiveWorkspaceTarget }
+  );
 
   useEffect(() => {
     setHistoryReady(true);
@@ -309,6 +323,110 @@ function AppContent() {
     closeSession.mutate({ id: sessionId, workspaceId: sessionToClose?.workspace_id ?? null });
   };
 
+  const handleArchiveWorkspace = (workspace: Workspace) => {
+    setArchiveWorkspaceTarget(workspace);
+  };
+
+  const handleConfirmArchive = () => {
+    if (!archiveWorkspaceTarget) return;
+    const workspaceId = archiveWorkspaceTarget.id;
+    const sessionIdsToRemove = orderedSessions
+      .filter((session) => session.workspace_id === workspaceId)
+      .map((session) => session.id);
+    const remainingSessions = orderedSessions.filter(
+      (session) => session.workspace_id !== workspaceId
+    );
+
+    archiveWorkspace.mutate(workspaceId, {
+      onSuccess: () => {
+        if (sessionIdsToRemove.length > 0) {
+          const newTabOrder = (resolvedUiState?.tab_order ?? []).filter(
+            (id) => !sessionIdsToRemove.includes(id)
+          );
+          updateUiState.mutate({ tab_order: newTabOrder });
+        }
+
+        if (activeSessionId && sessionIdsToRemove.includes(activeSessionId)) {
+          if (remainingSessions.length > 0) {
+            const next = remainingSessions[0];
+            setActiveSessionId(next.id);
+            updateUiState.mutate({
+              active_session_id: next.id,
+              last_workspace_id: next.workspace_id ?? null,
+            });
+            setSelectedWorkspaceId(next.workspace_id ?? null);
+          } else {
+            setActiveSessionId(null);
+            updateUiState.mutate({ active_session_id: null });
+          }
+        }
+
+        if (selectedWorkspaceId === workspaceId) {
+          setSelectedWorkspaceId(null);
+          updateUiState.mutate({ last_workspace_id: null });
+        }
+
+        setSuppressedWorkspaceIds((prev) => {
+          if (!prev.has(workspaceId)) return prev;
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
+
+        setArchiveWorkspaceTarget(null);
+      },
+    });
+  };
+
+  const handleNextTab = () => {
+    if (orderedSessions.length === 0) return;
+    if (!activeSessionId) {
+      handleSelectSession(orderedSessions[0]);
+      return;
+    }
+    const index = orderedSessions.findIndex((session) => session.id === activeSessionId);
+    const nextIndex = (index + 1) % orderedSessions.length;
+    handleSelectSession(orderedSessions[nextIndex]);
+  };
+
+  const handlePrevTab = () => {
+    if (orderedSessions.length === 0) return;
+    if (!activeSessionId) {
+      handleSelectSession(orderedSessions[0]);
+      return;
+    }
+    const index = orderedSessions.findIndex((session) => session.id === activeSessionId);
+    const prevIndex = (index - 1 + orderedSessions.length) % orderedSessions.length;
+    handleSelectSession(orderedSessions[prevIndex]);
+  };
+
+  const handleCopyWorkspacePath = async () => {
+    if (!activeWorkspace?.path) return;
+    try {
+      await navigator.clipboard.writeText(activeWorkspace.path);
+    } catch (err) {
+      console.error('Failed to copy workspace path', err);
+    }
+  };
+
+  const handleOpenPr = () => {
+    const prStatus = workspaceStatus?.pr_status;
+    if (!prStatus) return;
+    const url = prStatus.url ?? `https://github.com/pull/${prStatus.number}`;
+    window.open(url, '_blank', 'noopener');
+  };
+
+  const handleNewWorkspace = () => {
+    if (createWorkspaceRepo) return;
+    const repoId =
+      selectedWorkspace?.repository_id ?? resolvedRepositories[0]?.id ?? null;
+    if (!repoId) return;
+    const repo = resolvedRepositories.find((candidate) => candidate.id === repoId);
+    if (repo) {
+      setCreateWorkspaceRepo(repo);
+    }
+  };
+
   const handleNewSession = () => {
     if (resolvedRepositories.length === 0) {
       if (onboardingBaseDir?.base_dir) {
@@ -361,6 +479,12 @@ function AppContent() {
     }
   };
 
+  const { handleForkSession, handleCreatePr } = useWorkspaceActions({
+    session: activeSession,
+    workspace: activeWorkspace ?? null,
+    onForkedSession: (session) => handleImportedSession(session),
+  });
+
   const commands = useMemo<CommandPaletteItem[]>(
     () => [
       {
@@ -370,15 +494,52 @@ function AppContent() {
         onSelect: handleToggleSidebar,
       },
       {
+        id: 'new-workspace',
+        label: 'New Workspace...',
+        keywords: 'workspace create',
+        disabled: resolvedRepositories.length === 0,
+        onSelect: handleNewWorkspace,
+      },
+      {
         id: 'import-session',
         label: 'Import Session',
         shortcut: 'Ctrl+I',
         onSelect: handleOpenImport,
       },
       {
+        id: 'open-pr',
+        label: 'Open PR',
+        disabled: !workspaceStatus?.pr_status,
+        onSelect: handleOpenPr,
+      },
+      {
+        id: 'create-pr',
+        label: 'Create PR...',
+        disabled: !activeSession || !activeWorkspace,
+        onSelect: handleCreatePr,
+      },
+      {
+        id: 'fork-session',
+        label: 'Fork Session...',
+        disabled: !activeSession,
+        onSelect: handleForkSession,
+      },
+      {
         id: 'new-session',
         label: 'Start New Session',
         onSelect: handleNewSession,
+      },
+      {
+        id: 'archive-workspace',
+        label: 'Archive Workspace...',
+        disabled: !selectedWorkspace,
+        onSelect: () => selectedWorkspace && handleArchiveWorkspace(selectedWorkspace),
+      },
+      {
+        id: 'copy-workspace-path',
+        label: 'Copy Workspace Path',
+        disabled: !activeWorkspace?.path,
+        onSelect: handleCopyWorkspacePath,
       },
       {
         id: 'add-project',
@@ -390,13 +551,51 @@ function AppContent() {
         label: 'Set Projects Directory',
         onSelect: () => setIsBaseDirDialogOpen(true),
       },
+      {
+        id: 'close-tab',
+        label: 'Close Tab',
+        disabled: !activeSessionId,
+        onSelect: () => activeSessionId && handleCloseSession(activeSessionId),
+      },
+      {
+        id: 'next-tab',
+        label: 'Next Tab',
+        disabled: orderedSessions.length < 2,
+        onSelect: handleNextTab,
+      },
+      {
+        id: 'prev-tab',
+        label: 'Previous Tab',
+        disabled: orderedSessions.length < 2,
+        onSelect: handlePrevTab,
+      },
     ],
-    [handleNewSession, handleOpenImport, handleToggleSidebar, isSidebarOpen]
+    [
+      activeSession,
+      activeSessionId,
+      activeWorkspace,
+      handleCreatePr,
+      handleCopyWorkspacePath,
+      handleForkSession,
+      handleNewSession,
+      handleNewWorkspace,
+      handleNextTab,
+      handleOpenImport,
+      handleOpenPr,
+      handlePrevTab,
+      handleToggleSidebar,
+      isSidebarOpen,
+      orderedSessions.length,
+      resolvedRepositories.length,
+      selectedWorkspace,
+      workspaceStatus?.pr_status,
+    ]
   );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && (key === 'k' || key === 'p')) {
         event.preventDefault();
         setIsCommandPaletteOpen((prev) => !prev);
       }
@@ -413,6 +612,7 @@ function AppContent() {
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
         onCreateWorkspace={(repository) => setCreateWorkspaceRepo(repository)}
+        onArchiveWorkspace={handleArchiveWorkspace}
         sessions={orderedSessions}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
@@ -482,6 +682,24 @@ function AppContent() {
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
         commands={commands}
+      />
+      <ConfirmDialog
+        isOpen={!!archiveWorkspaceTarget}
+        onClose={() => setArchiveWorkspaceTarget(null)}
+        title={`Archive \"${archiveWorkspaceTarget?.name ?? ''}\"?`}
+        description="This will remove the worktree and delete the branch."
+        confirmLabel="Archive"
+        onConfirm={handleConfirmArchive}
+        warnings={archivePreflight?.warnings}
+        error={archivePreflight?.error}
+        isPending={archiveWorkspace.isPending}
+        confirmVariant={
+          archivePreflight?.severity === 'danger'
+            ? 'danger'
+            : archivePreflight?.severity === 'warning'
+              ? 'warning'
+              : 'info'
+        }
       />
     </>
   );

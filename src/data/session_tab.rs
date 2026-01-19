@@ -218,6 +218,16 @@ impl SessionTabStore {
         Ok(())
     }
 
+    /// Set open/closed state for all sessions under a workspace.
+    pub fn set_open_by_workspace(&self, workspace_id: Uuid, is_open: bool) -> SqliteResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE session_tabs SET is_open = ?2 WHERE workspace_id = ?1",
+            params![workspace_id.to_string(), if is_open { 1 } else { 0 }],
+        )?;
+        Ok(())
+    }
+
     /// Allocate the next tab index value.
     pub fn next_tab_index(&self) -> SqliteResult<i32> {
         let conn = self.conn.lock().unwrap();

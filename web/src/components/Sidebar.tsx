@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitPullRequest,
   MoreHorizontal,
+  Archive,
 } from 'lucide-react';
 import { cn } from '../lib/cn';
 import type { Repository, Workspace } from '../types';
@@ -18,9 +19,10 @@ interface WorkspaceItemProps {
   workspace: Workspace;
   isSelected?: boolean;
   onSelect?: () => void;
+  onArchive?: () => void;
 }
 
-function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) {
+function WorkspaceItem({ workspace, isSelected, onSelect, onArchive }: WorkspaceItemProps) {
   const [hasInitialStatus, setHasInitialStatus] = useState(false);
   const shouldPoll = !!isSelected || !hasInitialStatus;
   const { data: status } = useWorkspaceStatus(workspace.id, {
@@ -44,10 +46,19 @@ function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) 
   const prStatus = status?.pr_status;
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect?.();
+        }
+      }}
       className={cn(
         'group flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
         isSelected
           ? 'bg-accent/10 text-text'
           : 'text-text-muted hover:bg-surface-elevated hover:text-text'
@@ -93,9 +104,25 @@ function WorkspaceItem({ workspace, isSelected, onSelect }: WorkspaceItemProps) 
               {prStatus.checks_passing && ' ✓'}
             </a>
           )}
+
+          {onArchive && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onArchive();
+              }}
+              className={cn(
+                'flex items-center justify-center rounded p-1 text-text-muted transition-colors hover:bg-surface-elevated hover:text-text',
+                'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+              )}
+              aria-label={`Archive workspace ${workspace.name}`}
+            >
+              <Archive className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -104,6 +131,7 @@ interface RepositorySectionProps {
   workspaces: Workspace[];
   selectedWorkspaceId?: string | null;
   onSelectWorkspace?: (workspace: Workspace) => void;
+  onArchiveWorkspace?: (workspace: Workspace) => void;
   onNewWorkspace?: () => void;
 }
 
@@ -112,6 +140,7 @@ function RepositorySection({
   workspaces,
   selectedWorkspaceId,
   onSelectWorkspace,
+  onArchiveWorkspace,
   onNewWorkspace,
 }: RepositorySectionProps) {
   const [expanded, setExpanded] = useState(true);
@@ -155,6 +184,7 @@ function RepositorySection({
               workspace={workspace}
               isSelected={workspace.id === selectedWorkspaceId}
               onSelect={() => onSelectWorkspace?.(workspace)}
+              onArchive={onArchiveWorkspace ? () => onArchiveWorkspace(workspace) : undefined}
             />
           ))}
         </div>
@@ -167,12 +197,14 @@ interface SidebarProps {
   selectedWorkspaceId?: string | null;
   onSelectWorkspace?: (workspace: Workspace) => void;
   onCreateWorkspace?: (repository: Repository) => void;
+  onArchiveWorkspace?: (workspace: Workspace) => void;
 }
 
 export function Sidebar({
   selectedWorkspaceId,
   onSelectWorkspace,
   onCreateWorkspace,
+  onArchiveWorkspace,
 }: SidebarProps) {
   const { data: repositories = [] } = useRepositories();
   const { data: workspaces = [] } = useWorkspaces();
@@ -236,6 +268,7 @@ export function Sidebar({
                   workspaces={workspacesByRepo[repo.id] || []}
                   selectedWorkspaceId={selectedWorkspaceId}
                   onSelectWorkspace={onSelectWorkspace}
+                  onArchiveWorkspace={onArchiveWorkspace}
                   onNewWorkspace={() => handleNewWorkspace(repo)}
                 />
               ))

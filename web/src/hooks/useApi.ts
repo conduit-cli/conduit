@@ -27,6 +27,7 @@ export const queryKeys = {
   repositoryWorkspaces: (id: string) => ['repositories', id, 'workspaces'] as const,
   workspace: (id: string) => ['workspaces', id] as const,
   workspaceStatus: (id: string) => ['workspaces', id, 'status'] as const,
+  workspaceArchivePreflight: (id: string) => ['workspaces', id, 'archive-preflight'] as const,
   workspacePrPreflight: (id: string) => ['workspaces', id, 'pr-preflight'] as const,
   workspaceSession: (id: string) => ['workspaces', id, 'session'] as const,
   sessions: ['sessions'] as const,
@@ -202,8 +203,11 @@ export function useArchiveWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.archiveWorkspace(id),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStatus(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSession(id) });
     },
   });
 }
@@ -228,6 +232,18 @@ export function useWorkspaceStatus(
     enabled: options?.enabled ?? !!workspaceId,
     refetchInterval: options?.refetchInterval ?? 5000,
     staleTime: options?.staleTime ?? 2000,
+  });
+}
+
+export function useWorkspaceArchivePreflight(
+  workspaceId: string | null,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: queryKeys.workspaceArchivePreflight(workspaceId ?? ''),
+    queryFn: () => api.getWorkspaceArchivePreflight(workspaceId!),
+    enabled: (options?.enabled ?? true) && !!workspaceId,
+    staleTime: 5000,
   });
 }
 

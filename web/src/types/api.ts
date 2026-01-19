@@ -21,6 +21,17 @@ export interface Workspace {
   archived_at: string | null;
 }
 
+export interface ArchivePreflightResponse {
+  branch_name: string;
+  is_dirty: boolean;
+  is_merged: boolean;
+  commits_ahead: number;
+  commits_behind: number;
+  warnings: string[];
+  severity: 'info' | 'warning' | 'danger';
+  error: string | null;
+}
+
 export interface Session {
   id: string;
   tab_index: number;

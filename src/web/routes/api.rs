@@ -49,6 +49,10 @@ pub fn api_routes() -> Router<WebAppState> {
             get(workspaces::get_workspace_status),
         )
         .route(
+            "/workspaces/{id}/archive/preflight",
+            get(workspaces::get_workspace_archive_preflight),
+        )
+        .route(
             "/workspaces/{id}/pr/preflight",
             get(workspaces::get_workspace_pr_preflight),
         )

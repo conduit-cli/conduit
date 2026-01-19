@@ -74,6 +74,19 @@ pub struct PrCreateResponse {
     pub prompt: String,
 }
 
+/// Archive preflight response for a workspace.
+#[derive(Debug, Serialize)]
+pub struct ArchivePreflightResponse {
+    pub branch_name: String,
+    pub is_dirty: bool,
+    pub is_merged: bool,
+    pub commits_ahead: usize,
+    pub commits_behind: usize,
+    pub warnings: Vec<String>,
+    pub severity: String,
+    pub error: Option<String>,
+}
+
 /// Request to create a new workspace.
 #[derive(Debug, Deserialize)]
 pub struct CreateWorkspaceRequest {
@@ -157,6 +170,88 @@ pub async fn get_workspace(
     Ok(Json(WorkspaceResponse::from(workspace)))
 }
 
+/// Preflight archive checks for a workspace.
+pub async fn get_workspace_archive_preflight(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ArchivePreflightResponse>, WebError> {
+    let core = state.core().await;
+    let store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let workspace = store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
+
+    let worktree_manager = core.worktree_manager();
+    let mut warnings = Vec::new();
+    let mut error = None;
+    let mut is_dirty = false;
+    let mut is_merged = true;
+    let mut commits_ahead = 0;
+    let mut commits_behind = 0;
+
+    match worktree_manager.get_branch_status(&workspace.path) {
+        Ok(status) => {
+            is_dirty = status.is_dirty;
+            is_merged = status.is_merged;
+            commits_ahead = status.commits_ahead;
+            commits_behind = status.commits_behind;
+
+            if status.is_dirty {
+                if let Some(desc) = status.dirty_description {
+                    warnings.push(desc);
+                } else {
+                    warnings.push("Uncommitted changes".to_string());
+                }
+            }
+
+            if !status.is_merged {
+                if status.commits_ahead > 0 {
+                    warnings.push(format!(
+                        "Branch not merged ({} commits ahead)",
+                        status.commits_ahead
+                    ));
+                } else {
+                    warnings.push("Branch not merged into main".to_string());
+                }
+            }
+
+            if status.commits_behind > 0 {
+                warnings.push(format!(
+                    "Branch is {} commits behind main",
+                    status.commits_behind
+                ));
+            }
+        }
+        Err(err) => {
+            error = Some(format!("Failed to read git status: {}", err));
+            warnings.push("Unable to read git status".to_string());
+        }
+    }
+
+    let severity = if is_dirty && !is_merged {
+        "danger"
+    } else if is_dirty || !is_merged || commits_behind > 0 {
+        "warning"
+    } else {
+        "info"
+    };
+
+    Ok(Json(ArchivePreflightResponse {
+        branch_name: workspace.branch.clone(),
+        is_dirty,
+        is_merged,
+        commits_ahead,
+        commits_behind,
+        warnings,
+        severity: severity.to_string(),
+        error,
+    }))
+}
+
 /// Create a new workspace for a repository.
 pub async fn create_workspace(
     State(state): State<WebAppState>,
@@ -231,22 +326,75 @@ pub async fn archive_workspace(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, WebError> {
     let core = state.core().await;
-    let store = core
+    let workspace_store = core
         .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let repo_store = core
+        .repo_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let session_store = core
+        .session_tab_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
     // Check if workspace exists
-    let _workspace = store
+    let workspace = workspace_store
         .get_by_id(id)
         .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
 
+    let repo = repo_store
+        .get_by_id(workspace.repository_id)
+        .map_err(|e| WebError::Internal(format!("Failed to get repository: {}", e)))?
+        .ok_or_else(|| {
+            WebError::NotFound(format!("Repository {} not found", workspace.repository_id))
+        })?;
+
+    let worktree_manager = core.worktree_manager();
+    let mut warnings = Vec::new();
+    let mut archived_commit_sha = None;
+
+    if let Some(base_path) = repo.base_path {
+        match worktree_manager.get_branch_sha(&base_path, &workspace.branch) {
+            Ok(commit_sha) => {
+                archived_commit_sha = Some(commit_sha);
+            }
+            Err(err) => {
+                warnings.push(format!("Failed to read branch SHA: {}", err));
+            }
+        }
+
+        if let Err(err) = worktree_manager.remove_worktree(&base_path, &workspace.path) {
+            warnings.push(format!("Failed to remove worktree: {}", err));
+        }
+
+        if let Err(err) = worktree_manager.delete_branch(&base_path, &workspace.branch) {
+            warnings.push(format!(
+                "Failed to delete branch '{}': {}",
+                workspace.branch, err
+            ));
+        }
+    } else {
+        warnings.push("Repository has no base path; worktree not removed".to_string());
+    }
+
     // Archive the workspace
-    store
-        .archive(id, None)
+    workspace_store
+        .archive(id, archived_commit_sha)
         .map_err(|e| WebError::Internal(format!("Failed to archive workspace: {}", e)))?;
 
+    if let Err(e) = session_store.set_open_by_workspace(id, false) {
+        tracing::warn!(error = %e, "Failed to close sessions for archived workspace");
+    }
+
     state.status_manager().remove_workspace(id);
+
+    if !warnings.is_empty() {
+        tracing::warn!(
+            workspace_id = %id,
+            warnings = ?warnings,
+            "Workspace archived with warnings"
+        );
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

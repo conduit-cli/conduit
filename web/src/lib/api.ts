@@ -33,6 +33,7 @@ import type {
   ForkSessionResponse,
   PrPreflightResponse,
   PrCreateResponse,
+  ArchivePreflightResponse,
   OnboardingBaseDirResponse,
   OnboardingProjectsResponse,
   AddOnboardingProjectRequest,
@@ -144,6 +145,10 @@ export async function createWorkspace(repositoryId: string, data: CreateWorkspac
 
 export async function archiveWorkspace(id: string): Promise<void> {
   await request(`/workspaces/${id}/archive`, { method: 'POST' });
+}
+
+export async function getWorkspaceArchivePreflight(id: string): Promise<ArchivePreflightResponse> {
+  return request(`/workspaces/${id}/archive/preflight`);
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {

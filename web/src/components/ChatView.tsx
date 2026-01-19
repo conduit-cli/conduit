@@ -20,8 +20,7 @@ import {
   useUpdateQueueMessage,
   useDeleteQueueMessage,
   useSessionHistory,
-  useForkSession,
-  useCreateWorkspacePr,
+  useWorkspaceActions,
 } from '../hooks';
 import { getSessionEventsPage } from '../lib/api';
 import type {
@@ -186,14 +185,17 @@ export function ChatView({
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
   const setDefaultModelMutation = useSetDefaultModel();
-  const forkSessionMutation = useForkSession();
-  const createPrMutation = useCreateWorkspacePr();
   const [historyEvents, setHistoryEvents] = useState<SessionEvent[]>([]);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const { data: workspace } = useWorkspace(session?.workspace_id ?? '');
   const { data: status } = useWorkspaceStatus(session?.workspace_id ?? null);
+  const { handleForkSession, handleCreatePr, isForking, isCreatingPr } = useWorkspaceActions({
+    session,
+    workspace: workspace ?? null,
+    onForkedSession,
+  });
   const { data: inputHistory } = useSessionHistory(session?.id ?? null);
   const { data: queueData } = useSessionQueue(session?.id ?? null);
   const addQueueMutation = useAddQueueMessage();
@@ -850,72 +852,6 @@ export function ChatView({
     updateSessionMutation.mutate({ id: session.id, data: { agent_mode: nextMode } });
   }, [effectiveAgentMode, session, updateSessionMutation]);
 
-  const handleForkSession = useCallback(() => {
-    if (!session) return;
-    forkSessionMutation.mutate(session.id, {
-      onSuccess: (response) => {
-        if (onForkedSession) {
-          onForkedSession(response.session, response.workspace);
-        }
-        if (response.warnings.length > 0) {
-          window.alert(`Fork warnings:\n${response.warnings.join('\n')}`);
-        }
-        sendPrompt(
-          response.session.id,
-          response.seed_prompt,
-          response.workspace.path,
-          response.session.model ?? undefined,
-          true
-        );
-      },
-    });
-  }, [forkSessionMutation, onForkedSession, sendPrompt, session]);
-
-  const handleCreatePr = useCallback(() => {
-    if (!session || !workspace) return;
-    createPrMutation.mutate(workspace.id, {
-      onSuccess: (response) => {
-        const preflight = response.preflight;
-        if (!preflight.gh_installed) {
-          window.alert('GitHub CLI (gh) is required to create PRs.');
-          return;
-        }
-        if (!preflight.gh_authenticated) {
-          window.alert('GitHub CLI is not authenticated. Run: gh auth login');
-          return;
-        }
-        if (preflight.on_main_branch) {
-          window.alert(
-            `You are on ${preflight.branch_name}. Create a feature branch before opening a PR.`
-          );
-          return;
-        }
-        if (preflight.existing_pr?.url) {
-          window.alert(`PR already exists: ${preflight.existing_pr.url}`);
-          return;
-        }
-
-        const warnings: string[] = [];
-        if (preflight.uncommitted_count > 0) {
-          warnings.push(`${preflight.uncommitted_count} file(s) will be auto-committed`);
-        }
-        if (!preflight.has_upstream) {
-          warnings.push('Branch will be pushed to remote');
-        }
-        if (warnings.length > 0) {
-          const proceed = window.confirm(`Create PR?\n\n${warnings.join('\n')}`);
-          if (!proceed) return;
-        }
-        sendPrompt(
-          session.id,
-          response.prompt,
-          workspace.path,
-          session.model ?? undefined
-        );
-      },
-    });
-  }, [createPrMutation, sendPrompt, session, workspace]);
-
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
     return (
@@ -1011,11 +947,11 @@ export function ChatView({
 
           <button
             onClick={handleForkSession}
-            disabled={!session?.workspace_id || isProcessing || forkSessionMutation.isPending}
+            disabled={!session?.workspace_id || isProcessing || isForking}
             className={cn(
               'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
               'text-text-muted hover:bg-surface-elevated hover:text-text',
-              (!session?.workspace_id || isProcessing || forkSessionMutation.isPending) &&
+              (!session?.workspace_id || isProcessing || isForking) &&
                 'cursor-not-allowed opacity-50'
             )}
             aria-label="Fork session"
@@ -1026,11 +962,11 @@ export function ChatView({
 
           <button
             onClick={handleCreatePr}
-            disabled={!session?.workspace_id || isProcessing || createPrMutation.isPending}
+            disabled={!session?.workspace_id || isProcessing || isCreatingPr}
             className={cn(
               'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
               'text-text-muted hover:bg-surface-elevated hover:text-text',
-              (!session?.workspace_id || isProcessing || createPrMutation.isPending) &&
+              (!session?.workspace_id || isProcessing || isCreatingPr) &&
                 'cursor-not-allowed opacity-50'
             )}
             aria-label="Create pull request"
