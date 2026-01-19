@@ -1,9 +1,74 @@
 import type { ReactNode, ComponentPropsWithoutRef } from 'react';
+import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../../lib/cn';
 import { CodeBlock } from './CodeBlock';
 import { InlineCode } from './InlineCode';
+import { FilePathLink } from '../FilePathLink';
+
+// Regex to match file paths:
+// - Absolute paths: /foo/bar.ts
+// - Relative paths: ./foo/bar.ts, ../foo/bar.ts
+// - Hidden directory paths: .opencode/plan/file.md
+// - Relative paths with directories: src/components/file.tsx
+const FILE_PATH_REGEX = /(?:^|\s|[(`])((\/[\w.-]+)+\.\w+|\.\.?\/[\w./-]+\.\w+|\.[a-zA-Z][\w.-]*\/[\w./-]+\.\w+|(?:[a-zA-Z][\w.-]*\/)+[\w.-]+\.\w+)(?=[\s,;:)\]`]|$)/g;
+
+function processTextWithFilePaths(text: string): ReactNode[] {
+  const result: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  // Reset regex state
+  FILE_PATH_REGEX.lastIndex = 0;
+
+  while ((match = FILE_PATH_REGEX.exec(text)) !== null) {
+    const filePath = match[1];
+    const matchStart = match.index + (match[0].length - filePath.length - (match[0].endsWith(filePath) ? 0 : 1));
+
+    // Add text before the match
+    if (matchStart > lastIndex) {
+      result.push(text.slice(lastIndex, matchStart));
+    }
+
+    // Add the file path link
+    result.push(
+      <FilePathLink key={matchStart} path={filePath} className="text-inherit" />
+    );
+
+    lastIndex = matchStart + filePath.length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    result.push(text.slice(lastIndex));
+  }
+
+  return result.length > 0 ? result : [text];
+}
+
+function processChildren(children: ReactNode): ReactNode {
+  if (typeof children === 'string') {
+    const processed = processTextWithFilePaths(children);
+    return processed.length === 1 && typeof processed[0] === 'string'
+      ? children
+      : <>{processed}</>;
+  }
+
+  if (Array.isArray(children)) {
+    return children.map((child, index) => {
+      if (typeof child === 'string') {
+        const processed = processTextWithFilePaths(child);
+        return processed.length === 1 && typeof processed[0] === 'string'
+          ? child
+          : <React.Fragment key={index}>{processed}</React.Fragment>;
+      }
+      return child;
+    });
+  }
+
+  return children;
+}
 
 interface MarkdownBodyProps {
   content: string;
@@ -18,7 +83,7 @@ export function MarkdownBody({ content, className }: MarkdownBodyProps) {
       components={{
         p: ({ children }: { children?: ReactNode }) => (
           <p className="whitespace-pre-wrap break-words text-pretty text-sm text-text mb-3 last:mb-0">
-            {children}
+            {processChildren(children)}
           </p>
         ),
         h1: ({ children }: { children?: ReactNode }) => (
@@ -47,7 +112,7 @@ export function MarkdownBody({ content, className }: MarkdownBodyProps) {
           </ol>
         ),
         li: ({ children }: { children?: ReactNode }) => (
-          <li className="text-text">{children}</li>
+          <li className="text-text">{processChildren(children)}</li>
         ),
         blockquote: ({ children }: { children?: ReactNode }) => (
           <blockquote className="border-l-2 border-accent pl-4 italic text-text-muted mb-3">
@@ -85,7 +150,7 @@ export function MarkdownBody({ content, className }: MarkdownBodyProps) {
           </th>
         ),
         td: ({ children }: { children?: ReactNode }) => (
-          <td className="border border-border px-3 py-2 text-text">{children}</td>
+          <td className="border border-border px-3 py-2 text-text">{processChildren(children)}</td>
         ),
         code: (props: ComponentPropsWithoutRef<'code'>) => {
           const { children, className } = props;

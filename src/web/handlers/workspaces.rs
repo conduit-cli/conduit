@@ -618,3 +618,134 @@ fn build_pr_preflight_response(preflight: crate::git::PrPreflightResult) -> PrPr
             .and_then(PrStatusResponse::from_pr_status),
     }
 }
+
+/// Request to read a file within a workspace.
+#[derive(Debug, Deserialize)]
+pub struct ReadFileRequest {
+    pub path: String,
+}
+
+/// Response for reading a file.
+#[derive(Debug, Serialize)]
+pub struct ReadFileResponse {
+    pub content: String,
+    pub encoding: String,
+    pub size: u64,
+    pub media_type: String,
+    pub exists: bool,
+}
+
+/// Read a file from a workspace.
+///
+/// Security: Only files within the workspace directory are allowed.
+pub async fn read_workspace_file(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ReadFileRequest>,
+) -> Result<Json<ReadFileResponse>, WebError> {
+    let core = state.core().await;
+    let store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let workspace = store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
+
+    let file_path = PathBuf::from(&req.path);
+
+    // Security: Ensure the requested path is within the workspace directory
+    let workspace_canonical = workspace
+        .path
+        .canonicalize()
+        .map_err(|e| WebError::Internal(format!("Failed to resolve workspace path: {}", e)))?;
+
+    let file_canonical = file_path.canonicalize().map_err(|_| {
+        // File doesn't exist - return exists: false
+        return WebError::NotFound("File not found".to_string());
+    });
+
+    let file_canonical = match file_canonical {
+        Ok(path) => path,
+        Err(_) => {
+            return Ok(Json(ReadFileResponse {
+                content: String::new(),
+                encoding: "utf-8".to_string(),
+                size: 0,
+                media_type: "text/plain".to_string(),
+                exists: false,
+            }));
+        }
+    };
+
+    // Verify file is within workspace
+    if !file_canonical.starts_with(&workspace_canonical) {
+        return Err(WebError::BadRequest(
+            "File path must be within workspace directory".to_string(),
+        ));
+    }
+
+    // Read file metadata
+    let metadata = std::fs::metadata(&file_canonical)
+        .map_err(|e| WebError::Internal(format!("Failed to read file metadata: {}", e)))?;
+
+    let size = metadata.len();
+
+    // Determine media type from extension
+    let extension = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    let media_type = match extension.to_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "bmp" => "image/bmp",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" => "text/javascript",
+        "ts" | "tsx" => "text/typescript",
+        "md" | "markdown" => "text/markdown",
+        "rs" => "text/x-rust",
+        "py" => "text/x-python",
+        "go" => "text/x-go",
+        "yaml" | "yml" => "text/yaml",
+        "toml" => "text/toml",
+        _ => "text/plain",
+    }
+    .to_string();
+
+    // Check if binary file
+    let is_binary = matches!(
+        extension.to_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "bmp" | "pdf"
+    );
+
+    let (content, encoding) = if is_binary {
+        // Read as base64
+        let bytes = std::fs::read(&file_canonical)
+            .map_err(|e| WebError::Internal(format!("Failed to read file: {}", e)))?;
+        (
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes),
+            "base64".to_string(),
+        )
+    } else {
+        // Read as UTF-8
+        let text = std::fs::read_to_string(&file_canonical)
+            .map_err(|e| WebError::Internal(format!("Failed to read file: {}", e)))?;
+        (text, "utf-8".to_string())
+    };
+
+    Ok(Json(ReadFileResponse {
+        content,
+        encoding,
+        size,
+        media_type,
+        exists: true,
+    }))
+}

@@ -2,6 +2,7 @@ import { FileEdit } from 'lucide-react';
 import { ToolCard, type ToolStatus } from './ToolCard';
 import { DiffViewer } from '../DiffViewer';
 import { isDiffContent } from '../../lib/diffParser';
+import { FilePathLink } from '../FilePathLink';
 
 interface EditToolCardProps {
   status: ToolStatus;
@@ -17,7 +18,7 @@ export function EditToolCard({ status, filePath, content, error }: EditToolCardP
     <ToolCard
       icon={<FileEdit className="h-4 w-4" />}
       title="Edit"
-      subtitle={filePath}
+      subtitle={<FilePathLink path={filePath} className="text-xs" />}
       status={status}
     >
       {error ? (

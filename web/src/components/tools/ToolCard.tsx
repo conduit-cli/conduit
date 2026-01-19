@@ -8,7 +8,7 @@ interface ToolCardProps {
   icon: ReactNode;
   title: string;
   status: ToolStatus;
-  subtitle?: string;
+  subtitle?: ReactNode;
   children?: ReactNode;
   defaultOpen?: boolean;
   className?: string;

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { SessionTabs } from './SessionTabs';
-import type { Repository, Session, Workspace, WorkspaceStatus } from '../types';
+import type { Repository, Session, Workspace, WorkspaceStatus, FileViewerTab } from '../types';
 
 interface LayoutProps {
   children: ReactNode;
@@ -25,6 +25,11 @@ interface LayoutProps {
   onToggleSidebar: () => void;
   isBootstrapping?: boolean;
   onImportSession?: () => void;
+  // File viewer tabs
+  fileViewerTabs?: FileViewerTab[];
+  activeFileViewerId?: string | null;
+  onSelectFileViewer?: (tabId: string) => void;
+  onCloseFileViewer?: (tabId: string) => void;
 }
 
 export function Layout({
@@ -48,6 +53,10 @@ export function Layout({
   onToggleSidebar,
   isBootstrapping = false,
   onImportSession,
+  fileViewerTabs = [],
+  activeFileViewerId,
+  onSelectFileViewer,
+  onCloseFileViewer,
 }: LayoutProps) {
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
 
@@ -126,6 +135,10 @@ export function Layout({
           onSelectSession={onSelectSession}
           onReorderSessions={onReorderSessions}
           onCloseSession={onCloseSession}
+          fileViewerTabs={fileViewerTabs}
+          activeFileViewerId={activeFileViewerId}
+          onSelectFileViewer={onSelectFileViewer}
+          onCloseFileViewer={onCloseFileViewer}
         />
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>

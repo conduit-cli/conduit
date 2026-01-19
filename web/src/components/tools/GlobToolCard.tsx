@@ -1,6 +1,7 @@
 import { FolderSearch, File, Folder } from 'lucide-react';
 import { ToolCard, type ToolStatus } from './ToolCard';
 import { cn } from '../../lib/cn';
+import { FilePathLink } from '../FilePathLink';
 
 interface GlobToolCardProps {
   status: ToolStatus;
@@ -29,7 +30,13 @@ function FileItem({ path }: { path: string }) {
       ) : (
         <File className="h-3.5 w-3.5 text-blue-400" />
       )}
-      <span className="truncate">{name}</span>
+      {isDir ? (
+        <span className="truncate">{name}</span>
+      ) : (
+        <FilePathLink path={path} className="truncate text-xs">
+          {name}
+        </FilePathLink>
+      )}
     </div>
   );
 }

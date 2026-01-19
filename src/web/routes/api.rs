@@ -61,6 +61,10 @@ pub fn api_routes() -> Router<WebAppState> {
             "/workspaces/{id}/session",
             post(workspaces::get_or_create_session),
         )
+        .route(
+            "/workspaces/{id}/files/read",
+            post(workspaces::read_workspace_file),
+        )
         // Session routes
         .route("/sessions", get(sessions::list_sessions))
         .route("/sessions", post(sessions::create_session))

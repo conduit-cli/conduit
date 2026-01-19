@@ -1,6 +1,7 @@
 import { FilePlus } from 'lucide-react';
 import { ToolCard, type ToolStatus } from './ToolCard';
 import { CodeBlock } from '../markdown/CodeBlock';
+import { FilePathLink } from '../FilePathLink';
 
 interface WriteToolCardProps {
   status: ToolStatus;
@@ -40,7 +41,7 @@ export function WriteToolCard({ status, filePath, content, error }: WriteToolCar
     <ToolCard
       icon={<FilePlus className="h-4 w-4" />}
       title="Write"
-      subtitle={filePath}
+      subtitle={<FilePathLink path={filePath} className="text-xs" />}
       status={status}
     >
       {error ? (

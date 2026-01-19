@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, FileText } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useProcessingSessions } from '../hooks';
-import type { Session, Workspace } from '../types';
+import type { Session, Workspace, FileViewerTab } from '../types';
 
 interface SessionTabsProps {
   sessions: Session[];
@@ -11,6 +11,11 @@ interface SessionTabsProps {
   onSelectSession: (session: Session) => void;
   onReorderSessions: (sessionIds: string[]) => void;
   onCloseSession: (sessionId: string) => void;
+  // File viewer tabs
+  fileViewerTabs?: FileViewerTab[];
+  activeFileViewerId?: string | null;
+  onSelectFileViewer?: (tabId: string) => void;
+  onCloseFileViewer?: (tabId: string) => void;
 }
 
 function sessionLabel(session: Session, workspaces: Workspace[]): string {
@@ -20,6 +25,16 @@ function sessionLabel(session: Session, workspaces: Workspace[]): string {
   return `Session ${session.tab_index + 1}`;
 }
 
+// Platform detection for keyboard shortcut display
+// On Mac we use Ctrl+N (since Cmd+N is taken by browser), on Windows/Linux we use Alt+N
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const tabShortcutPrefix = isMac ? '⌃' : 'Alt+';
+
+function getFileName(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
 export function SessionTabs({
   sessions,
   activeSessionId,
@@ -27,6 +42,10 @@ export function SessionTabs({
   onSelectSession,
   onReorderSessions,
   onCloseSession,
+  fileViewerTabs = [],
+  activeFileViewerId,
+  onSelectFileViewer,
+  onCloseFileViewer,
 }: SessionTabsProps) {
   const processingSessionIds = useProcessingSessions();
 
@@ -74,15 +93,16 @@ export function SessionTabs({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sessions, activeSessionId, onSelectSession, onReorderSessions, onCloseSession, processingSessionIds]);
 
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && fileViewerTabs.length === 0) {
     return null;
   }
 
   return (
     <div className="flex items-center gap-2 overflow-x-auto border-b border-border bg-surface px-4 py-2">
-      {sessions.map((session) => {
+      {/* Session tabs */}
+      {sessions.map((session, index) => {
         const label = sessionLabel(session, workspaces);
-        const isActive = session.id === activeSessionId;
+        const isActive = session.id === activeSessionId && !activeFileViewerId;
         const isProcessing = processingSessionIds.has(session.id);
         return (
           <button
@@ -107,6 +127,11 @@ export function SessionTabs({
               )}
             />
             <span className="max-w-36 truncate">{label}</span>
+            {index < 9 && (
+              <span className="ml-0.5 text-[10px] text-text-muted/50 tabular-nums">
+                {tabShortcutPrefix}{index + 1}
+              </span>
+            )}
             {isProcessing ? (
               <span className="ml-1 p-0.5" aria-label="Processing">
                 <Loader2 className="h-3 w-3 animate-spin text-text-muted" />
@@ -137,6 +162,54 @@ export function SessionTabs({
                 <X className="h-3 w-3" />
               </span>
             )}
+          </button>
+        );
+      })}
+
+      {/* File viewer tabs */}
+      {fileViewerTabs.map((tab) => {
+        const fileName = getFileName(tab.filePath);
+        const isActive = tab.id === activeFileViewerId;
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onSelectFileViewer?.(tab.id)}
+            aria-selected={isActive}
+            className={cn(
+              'group flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-xs transition-colors',
+              isActive
+                ? 'bg-accent/20 text-text'
+                : 'text-text-muted hover:bg-surface-elevated hover:text-text'
+            )}
+          >
+            <FileText className="h-3.5 w-3.5 text-blue-400" />
+            <span className="max-w-36 truncate" title={tab.filePath}>
+              {fileName}
+            </span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseFileViewer?.(tab.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onCloseFileViewer?.(tab.id);
+                }
+              }}
+              className={cn(
+                'ml-1 rounded-full p-0.5 transition-colors',
+                'opacity-0 group-hover:opacity-100',
+                'hover:bg-surface hover:text-text',
+                isActive && 'opacity-100'
+              )}
+              aria-label={`Close ${fileName}`}
+            >
+              <X className="h-3 w-3" />
+            </span>
           </button>
         );
       })}

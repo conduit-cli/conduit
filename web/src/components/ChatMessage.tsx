@@ -11,6 +11,7 @@ import type { AgentEvent } from '../types';
 import { MarkdownBody } from './markdown';
 import { TerminalOutput } from './TerminalOutput';
 import { ToolRunMessage } from './ToolRunMessage';
+import { FilePathLink } from './FilePathLink';
 
 interface ChatMessageProps {
   event: AgentEvent;
@@ -74,7 +75,10 @@ export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps
           <div className="min-w-0 flex-1 overflow-hidden">
             <p className="text-xs text-text-muted">
               <span className="font-medium text-blue-400">{event.operation}</span>{' '}
-              <code className="break-all rounded bg-surface-elevated px-1 py-0.5">{event.path}</code>
+              <FilePathLink
+                path={event.path}
+                className="break-all rounded bg-surface-elevated px-1 py-0.5 text-xs"
+              />
             </p>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 import { ToolCard, type ToolStatus } from './ToolCard';
+import { FilePathLink } from '../FilePathLink';
 
 interface GrepToolCardProps {
   status: ToolStatus;
@@ -78,8 +79,11 @@ function GrepMatchItem({ match, pattern }: { match: GrepMatch; pattern: string }
 
   return (
     <div className="flex items-start gap-2 px-3 py-0.5 hover:bg-surface-elevated/50 font-mono text-xs">
+      {match.file && (
+        <FilePathLink path={match.file} className="text-text-muted shrink-0 truncate max-w-[200px]" />
+      )}
       {match.line && (
-        <span className="text-text-muted shrink-0 w-12 text-right">{match.line}</span>
+        <span className="text-text-muted shrink-0">:{match.line}</span>
       )}
       <span className="text-text-muted whitespace-pre-wrap break-all flex-1">
         {highlightText(match.text.trim(), pattern)}

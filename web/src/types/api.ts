@@ -306,3 +306,23 @@ export interface SetDefaultModelRequest {
   agent_type: 'claude' | 'codex' | 'gemini';
   model_id: string;
 }
+
+// File viewer types
+export interface FileViewerTab {
+  id: string;
+  type: 'file-viewer';
+  filePath: string;
+  workspaceId: string;
+}
+
+export interface FileContentRequest {
+  path: string;
+}
+
+export interface FileContentResponse {
+  content: string;
+  encoding: 'utf-8' | 'base64';
+  size: number;
+  media_type: string;
+  exists: boolean;
+}

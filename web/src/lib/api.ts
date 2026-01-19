@@ -38,6 +38,7 @@ import type {
   OnboardingProjectsResponse,
   AddOnboardingProjectRequest,
   AddOnboardingProjectResponse,
+  FileContentResponse,
 } from '../types';
 import type { Theme, ThemeListResponse } from './themes';
 
@@ -354,5 +355,16 @@ export async function addOnboardingProject(
   return request('/onboarding/add-project', {
     method: 'POST',
     body: JSON.stringify(data),
+  });
+}
+
+// File content
+export async function getFileContent(
+  workspaceId: string,
+  filePath: string
+): Promise<FileContentResponse> {
+  return request(`/workspaces/${workspaceId}/files/read`, {
+    method: 'POST',
+    body: JSON.stringify({ path: filePath }),
   });
 }

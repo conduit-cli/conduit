@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   Layout,
@@ -12,6 +12,9 @@ import {
 } from './components';
 import { CommandPalette, type CommandPaletteItem } from './components/CommandPalette';
 import { SessionImportDialog } from './components/SessionImportDialog';
+import { FileViewer } from './components/FileViewer';
+import { FileViewerContext } from './contexts/FileViewerContext';
+import type { FileViewerTab } from './types';
 import { WebSocketProvider, ThemeProvider } from './hooks';
 import {
   useBootstrap,
@@ -125,6 +128,8 @@ function AppContent() {
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
   const [archiveWorkspaceTarget, setArchiveWorkspaceTarget] = useState<Workspace | null>(null);
+  const [fileViewerTabs, setFileViewerTabs] = useState<FileViewerTab[]>([]);
+  const [activeFileViewerId, setActiveFileViewerId] = useState<string | null>(null);
   const previousActiveSessionId = useRef<string | null>(null);
   const bootstrapApplied = useRef(false);
 
@@ -275,6 +280,7 @@ function AppContent() {
   const handleSelectSession = (session: Session) => {
     setAutoCreateEnabled(true);
     setActiveSessionId(session.id);
+    setActiveFileViewerId(null); // Deselect file viewer when selecting session
     updateUiState.mutate({
       active_session_id: session.id,
       last_workspace_id: session.workspace_id ?? null,
@@ -289,6 +295,54 @@ function AppContent() {
       setSelectedWorkspaceId(session.workspace_id);
     }
   };
+
+  const handleOpenFile = useCallback((filePath: string, workspaceId: string) => {
+    // Check if file is already open
+    const existing = fileViewerTabs.find(
+      (tab) => tab.filePath === filePath && tab.workspaceId === workspaceId
+    );
+    if (existing) {
+      setActiveFileViewerId(existing.id);
+      // Don't set activeSessionId to null - just let the file viewer take focus
+      return;
+    }
+    // Create new file viewer tab
+    const newTab: FileViewerTab = {
+      id: `file-${Date.now()}`,
+      type: 'file-viewer',
+      filePath,
+      workspaceId,
+    };
+    setFileViewerTabs((prev) => [...prev, newTab]);
+    setActiveFileViewerId(newTab.id);
+    // Don't set activeSessionId to null - keep the underlying session selected
+  }, [fileViewerTabs]);
+
+  const handleCloseFileViewer = useCallback((tabId: string) => {
+    setFileViewerTabs((prev) => {
+      const filtered = prev.filter((tab) => tab.id !== tabId);
+      return filtered;
+    });
+
+    // Only update activeFileViewerId if we're closing the active tab
+    if (tabId === activeFileViewerId) {
+      // Find another file viewer tab to switch to
+      const remainingTabs = fileViewerTabs.filter((tab) => tab.id !== tabId);
+      if (remainingTabs.length > 0) {
+        // Switch to the last remaining file viewer tab
+        setActiveFileViewerId(remainingTabs[remainingTabs.length - 1].id);
+      } else {
+        // No more file viewer tabs - just clear the file viewer selection
+        // The existing activeSessionId will take over
+        setActiveFileViewerId(null);
+      }
+    }
+  }, [fileViewerTabs, activeFileViewerId]);
+
+  const handleSelectFileViewer = useCallback((tabId: string) => {
+    setActiveFileViewerId(tabId);
+    // Don't set activeSessionId to null - keep the underlying session
+  }, []);
 
   const handleReorderSessions = (sessionIds: string[]) => {
     updateUiState.mutate({ tab_order: sessionIds });
@@ -672,15 +726,47 @@ function AppContent() {
         event.preventDefault();
         handleBrowseProjects();
       }
+      // Ctrl+1..9 to switch tabs (works in browsers on all platforms)
+      // On Mac, Cmd+1..9 is taken by browser for tab switching, so we use Ctrl
+      // On Windows/Linux, Ctrl+1..9 is taken by browser, so we use Alt
+      const isMacPlatform = /Mac|iPhone|iPad/.test(navigator.platform);
+      const useTabShortcut = isMacPlatform
+        ? (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)
+        : (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey);
+
+      if (useTabShortcut) {
+        const num = parseInt(event.key, 10);
+        if (num >= 1 && num <= 9) {
+          event.preventDefault();
+          const targetIndex = num - 1;
+          if (targetIndex < orderedSessions.length) {
+            handleSelectSession(orderedSessions[targetIndex]);
+          }
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onboardingBaseDir?.base_dir]);
+  }, [onboardingBaseDir?.base_dir, orderedSessions, handleSelectSession]);
 
   const showOnboarding = resolvedRepositories.length === 0;
 
+  // Get the active file viewer tab if any
+  const activeFileViewerTab = activeFileViewerId
+    ? fileViewerTabs.find((tab) => tab.id === activeFileViewerId) ?? null
+    : null;
+
+  // Context value for file viewer
+  const fileViewerContextValue = useMemo(
+    () => ({
+      openFile: handleOpenFile,
+      currentWorkspaceId: activeSession?.workspace_id ?? selectedWorkspaceId,
+    }),
+    [handleOpenFile, activeSession?.workspace_id, selectedWorkspaceId]
+  );
+
   return (
-    <>
+    <FileViewerContext.Provider value={fileViewerContextValue}>
       <Layout
         selectedWorkspaceId={selectedWorkspaceId}
         onSelectWorkspace={handleSelectWorkspace}
@@ -701,8 +787,18 @@ function AppContent() {
         onToggleSidebar={handleToggleSidebar}
         onImportSession={handleOpenImport}
         isBootstrapping={isBootstrapping}
+        fileViewerTabs={fileViewerTabs}
+        activeFileViewerId={activeFileViewerId}
+        onSelectFileViewer={handleSelectFileViewer}
+        onCloseFileViewer={handleCloseFileViewer}
       >
-        {showOnboarding ? (
+        {activeFileViewerTab ? (
+          <FileViewer
+            filePath={activeFileViewerTab.filePath}
+            workspaceId={activeFileViewerTab.workspaceId}
+            onClose={() => handleCloseFileViewer(activeFileViewerTab.id)}
+          />
+        ) : showOnboarding ? (
           <OnboardingEmptyState
             onAddProject={() => setIsAddProjectOpen(true)}
             onSetBaseDir={() => setIsBaseDirDialogOpen(true)}
@@ -776,7 +872,7 @@ function AppContent() {
               : 'info'
         }
       />
-    </>
+    </FileViewerContext.Provider>
   );
 }
 

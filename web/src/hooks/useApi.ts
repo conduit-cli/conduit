@@ -30,6 +30,8 @@ export const queryKeys = {
   workspaceArchivePreflight: (id: string) => ['workspaces', id, 'archive-preflight'] as const,
   workspacePrPreflight: (id: string) => ['workspaces', id, 'pr-preflight'] as const,
   workspaceSession: (id: string) => ['workspaces', id, 'session'] as const,
+  workspaceFileContent: (workspaceId: string, filePath: string) =>
+    ['workspaces', workspaceId, 'files', filePath] as const,
   sessions: ['sessions'] as const,
   session: (id: string) => ['sessions', id] as const,
   sessionEvents: (id: string, query?: SessionEventsQuery) =>
@@ -508,5 +510,19 @@ export function useUpdateUiState() {
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.uiState, data);
     },
+  });
+}
+
+// File content
+export function useFileContent(
+  workspaceId: string | null,
+  filePath: string | null,
+  options?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: queryKeys.workspaceFileContent(workspaceId ?? '', filePath ?? ''),
+    queryFn: () => api.getFileContent(workspaceId!, filePath!),
+    enabled: (options?.enabled ?? true) && !!workspaceId && !!filePath,
+    staleTime: 30000, // Cache for 30 seconds
   });
 }
