@@ -61,11 +61,14 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 function parseImageDataUrl(dataUrl: string, fallbackType: string): ImageAttachment {
   if (dataUrl.startsWith('data:')) {
-    const [meta, data] = dataUrl.split(',');
-    const mediaType = meta?.split(';')[0]?.replace('data:', '') || fallbackType;
-    return { data, media_type: mediaType };
+    const commaIndex = dataUrl.indexOf(',');
+    const meta = commaIndex >= 0 ? dataUrl.slice(0, commaIndex) : dataUrl;
+    const data = commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : '';
+    const metaType = meta.split(';')[0]?.replace('data:', '');
+    const mediaType = metaType || fallbackType || 'application/octet-stream';
+    return { data: data || '', media_type: mediaType };
   }
-  return { data: dataUrl, media_type: fallbackType || 'application/octet-stream' };
+  return { data: dataUrl || '', media_type: fallbackType || 'application/octet-stream' };
 }
 
 function buildHistoryRawEvents(

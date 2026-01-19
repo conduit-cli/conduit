@@ -653,7 +653,12 @@ pub async fn read_workspace_file(
         .map_err(|e| WebError::Internal(format!("Failed to get workspace: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Workspace {} not found", id)))?;
 
-    let file_path = PathBuf::from(&req.path);
+    let requested_path = PathBuf::from(&req.path);
+    let file_path = if requested_path.is_absolute() {
+        requested_path
+    } else {
+        workspace.path.join(&req.path)
+    };
 
     // Security: Ensure the requested path is within the workspace directory
     let workspace_canonical = workspace

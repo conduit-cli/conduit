@@ -702,6 +702,8 @@ mod tests {
         let raw = ClaudeRawEvent::Result(ClaudeResultEvent {
             result: Some("Invalid API key · Please run /login".to_string()),
             output: None,
+            is_error: Some(false),
+            error: None,
             session_id: Some("50884eed-28b7-431e-9ad8-78b326696ae7".to_string()),
             usage: Some(ClaudeUsage {
                 input_tokens: Some(0),
@@ -750,6 +752,8 @@ mod tests {
             ClaudeRawEvent::Result(ClaudeResultEvent {
                 result: Some("Invalid API key · Please run /login".to_string()),
                 output: None,
+                is_error: Some(false),
+                error: None,
                 session_id: Some("test-session".to_string()),
                 usage: Some(ClaudeUsage {
                     input_tokens: Some(0),

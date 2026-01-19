@@ -18,8 +18,10 @@ interface GrepMatch {
 
 // Strip ANSI escape codes from terminal output
 function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+  return text.replace(
+    new RegExp('\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])', 'g'),
+    ''
+  );
 }
 
 function parseGrepOutput(content: string): GrepMatch[] {
@@ -27,7 +29,16 @@ function parseGrepOutput(content: string): GrepMatch[] {
   const cleanContent = stripAnsi(content);
   const lines = cleanContent.split('\n').filter(Boolean);
   return lines.map(line => {
-    // Format: file:line:text or file:text
+    const lineMatch = line.match(/^(.*):(\d+):(.*)$/);
+    if (lineMatch) {
+      return {
+        file: lineMatch[1],
+        line: parseInt(lineMatch[2], 10),
+        text: lineMatch[3],
+      };
+    }
+
+    // Format: file:text or plain text
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) {
       return { file: '', text: line };
@@ -35,17 +46,6 @@ function parseGrepOutput(content: string): GrepMatch[] {
 
     const file = line.slice(0, colonIndex);
     const rest = line.slice(colonIndex + 1);
-
-    // Try to parse line number
-    const lineMatch = rest.match(/^(\d+):(.*)$/);
-    if (lineMatch) {
-      return {
-        file,
-        line: parseInt(lineMatch[1], 10),
-        text: lineMatch[2],
-      };
-    }
-
     return { file, text: rest };
   });
 }
@@ -53,6 +53,9 @@ function parseGrepOutput(content: string): GrepMatch[] {
 function GrepMatchItem({ match, pattern }: { match: GrepMatch; pattern: string }) {
   // Highlight the pattern in the text
   const highlightText = (text: string, searchPattern: string) => {
+    if (!searchPattern || !searchPattern.trim()) {
+      return [<span key="0">{text}</span>];
+    }
     try {
       // Escape special regex characters in pattern for safe matching
       const escaped = searchPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

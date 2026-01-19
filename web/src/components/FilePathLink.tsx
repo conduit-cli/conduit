@@ -31,6 +31,7 @@ export function FilePathLink({ path, workspaceId, className, children }: FilePat
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       className={cn(
         'font-mono text-accent hover:underline cursor-pointer text-left',

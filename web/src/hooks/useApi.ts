@@ -228,10 +228,11 @@ export function useWorkspaceStatus(
   workspaceId: string | null,
   options?: { enabled?: boolean; refetchInterval?: number | false; staleTime?: number }
 ) {
+  const enabled = (options?.enabled ?? !!workspaceId) && !!workspaceId;
   return useQuery({
     queryKey: queryKeys.workspaceStatus(workspaceId ?? ''),
     queryFn: () => api.getWorkspaceStatus(workspaceId!),
-    enabled: options?.enabled ?? !!workspaceId,
+    enabled,
     refetchInterval: options?.refetchInterval ?? 5000,
     staleTime: options?.staleTime ?? 2000,
   });
@@ -488,7 +489,7 @@ export function useSessionEventsFromApi(
   return useQuery({
     queryKey: queryKeys.sessionEvents(id ?? '', options?.query),
     queryFn: () => api.getSessionEvents(id!, options?.query),
-    enabled: options?.enabled ?? !!id,
+    enabled: (options?.enabled ?? true) && !!id,
     staleTime: options?.staleTime ?? 5000,
   });
 }

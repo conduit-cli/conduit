@@ -285,19 +285,20 @@ impl SessionManager {
         input: String,
         images: Vec<PathBuf>,
     ) -> Result<(), String> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
-
-        // Get the input sender
-        let input_tx = session
-            .input_tx
-            .as_ref()
-            .ok_or_else(|| "Session does not support input".to_string())?;
+        let (input_tx, agent_type) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session
+                .input_tx
+                .clone()
+                .ok_or_else(|| "Session does not support input".to_string())?;
+            (input_tx, session.agent_type)
+        };
 
         // Send as appropriate input type based on agent
-        let agent_input = match session.agent_type {
+        let agent_input = match agent_type {
             AgentType::Claude => AgentInput::ClaudeJsonl(input),
             AgentType::Codex | AgentType::Gemini => AgentInput::CodexPrompt {
                 text: input,
@@ -320,19 +321,20 @@ impl SessionManager {
         request_id: String,
         response: serde_json::Value,
     ) -> Result<(), String> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(&session_id)
-            .ok_or_else(|| format!("Session {} not found", session_id))?;
-
-        let input_tx = session
-            .input_tx
-            .as_ref()
-            .ok_or_else(|| "Session does not support control responses".to_string())?;
-
-        if session.agent_type != AgentType::Claude {
-            return Err("Control responses are only supported for Claude sessions".to_string());
-        }
+        let input_tx = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session
+                .input_tx
+                .clone()
+                .ok_or_else(|| "Session does not support control responses".to_string())?;
+            if session.agent_type != AgentType::Claude {
+                return Err("Control responses are only supported for Claude sessions".to_string());
+            }
+            input_tx
+        };
 
         let payload = json!({
             "type": "control_response",
@@ -501,7 +503,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
         Arc::new(RwLock::new(HashMap::new()));
 
     // Handle incoming messages
-    while let Some(result) = ws_receiver.next().await {
+    'ws_loop: while let Some(result) = ws_receiver.next().await {
         let msg = match result {
             Ok(Message::Text(text)) => text,
             Ok(Message::Close(_)) => break,
@@ -519,16 +521,26 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
         let client_msg: ClientMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
-                let _ = tx
+                if let Err(send_err) = tx
                     .send(ServerMessage::error(format!("Invalid message: {}", e)))
-                    .await;
+                    .await
+                {
+                    tracing::debug!(
+                        error = ?send_err,
+                        "Failed to send invalid message error"
+                    );
+                    break 'ws_loop;
+                }
                 continue;
             }
         };
 
         match client_msg {
             ClientMessage::Ping => {
-                let _ = tx.send(ServerMessage::Pong).await;
+                if let Err(send_err) = tx.send(ServerMessage::Pong).await {
+                    tracing::debug!(error = ?send_err, "Failed to send pong");
+                    break 'ws_loop;
+                }
             }
 
             ClientMessage::Subscribe { session_id } => {
@@ -550,10 +562,28 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         let mut subs = subscriptions.write().await;
                         subs.insert(session_id, task);
 
-                        let _ = tx.send(ServerMessage::Subscribed { session_id }).await;
+                        if let Err(send_err) =
+                            tx.send(ServerMessage::Subscribed { session_id }).await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send subscribed message"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                     Err(e) => {
-                        let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                        if let Err(send_err) =
+                            tx.send(ServerMessage::session_error(session_id, e)).await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                 }
             }
@@ -563,7 +593,14 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 if let Some(task) = subs.remove(&session_id) {
                     task.abort();
                 }
-                let _ = tx.send(ServerMessage::Unsubscribed { session_id }).await;
+                if let Err(send_err) = tx.send(ServerMessage::Unsubscribed { session_id }).await {
+                    tracing::debug!(
+                        %session_id,
+                        error = ?send_err,
+                        "Failed to send unsubscribed message"
+                    );
+                    break 'ws_loop;
+                }
             }
 
             ClientMessage::StartSession {
@@ -580,31 +617,55 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     match store.get_by_id(session_id) {
                         Ok(Some(tab)) => tab.agent_type,
                         Ok(None) => {
-                            let _ = tx
+                            if let Err(send_err) = tx
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     "Session not found in database",
                                 ))
-                                .await;
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
                             continue;
                         }
                         Err(e) => {
-                            let _ = tx
+                            if let Err(send_err) = tx
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     format!("Database error: {}", e),
                                 ))
-                                .await;
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
                             continue;
                         }
                     }
                 } else {
-                    let _ = tx
+                    if let Err(send_err) = tx
                         .send(ServerMessage::session_error(
                             session_id,
                             "Database not available",
                         ))
-                        .await;
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
                     continue;
                 };
                 drop(core);
@@ -633,6 +694,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                         error = ?send_err,
                                         "Failed to send session error"
                                     );
+                                    break 'ws_loop;
                                 }
                                 continue;
                             }
@@ -653,6 +715,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                             error = ?send_err,
                                             "Failed to send session error"
                                         );
+                                        break 'ws_loop;
                                     }
                                     continue;
                                 }
@@ -672,6 +735,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                     error = ?send_err,
                                     "Failed to send session error"
                                 );
+                                break 'ws_loop;
                             }
                             continue;
                         }
@@ -694,6 +758,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                     error = ?send_err,
                                     "Failed to send session error"
                                 );
+                                break 'ws_loop;
                             }
                             continue;
                         }
@@ -757,12 +822,29 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         let mut subs = subscriptions.write().await;
                         subs.insert(session_id, task);
 
-                        let _ = tx
+                        if let Err(send_err) = tx
                             .send(ServerMessage::session_started(session_id, agent_type, None))
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session started"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                     Err(e) => {
-                        let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                        if let Err(send_err) =
+                            tx.send(ServerMessage::session_error(session_id, e)).await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                 }
             }
@@ -791,6 +873,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                         error = ?send_err,
                                         "Failed to send session error"
                                     );
+                                    break 'ws_loop;
                                 }
                                 continue;
                             }
@@ -811,6 +894,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                             error = ?send_err,
                                             "Failed to send session error"
                                         );
+                                        break 'ws_loop;
                                     }
                                     continue;
                                 }
@@ -829,6 +913,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                     error = ?send_err,
                                     "Failed to send session error"
                                 );
+                                break 'ws_loop;
                             }
                             continue;
                         }
@@ -851,6 +936,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                     error = ?send_err,
                                     "Failed to send session error"
                                 );
+                                break 'ws_loop;
                             }
                             continue;
                         }
@@ -861,7 +947,16 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     .send_input(session_id, input_payload, image_paths)
                     .await
                 {
-                    let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
                 } else if !hidden {
                     if let Err(error) =
                         append_input_history(&session_manager.core, session_id, &input).await
@@ -884,7 +979,16 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     .respond_to_control(session_id, request_id, response)
                     .await
                 {
-                    let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
                 }
             }
 
@@ -899,16 +1003,33 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
 
                 match session_manager.stop_session(session_id).await {
                     Ok(()) => {
-                        let _ = tx
+                        if let Err(send_err) = tx
                             .send(ServerMessage::SessionEnded {
                                 session_id,
                                 reason: "stopped".to_string(),
                                 error: None,
                             })
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session ended"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                     Err(e) => {
-                        let _ = tx.send(ServerMessage::session_error(session_id, e)).await;
+                        if let Err(send_err) =
+                            tx.send(ServerMessage::session_error(session_id, e)).await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
+                        }
                     }
                 }
             }
