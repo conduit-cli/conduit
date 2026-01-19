@@ -1,0 +1,74 @@
+# Expectations:
+# - HOME is set to a temp dir containing ~/code with repo-alpha and repo-beta.
+# - Base directory dialog defaults to ~/code and is valid, so Enter confirms.
+session:
+  command: ["__CONDUIT_BINARY__", "--data-dir", "__DATA_DIR__"]
+  cols: 120
+  rows: 40
+steps:
+  - waitForText: {text: "C-n new project", timeoutMs: 10000}
+  - waitForText: {text: "C-q quit", timeoutMs: 10000}
+  - screenshot: {name: "startup"}
+
+  - hotkey: {ctrl: true, ch: "n"}
+  - waitForText: {text: "Set Projects Directory", timeoutMs: 10000}
+  - waitForText: {text: "Where do you keep your projects", timeoutMs: 10000}
+  - waitForText: {text: "Directory found", timeoutMs: 10000}
+  - press: {key: "Enter"}
+
+  - waitForText: {text: "Select Project", timeoutMs: 10000}
+  - waitForText: {text: "Search: (type to filter)", timeoutMs: 10000}
+  - type: {text: "repo-alpha"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 5000}
+  - waitForText: {text: "repo-alpha", timeoutMs: 10000}
+  - press: {key: "Enter"}
+
+  - waitForText: {text: "repo-alpha", timeoutMs: 10000}
+  - screenshot: {name: "sidebar-after-add"}
+
+  - press: {key: "Right"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+  - press: {key: "Left"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+  - press: {key: "Down"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+  - press: {key: "Up"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+  - press: {key: "Escape"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+
+  - hotkey: {ctrl: true, ch: "p"}
+  - waitForText: {text: "Command Palette", timeoutMs: 10000}
+  - press: {key: "Escape"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+
+  - hotkey: {ctrl: true, ch: "o"}
+  - waitForText: {text: "Model", timeoutMs: 10000}
+  - press: {key: "Escape"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+
+  - hotkey: {alt: true, ch: "t"}
+  - waitForText: {text: "Theme", timeoutMs: 10000}
+  - press: {key: "Escape"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+
+  - hotkey: {alt: true, ch: "i"}
+  - waitForText: {text: "Import Session", timeoutMs: 10000}
+  - press: {key: "Escape"}
+  - waitForIdle: {idleMs: 200, timeoutMs: 3000}
+
+  - hotkey: {ctrl: true, ch: "g"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+  - hotkey: {ctrl: true, ch: "g"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+
+  - hotkey: {ctrl: true, ch: "t"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+  - hotkey: {ctrl: true, ch: "t"}
+  - waitForIdle: {idleMs: 300, timeoutMs: 3000}
+
+  - hotkey: {ctrl: true, ch: "q"}
+
+artifacts:
+  mode: onFailure
+  dir: ./termwright-artifacts

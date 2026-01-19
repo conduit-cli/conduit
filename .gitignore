@@ -4,3 +4,4 @@
 
 # E2E test screenshots (generated on failure)
 /tests/e2e/screenshots/*.png
+/termwright-artifacts
