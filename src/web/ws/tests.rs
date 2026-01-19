@@ -42,6 +42,8 @@ fn test_client_message_start_session_serialization() {
         prompt: "Hello, world!".to_string(),
         working_dir: "/home/user/project".to_string(),
         model: Some("claude-sonnet-4-20250514".to_string()),
+        hidden: false,
+        images: Vec::new(),
     };
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains(r#""type":"start_session""#));
@@ -54,12 +56,16 @@ fn test_client_message_start_session_serialization() {
         prompt,
         working_dir,
         model,
+        hidden,
+        images,
     } = parsed
     {
         assert_eq!(parsed_id, session_id);
         assert_eq!(prompt, "Hello, world!");
         assert_eq!(working_dir, "/home/user/project");
         assert_eq!(model, Some("claude-sonnet-4-20250514".to_string()));
+        assert!(!hidden);
+        assert!(images.is_empty());
     } else {
         panic!("Expected StartSession message");
     }
