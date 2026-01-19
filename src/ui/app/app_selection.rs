@@ -12,6 +12,7 @@ impl App {
             return false;
         }
 
+        let show_chat_scrollbar = self.config().ui.show_chat_scrollbar;
         let Some(session) = self.state.tab_manager.active_session_mut() else {
             return false;
         };
@@ -38,12 +39,10 @@ impl App {
                     self.state.sidebar_state.set_focused(false);
                 }
                 session.input_box.clear_selection();
-                if session.chat_view.begin_selection(
-                    x,
-                    y,
-                    chat_area,
-                    self.config().ui.show_chat_scrollbar,
-                ) {
+                if session
+                    .chat_view
+                    .begin_selection(x, y, chat_area, show_chat_scrollbar)
+                {
                     self.state.selection_drag = Some(SelectionDragTarget::Chat);
                     return true;
                 }
@@ -60,6 +59,7 @@ impl App {
 
         let mut scrolled_lines = 0usize;
         let mut handled = false;
+        let show_chat_scrollbar = self.config().ui.show_chat_scrollbar;
 
         {
             let Some(session) = self.state.tab_manager.active_session_mut() else {
@@ -103,7 +103,7 @@ impl App {
                             y,
                             chat_area,
                             session.is_processing,
-                            self.config().ui.show_chat_scrollbar,
+                            show_chat_scrollbar,
                         );
                         handled = true;
                     }

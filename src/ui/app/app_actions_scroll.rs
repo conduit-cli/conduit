@@ -63,12 +63,13 @@ impl App {
                 }
             }
             Action::ScrollPrevUserMessage => {
+                let show_chat_scrollbar = self.config().ui.show_chat_scrollbar;
                 if let (Some(session), Some(chat_area)) = (
                     self.state.tab_manager.active_session_mut(),
                     self.state.chat_area,
                 ) {
                     if let Some(content) =
-                        ChatView::content_area_for(chat_area, self.config().ui.show_chat_scrollbar)
+                        ChatView::content_area_for(chat_area, show_chat_scrollbar)
                     {
                         let mut extra_len = 0usize;
                         if session.is_processing {
@@ -94,12 +95,13 @@ impl App {
                 }
             }
             Action::ScrollNextUserMessage => {
+                let show_chat_scrollbar = self.config().ui.show_chat_scrollbar;
                 if let (Some(session), Some(chat_area)) = (
                     self.state.tab_manager.active_session_mut(),
                     self.state.chat_area,
                 ) {
                     if let Some(content) =
-                        ChatView::content_area_for(chat_area, self.config().ui.show_chat_scrollbar)
+                        ChatView::content_area_for(chat_area, show_chat_scrollbar)
                     {
                         let mut extra_len = 0usize;
                         if session.is_processing {

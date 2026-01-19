@@ -275,12 +275,13 @@ impl App {
             }
             ScrollDragTarget::Chat => {
                 let area = self.state.chat_area?;
+                let show_chat_scrollbar = self.config().ui.show_chat_scrollbar;
                 let session = self.state.tab_manager.active_session_mut()?;
                 session.chat_view.scrollbar_metrics(
                     area,
                     session.is_processing,
                     session.queued_messages.len(),
-                    self.config().ui.show_chat_scrollbar,
+                    show_chat_scrollbar,
                 )
             }
             ScrollDragTarget::Input => {
