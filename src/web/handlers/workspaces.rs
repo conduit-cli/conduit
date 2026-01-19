@@ -663,7 +663,7 @@ pub async fn read_workspace_file(
 
     let file_canonical = file_path.canonicalize().map_err(|_| {
         // File doesn't exist - return exists: false
-        return WebError::NotFound("File not found".to_string());
+        WebError::NotFound("File not found".to_string())
     });
 
     let file_canonical = match file_canonical {

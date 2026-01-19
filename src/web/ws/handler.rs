@@ -37,6 +37,17 @@ pub struct SessionManager {
     core: Arc<RwLock<ConduitCore>>,
 }
 
+struct StartSessionArgs {
+    session_id: Uuid,
+    agent_type: AgentType,
+    prompt: String,
+    working_dir: PathBuf,
+    model: Option<String>,
+    images: Vec<PathBuf>,
+    input_format: Option<String>,
+    stdin_payload: Option<String>,
+}
+
 async fn persist_agent_session_id(
     core: &Arc<RwLock<ConduitCore>>,
     session_id: Uuid,
@@ -85,17 +96,21 @@ impl SessionManager {
     }
 
     /// Start a new agent session.
-    pub async fn start_session(
+    async fn start_session(
         &self,
-        session_id: Uuid,
-        agent_type: AgentType,
-        prompt: String,
-        working_dir: PathBuf,
-        model: Option<String>,
-        images: Vec<PathBuf>,
-        input_format: Option<String>,
-        stdin_payload: Option<String>,
+        args: StartSessionArgs,
     ) -> Result<broadcast::Receiver<AgentEvent>, String> {
+        let StartSessionArgs {
+            session_id,
+            agent_type,
+            prompt,
+            working_dir,
+            model,
+            images,
+            input_format,
+            stdin_payload,
+        } = args;
+
         // Check if session already exists
         {
             let sessions = self.sessions.read().await;
@@ -688,16 +703,16 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 let prompt_for_history = prompt.clone();
 
                 match session_manager
-                    .start_session(
+                    .start_session(StartSessionArgs {
                         session_id,
                         agent_type,
-                        prompt_for_agent,
-                        PathBuf::from(working_dir),
+                        prompt: prompt_for_agent,
+                        working_dir: PathBuf::from(working_dir),
                         model,
-                        image_paths,
+                        images: image_paths,
                         input_format,
                         stdin_payload,
-                    )
+                    })
                     .await
                 {
                     Ok(mut event_rx) => {
