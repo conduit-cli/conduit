@@ -213,6 +213,42 @@ fn test_server_message_session_started_serialization() {
 }
 
 #[test]
+fn test_server_message_session_metadata_serialization() {
+    let session_id = Uuid::nil();
+    let workspace_id = Uuid::new_v4();
+    let msg = ServerMessage::SessionMetadata {
+        session_id,
+        title: Some("Fix session naming".to_string()),
+        workspace_id: Some(workspace_id),
+        workspace_branch: Some("user/fix-session-naming".to_string()),
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    assert!(json.contains(r#""type":"session_metadata""#));
+    assert!(json.contains("Fix session naming"));
+    assert!(json.contains("user/fix-session-naming"));
+    assert!(json.contains(&workspace_id.to_string()));
+
+    let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+    if let ServerMessage::SessionMetadata {
+        session_id: parsed_session_id,
+        title,
+        workspace_id: parsed_workspace_id,
+        workspace_branch,
+    } = parsed
+    {
+        assert_eq!(parsed_session_id, session_id);
+        assert_eq!(title, Some("Fix session naming".to_string()));
+        assert_eq!(parsed_workspace_id, Some(workspace_id));
+        assert_eq!(
+            workspace_branch,
+            Some("user/fix-session-naming".to_string())
+        );
+    } else {
+        panic!("Expected SessionMetadata message");
+    }
+}
+
+#[test]
 fn test_server_message_session_ended_serialization() {
     let session_id = Uuid::nil();
     let msg = ServerMessage::SessionEnded {

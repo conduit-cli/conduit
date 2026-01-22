@@ -1,8 +1,10 @@
 // React hooks for WebSocket communication
 
 import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { getWebSocket, type ConnectionState, type ConduitWebSocket } from '../lib/websocket';
-import type { AgentEvent, ImageAttachment, ServerMessage } from '../types';
+import type { AgentEvent, ImageAttachment, ServerMessage, Session, Workspace } from '../types';
+import { queryKeys } from './useApi';
 
 // WebSocket context
 interface WebSocketContextValue {
@@ -43,6 +45,7 @@ interface WebSocketProviderProps {
 }
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
+  const queryClient = useQueryClient();
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [processingSessionIds, setProcessingSessionIds] = useState<Set<string>>(new Set());
   const runningSessionsRef = useRef(new Set<string>());
@@ -96,8 +99,61 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           ws.sendInput(message.session_id, pending.prompt, false, pending.images);
         }
       }
+
+      if (message.type === 'session_metadata') {
+        const { session_id: sessionId, title, workspace_id, workspace_branch } = message;
+
+        if (title !== null) {
+          queryClient.setQueryData<Session>(queryKeys.session(sessionId), (prev) =>
+            prev ? { ...prev, title } : prev
+          );
+          queryClient.setQueryData<Session[]>(queryKeys.sessions, (prev) =>
+            prev
+              ? prev.map((session) =>
+                  session.id === sessionId ? { ...session, title } : session
+                )
+              : prev
+          );
+          if (workspace_id) {
+            queryClient.setQueryData<Session>(queryKeys.workspaceSession(workspace_id), (prev) =>
+              prev ? { ...prev, title } : prev
+            );
+          }
+        }
+
+        if (workspace_id && workspace_branch) {
+          queryClient.setQueryData<Workspace>(queryKeys.workspace(workspace_id), (prev) =>
+            prev ? { ...prev, branch: workspace_branch } : prev
+          );
+          queryClient.setQueryData<Workspace[]>(queryKeys.workspaces, (prev) =>
+            prev
+              ? prev.map((workspace) =>
+                  workspace.id === workspace_id
+                    ? { ...workspace, branch: workspace_branch }
+                    : workspace
+                )
+              : prev
+          );
+          queryClient.setQueriesData<Workspace[]>(
+            {
+              predicate: (query) => {
+                const key = query.queryKey as unknown[];
+                return key[0] === 'repositories' && key[2] === 'workspaces';
+              },
+            },
+            (prev) =>
+              prev
+                ? prev.map((workspace) =>
+                    workspace.id === workspace_id
+                      ? { ...workspace, branch: workspace_branch }
+                      : workspace
+                  )
+                : prev
+          );
+        }
+      }
     },
-    [ws]
+    [queryClient, ws]
   );
 
   useEffect(() => {

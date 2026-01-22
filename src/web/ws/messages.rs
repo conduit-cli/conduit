@@ -92,6 +92,14 @@ pub enum ServerMessage {
         agent_session_id: Option<String>,
     },
 
+    /// Session metadata update (title/branch rename)
+    SessionMetadata {
+        session_id: Uuid,
+        title: Option<String>,
+        workspace_id: Option<Uuid>,
+        workspace_branch: Option<String>,
+    },
+
     /// Agent event forwarded from a session
     AgentEvent { session_id: Uuid, event: AgentEvent },
 

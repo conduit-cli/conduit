@@ -24,6 +24,13 @@ export type ServerMessage =
   | { type: 'subscribed'; session_id: string }
   | { type: 'unsubscribed'; session_id: string }
   | { type: 'session_started'; session_id: string; agent_type: string; agent_session_id: string | null }
+  | {
+      type: 'session_metadata';
+      session_id: string;
+      title: string | null;
+      workspace_id: string | null;
+      workspace_branch: string | null;
+    }
   | { type: 'agent_event'; session_id: string; event: AgentEvent }
   | { type: 'session_ended'; session_id: string; reason: string; error: string | null }
   | { type: 'error'; message: string; session_id: string | null };

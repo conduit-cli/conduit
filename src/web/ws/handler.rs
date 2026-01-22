@@ -16,6 +16,8 @@ use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::core::services::SessionService;
 use crate::core::ConduitCore;
+use crate::ui::app_prompt;
+use crate::util::{generate_title_and_branch, get_git_username, sanitize_branch_suffix};
 use serde_json::json;
 
 use super::messages::{ClientMessage, ImageAttachment, ServerMessage};
@@ -46,6 +48,12 @@ struct StartSessionArgs {
     images: Vec<PathBuf>,
     input_format: Option<String>,
     stdin_payload: Option<String>,
+}
+
+struct TitleGenerationOutcome {
+    title: String,
+    workspace_id: Option<Uuid>,
+    new_branch: Option<String>,
 }
 
 async fn persist_agent_session_id(
@@ -414,6 +422,181 @@ impl SessionManager {
     }
 }
 
+fn should_generate_title(hidden: bool, session: &crate::data::SessionTab) -> bool {
+    !hidden && session.title.is_none() && session.agent_session_id.is_none()
+}
+
+async fn generate_title_and_branch_for_session(
+    core: Arc<RwLock<ConduitCore>>,
+    session_id: Uuid,
+    user_message: String,
+    working_dir: PathBuf,
+) -> Result<Option<TitleGenerationOutcome>, String> {
+    let (tools, worktree_manager, session_store, workspace_store) = {
+        let core = core.read().await;
+        (
+            core.tools().clone(),
+            core.worktree_manager().clone(),
+            core.session_tab_store_clone(),
+            core.workspace_store_clone(),
+        )
+    };
+
+    let session_store =
+        session_store.ok_or_else(|| "Database not available for sessions".to_string())?;
+
+    let mut session = session_store
+        .get_by_id(session_id)
+        .map_err(|e| format!("Failed to load session {}: {}", session_id, e))?
+        .ok_or_else(|| format!("Session {} not found for title generation", session_id))?;
+
+    if session.title.is_some() || session.agent_session_id.is_some() {
+        return Ok(None);
+    }
+
+    let metadata = generate_title_and_branch(&tools, &user_message, &working_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut new_branch: Option<String> = None;
+    let workspace_id = session.workspace_id;
+
+    if workspace_id.is_some() {
+        let resolved_branch = {
+            let wd = working_dir.clone();
+            let wm = worktree_manager.clone();
+            let wd_for_log = wd.clone();
+            let fresh_branch = match tokio::task::spawn_blocking(move || {
+                wm.get_current_branch(&wd).map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(Ok(branch)) => branch,
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        error = %err,
+                        working_dir = %wd_for_log.display(),
+                        "Failed to fetch current branch from worktree"
+                    );
+                    String::new()
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "spawn_blocking failed while fetching current branch"
+                    );
+                    String::new()
+                }
+            };
+            fresh_branch
+        };
+
+        if resolved_branch.is_empty() {
+            tracing::debug!("Skipping branch rename: could not determine current branch");
+        } else {
+            let raw_username = get_git_username();
+            let username = sanitize_branch_suffix(&raw_username);
+            let suffix = sanitize_branch_suffix(&metadata.branch_suffix);
+
+            if suffix == "task" {
+                tracing::debug!(
+                    suffix = %suffix,
+                    "Skipping branch rename: sanitized suffix is generic fallback"
+                );
+            } else {
+                let new_branch_name = if username == "task" {
+                    tracing::debug!(
+                        raw_username = %raw_username,
+                        sanitized = %username,
+                        "Username unusable; generating branch without username prefix"
+                    );
+                    suffix.clone()
+                } else {
+                    format!("{}/{}", username, suffix)
+                };
+
+                if new_branch_name != resolved_branch {
+                    let wd = working_dir.clone();
+                    let old = resolved_branch.clone();
+                    let new_name = new_branch_name.clone();
+                    let wm = worktree_manager.clone();
+
+                    let rename_join_result = tokio::task::spawn_blocking(move || {
+                        wm.rename_branch(&wd, &old, &new_name)
+                            .map_err(|e| e.to_string())
+                    })
+                    .await;
+
+                    match rename_join_result {
+                        Ok(Ok(())) => {
+                            if let (Some(ws_id), Some(ref dao)) = (workspace_id, &workspace_store) {
+                                match dao.get_by_id(ws_id) {
+                                    Ok(Some(mut ws)) => {
+                                        ws.branch = new_branch_name.clone();
+                                        if let Err(err) = dao.update(&ws) {
+                                            tracing::warn!(
+                                                error = %err,
+                                                workspace_id = %ws_id,
+                                                "Failed to persist branch rename to database"
+                                            );
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        tracing::warn!(
+                                            workspace_id = %ws_id,
+                                            "Workspace not found for branch update"
+                                        );
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            error = %err,
+                                            workspace_id = %ws_id,
+                                            "Failed to load workspace for branch update"
+                                        );
+                                    }
+                                }
+                            }
+                            new_branch = Some(new_branch_name);
+                        }
+                        Ok(Err(err)) => {
+                            tracing::warn!(
+                                error = %err,
+                                old_branch = %resolved_branch,
+                                new_branch = %new_branch_name,
+                                "Failed to rename git branch"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                old_branch = %resolved_branch,
+                                new_branch = %new_branch_name,
+                                "spawn_blocking join failed during branch rename"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let sanitized_title = app_prompt::sanitize_title(&metadata.title);
+    session.title = Some(sanitized_title.clone());
+    if let Err(err) = session_store.update(&session) {
+        tracing::warn!(
+            error = %err,
+            %session_id,
+            "Failed to persist session title"
+        );
+    }
+
+    Ok(Some(TitleGenerationOutcome {
+        title: sanitized_title,
+        workspace_id,
+        new_branch,
+    }))
+}
+
 fn decode_image_attachments(images: &[ImageAttachment]) -> Result<Vec<PathBuf>, String> {
     if images.is_empty() {
         return Ok(Vec::new());
@@ -667,9 +850,9 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
             } => {
                 // Look up session in database to get agent type
                 let core = session_manager.core.read().await;
-                let agent_type = if let Some(store) = core.session_tab_store() {
+                let session_tab = if let Some(store) = core.session_tab_store() {
                     match store.get_by_id(session_id) {
-                        Ok(Some(tab)) => tab.agent_type,
+                        Ok(Some(tab)) => tab,
                         Ok(None) => {
                             if let Err(send_err) = tx
                                 .send(ServerMessage::session_error(
@@ -722,10 +905,13 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     }
                     continue;
                 };
+                let agent_type = session_tab.agent_type;
+                let should_generate = should_generate_title(hidden, &session_tab);
                 drop(core);
 
                 let mut input_format: Option<String> = None;
                 let mut stdin_payload: Option<String> = None;
+                let working_dir_path = PathBuf::from(working_dir);
                 let prompt_for_agent = if agent_type == AgentType::Claude {
                     String::new()
                 } else {
@@ -826,7 +1012,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         session_id,
                         agent_type,
                         prompt: prompt_for_agent,
-                        working_dir: PathBuf::from(working_dir),
+                        working_dir: working_dir_path.clone(),
                         model,
                         images: image_paths,
                         input_format,
@@ -849,6 +1035,49 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                     "Failed to persist input history"
                                 );
                             }
+                        }
+
+                        if should_generate {
+                            let core_ref = session_manager.core.clone();
+                            let tx_clone = tx.clone();
+                            let prompt_for_title = prompt.clone();
+                            let working_dir_for_title = working_dir_path.clone();
+                            tokio::spawn(async move {
+                                match generate_title_and_branch_for_session(
+                                    core_ref,
+                                    session_id,
+                                    prompt_for_title,
+                                    working_dir_for_title,
+                                )
+                                .await
+                                {
+                                    Ok(Some(outcome)) => {
+                                        if let Err(error) = tx_clone
+                                            .send(ServerMessage::SessionMetadata {
+                                                session_id,
+                                                title: Some(outcome.title),
+                                                workspace_id: outcome.workspace_id,
+                                                workspace_branch: outcome.new_branch,
+                                            })
+                                            .await
+                                        {
+                                            tracing::debug!(
+                                                %session_id,
+                                                error = ?error,
+                                                "Failed to send session metadata update"
+                                            );
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            %session_id,
+                                            error = %error,
+                                            "Failed to generate session title"
+                                        );
+                                    }
+                                }
+                            });
                         }
 
                         // Auto-subscribe to the new session
