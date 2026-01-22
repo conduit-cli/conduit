@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -216,6 +216,8 @@ pub struct AppState {
     pub busy_footer_message_active: bool,
     /// Cached footer message for busy state
     pub busy_footer_message: Option<String>,
+    /// Pending branch updates captured while workspaces are busy
+    pub pending_branch_updates: HashMap<Uuid, Option<String>>,
 }
 
 /// Pending fork request data captured before workspace creation
@@ -321,6 +323,7 @@ impl AppState {
             busy_repo_actions: HashSet::new(),
             busy_footer_message_active: false,
             busy_footer_message: None,
+            pending_branch_updates: HashMap::new(),
         }
     }
 

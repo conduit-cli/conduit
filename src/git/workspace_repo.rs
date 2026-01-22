@@ -236,11 +236,16 @@ impl WorkspaceRepoManager {
                     .output()?;
 
                 if !output.status.success() {
+                    self.cleanup_failed_checkout(
+                        &workspace_path,
+                        "Failed to create branch in checkout workspace",
+                    );
                     return Err(WorktreeError::CommandFailed(
                         String::from_utf8_lossy(&output.stderr).to_string(),
                     ));
                 }
             } else {
+                self.cleanup_failed_checkout(&workspace_path, "Failed to checkout branch");
                 return Err(WorktreeError::CommandFailed(stderr.to_string()));
             }
         }
@@ -300,6 +305,10 @@ impl WorkspaceRepoManager {
                     .current_dir(&workspace_path)
                     .output()?;
                 if !output.status.success() {
+                    self.cleanup_failed_checkout(
+                        &workspace_path,
+                        "Failed to checkout existing branch in checkout workspace",
+                    );
                     return Err(WorktreeError::CommandFailed(
                         String::from_utf8_lossy(&output.stderr).to_string(),
                     ));
@@ -321,6 +330,10 @@ impl WorkspaceRepoManager {
                 }
             }
 
+            self.cleanup_failed_checkout(
+                &workspace_path,
+                "Failed to create branch from base in checkout workspace",
+            );
             return Err(WorktreeError::CommandFailed(initial_stderr.to_string()));
         }
 
@@ -334,6 +347,16 @@ impl WorkspaceRepoManager {
 
         std::fs::remove_dir_all(workspace_path)?;
         Ok(())
+    }
+
+    fn cleanup_failed_checkout(&self, workspace_path: &Path, context: &str) {
+        if let Err(err) = std::fs::remove_dir_all(workspace_path) {
+            tracing::warn!(
+                error = %err,
+                path = %workspace_path.display(),
+                "{context}"
+            );
+        }
     }
 
     fn sync_origin_from_base(&self, base_repo: &Path, workspace_path: &Path) {

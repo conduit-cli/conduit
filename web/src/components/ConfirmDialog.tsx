@@ -54,15 +54,15 @@ export function ConfirmDialog({
     if (!dialog) return;
     const handleCancel = (e: Event) => {
       e.preventDefault();
-      if (!isPending) onClose();
+      if (!isPending) (onCancel ?? onClose)();
     };
     dialog.addEventListener('cancel', handleCancel);
     return () => dialog.removeEventListener('cancel', handleCancel);
-  }, [isPending, onClose]);
+  }, [isPending, onCancel, onClose]);
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDialogElement>) => {
     if (e.target === dialogRef.current && !isPending) {
-      onClose();
+      (onCancel ?? onClose)();
     }
   };
 

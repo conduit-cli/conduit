@@ -726,6 +726,9 @@ impl App {
                 .sidebar_data
                 .set_workspace_busy(workspace_id, false);
             self.sync_busy_footer_message();
+            if let Some(branch) = self.state.pending_branch_updates.remove(&workspace_id) {
+                self.apply_branch_update(workspace_id, branch);
+            }
         }
     }
 
@@ -2386,9 +2389,26 @@ impl App {
                                 .map_err(|e| format!("Failed to load workspace: {}", e))?
                                 .ok_or_else(|| "Workspace not found".to_string())?;
 
-                            let repo = repo_dao.as_ref().and_then(|dao| {
-                                dao.get_by_id(workspace.repository_id).ok().flatten()
-                            });
+                            let repo = match repo_dao.as_ref() {
+                                Some(dao) => match dao.get_by_id(workspace.repository_id) {
+                                    Ok(repo) => repo,
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            error = %err,
+                                            workspace_id = %workspace_id,
+                                            "Failed to load repository for archive"
+                                        );
+                                        None
+                                    }
+                                },
+                                None => {
+                                    tracing::warn!(
+                                        workspace_id = %workspace_id,
+                                        "Repository DAO unavailable for archive"
+                                    );
+                                    None
+                                }
+                            };
                             let repo_base_path =
                                 repo.as_ref().and_then(|repo| repo.base_path.clone());
                             let settings = repo
@@ -3736,8 +3756,28 @@ impl App {
         let workspace_dao = self.workspace_dao()?;
         let repo_dao = self.repo_dao()?;
 
-        let workspace = workspace_dao.get_by_id(workspace_id).ok().flatten()?;
-        let repo = repo_dao.get_by_id(workspace.repository_id).ok().flatten()?;
+        let workspace = match workspace_dao.get_by_id(workspace_id) {
+            Ok(workspace) => workspace?,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    workspace_id = %workspace_id,
+                    "Failed to load workspace"
+                );
+                return None;
+            }
+        };
+        let repo = match repo_dao.get_by_id(workspace.repository_id) {
+            Ok(repo) => repo?,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    repository_id = %workspace.repository_id,
+                    "Failed to load repository"
+                );
+                return None;
+            }
+        };
         let settings = resolve_repo_workspace_settings(self.config(), &repo);
         let base_path = repo.base_path.clone();
         Some((workspace, settings, base_path))
@@ -5400,20 +5440,25 @@ impl App {
                         workspace_id = %workspace_id,
                         "Skipping branch update for busy workspace"
                     );
+                    self.state
+                        .pending_branch_updates
+                        .insert(workspace_id, branch);
                     return;
                 }
-                // Update all sessions with this workspace
-                for session in self.state.tab_manager.sessions_mut() {
-                    if session.workspace_id == Some(workspace_id) {
-                        session.status_bar.set_branch_name(branch.clone());
-                    }
-                }
-                // Always update sidebar data (including detached indicator)
-                self.state
-                    .sidebar_data
-                    .update_workspace_branch(workspace_id, branch);
+                self.apply_branch_update(workspace_id, branch);
             }
         }
+    }
+
+    fn apply_branch_update(&mut self, workspace_id: uuid::Uuid, branch: Option<String>) {
+        for session in self.state.tab_manager.sessions_mut() {
+            if session.workspace_id == Some(workspace_id) {
+                session.status_bar.set_branch_name(branch.clone());
+            }
+        }
+        self.state
+            .sidebar_data
+            .update_workspace_branch(workspace_id, branch);
     }
 
     fn flush_pending_agent_output(session: &mut crate::ui::session::AgentSession) {
