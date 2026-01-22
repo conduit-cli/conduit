@@ -115,20 +115,17 @@ impl WorkspaceRepoManager {
         }
     }
 
-    /// Delete a local branch (repo/workspace depending on mode).
+    /// Delete a local branch for either a worktree repo or a checkout workspace.
     pub fn delete_branch(
         &self,
         mode: WorkspaceMode,
         repo_path: &Path,
-        _workspace_path: &Path,
+        workspace_path: &Path,
         branch: &str,
     ) -> Result<(), WorktreeError> {
         match mode {
             WorkspaceMode::Worktree => self.worktree.delete_branch(repo_path, branch),
-            WorkspaceMode::Checkout => {
-                // Branches live inside the checkout; removing the checkout already drops them.
-                Ok(())
-            }
+            WorkspaceMode::Checkout => self.worktree.delete_branch(workspace_path, branch),
         }
     }
 
@@ -214,6 +211,7 @@ impl WorkspaceRepoManager {
             .output()?;
 
         if !output.status.success() {
+            self.cleanup_failed_checkout(&workspace_path, "Failed to clone checkout workspace");
             return Err(WorktreeError::CommandFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
@@ -285,6 +283,7 @@ impl WorkspaceRepoManager {
             .output()?;
 
         if !output.status.success() {
+            self.cleanup_failed_checkout(&workspace_path, "Failed to clone checkout workspace");
             return Err(WorktreeError::CommandFailed(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
