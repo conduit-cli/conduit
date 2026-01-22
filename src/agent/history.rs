@@ -1308,6 +1308,19 @@ fn truncate_preview(text: &str, max_len: usize) -> String {
     }
 }
 
+fn codex_text_skip_reason(text: &str) -> Option<&'static str> {
+    if text.contains("<environment_context>") {
+        return Some("filtered: environment_context");
+    }
+    if text.starts_with("# AGENTS.md instructions") {
+        return Some("filtered: AGENTS.md instructions");
+    }
+    if text.contains("<INSTRUCTIONS>") {
+        return Some("filtered: INSTRUCTIONS tags");
+    }
+    None
+}
+
 /// Extract text content from a Codex payload's content blocks
 fn extract_text_content(payload: &Value) -> String {
     let content = match payload.get("content") {
@@ -1352,8 +1365,28 @@ fn convert_codex_entry_with_debug(
 
     match entry_type {
         "event_msg" => {
-            // Skip event_msg entries - user messages are already in response_item
             let payload_type = payload.get("type").and_then(|t| t.as_str());
+            if payload_type == Some("user_message") {
+                let text = payload
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .unwrap_or("");
+                if text.is_empty() {
+                    return (None, "SKIP", "empty user_message text".to_string());
+                }
+                if let Some(reason) = codex_text_skip_reason(text) {
+                    return (None, "SKIP", reason.to_string());
+                }
+                let preview = truncate_preview(text, 60);
+                let display = MessageDisplay::User {
+                    content: text.to_string(),
+                };
+                return (
+                    Some(display.to_chat_message()),
+                    "INCLUDE",
+                    format!("event_msg user_message: \"{}\"", preview),
+                );
+            }
             (None, "SKIP", format!("event_msg type={:?}", payload_type))
         }
 
@@ -1419,14 +1452,8 @@ fn convert_codex_entry_with_debug(
             }
 
             // Filter system content
-            if text.contains("<environment_context>") {
-                return (None, "SKIP", "filtered: environment_context".to_string());
-            }
-            if text.starts_with("# AGENTS.md instructions") {
-                return (None, "SKIP", "filtered: AGENTS.md instructions".to_string());
-            }
-            if text.contains("<INSTRUCTIONS>") {
-                return (None, "SKIP", "filtered: INSTRUCTIONS tags".to_string());
+            if let Some(reason) = codex_text_skip_reason(&text) {
+                return (None, "SKIP", reason.to_string());
             }
 
             let preview = truncate_preview(&text, 60);
@@ -1536,13 +1563,31 @@ mod tests {
     }
 
     #[test]
-    fn test_event_msg_skipped() {
-        // event_msg entries are skipped - user messages come from response_item
+    fn test_event_msg_user_message_included() {
         let entry = serde_json::json!({
             "type": "event_msg",
             "payload": {
                 "type": "user_message",
                 "message": "Can you inspect the git log?"
+            }
+        });
+        let function_calls = HashMap::new();
+
+        let (msg, status, _reason) = convert_codex_entry_with_debug(&entry, &function_calls);
+        assert_eq!(status, "INCLUDE");
+        let msg = msg.unwrap();
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content, "Can you inspect the git log?");
+    }
+
+    #[test]
+    fn test_event_msg_non_user_message_skipped() {
+        let entry = serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "input_tokens": 12,
+                "output_tokens": 34
             }
         });
         let function_calls = HashMap::new();

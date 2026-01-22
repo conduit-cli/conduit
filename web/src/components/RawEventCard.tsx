@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { ChevronRight, Copy, Check, FileText, Wrench, MessageSquare, AlertCircle, Zap, Database, History } from 'lucide-react';
 import type { AgentEvent } from '../types';
 import { cn } from '../lib/cn';
+import { copyText } from '../lib/clipboard';
 
 interface RawEventCardProps {
   event: AgentEvent;
@@ -333,7 +334,7 @@ export function RawEventCard({ event, index, defaultExpanded = false }: RawEvent
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await navigator.clipboard.writeText(jsonString);
+      await copyText(jsonString);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {

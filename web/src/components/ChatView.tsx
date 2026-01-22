@@ -989,12 +989,10 @@ export function ChatView({
           </div>
         </div>
         <div className="flex items-center gap-3">
-        {(isProcessing || isLoadingHistory || isLoadingMore) && (
+        {(isLoadingHistory || isLoadingMore) && (
           <div className="flex items-center gap-2 text-sm text-text-muted">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span>
-              {isLoadingHistory || isLoadingMore ? 'Loading history...' : 'Processing...'}
-            </span>
+            <span>Loading history...</span>
           </div>
         )}
 

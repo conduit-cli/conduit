@@ -1,12 +1,6 @@
 import { memo } from 'react';
 import { cn } from '../lib/cn';
-import {
-  Sparkles,
-  Brain,
-  FileCode2,
-  AlertTriangle,
-  Loader2,
-} from 'lucide-react';
+import { Sparkles, Brain, FileCode2, AlertTriangle } from 'lucide-react';
 import type { AgentEvent } from '../types';
 import { MarkdownBody } from './markdown';
 import { TerminalOutput } from './TerminalOutput';
@@ -116,12 +110,7 @@ export const ChatMessage = memo(function ChatMessage({ event }: ChatMessageProps
       );
 
     case 'TurnStarted':
-      return (
-        <div className="flex items-center justify-center gap-2 py-2 text-xs text-text-muted">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          <span>Processing...</span>
-        </div>
-      );
+      return null;
 
     case 'TurnCompleted':
       return (

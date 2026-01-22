@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { cn } from '../../lib/cn';
+import { copyText } from '../../lib/clipboard';
 
 interface CopyButtonProps {
   text: string;
@@ -12,7 +13,7 @@ export function CopyButton({ text, className }: CopyButtonProps) {
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {

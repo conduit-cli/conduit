@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { X, Loader2, FileText } from 'lucide-react';
+import { X, FileText } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useProcessingSessions } from '../hooks';
 import type { Session, Workspace, FileViewerTab } from '../types';
@@ -139,36 +139,34 @@ export function SessionTabs({
                 {tabShortcutPrefix}{index + 1}
               </span>
             )}
-            {isProcessing ? (
-              <span className="ml-1 p-0.5" aria-label="Processing">
-                <Loader2 className="h-3 w-3 animate-spin text-text-muted" />
-              </span>
-            ) : (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
+            <span
+              role="button"
+              tabIndex={isProcessing ? -1 : 0}
+              aria-disabled={isProcessing}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isProcessing) return;
+                onCloseSession(session.id);
+              }}
+              onKeyDown={(e) => {
+                if (isProcessing) return;
+                if (e.key === 'Enter' || e.key === ' ') {
                   e.stopPropagation();
+                  e.preventDefault();
                   onCloseSession(session.id);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    onCloseSession(session.id);
-                  }
-                }}
-                className={cn(
-                  'ml-1 rounded-full p-0.5 transition-colors',
-                  'opacity-0 group-hover:opacity-100',
-                  'hover:bg-surface hover:text-text',
-                  isActive && 'opacity-100'
-                )}
-                aria-label={`Close ${label}`}
-              >
-                <X className="h-3 w-3" />
-              </span>
-            )}
+                }
+              }}
+              className={cn(
+                'ml-1 rounded-full p-0.5 transition-colors',
+                'opacity-0 group-hover:opacity-100',
+                'hover:bg-surface hover:text-text',
+                isActive && 'opacity-100',
+                isProcessing && 'cursor-not-allowed opacity-30'
+              )}
+              aria-label={`Close ${label}`}
+            >
+              <X className="h-3 w-3" />
+            </span>
           </button>
         );
       })}
