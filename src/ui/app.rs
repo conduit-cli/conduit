@@ -793,7 +793,7 @@ impl App {
                 tab.fork_seed_id = session.fork_seed_id;
                 // Preserve AI-generated session title
                 tab.title = session.title.clone();
-                tab.title_generated = session.title.is_some();
+                tab.title_generated = false;
                 tab
             })
             .collect();
