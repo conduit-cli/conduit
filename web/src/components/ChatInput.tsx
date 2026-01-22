@@ -18,6 +18,7 @@ interface ChatInputProps {
   placeholder?: string;
   focusKey?: string | null;
   history?: string[];
+  notice?: string | null;
   // Session/workspace info for status line
   modelDisplayName?: string | null;
   agentType?: 'claude' | 'codex' | 'gemini' | null;
@@ -47,6 +48,7 @@ export function ChatInput({
   placeholder = 'Type a message...',
   focusKey,
   history = [],
+  notice,
   modelDisplayName,
   agentType,
   agentMode,
@@ -202,6 +204,11 @@ export function ChatInput({
 
   return (
     <div className="border-t border-border bg-surface p-4">
+      {notice && (
+        <div className="mb-2 text-xs text-text-muted">
+          {notice}
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <textarea

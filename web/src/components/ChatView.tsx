@@ -32,7 +32,7 @@ import type {
   QueuedMessage,
   ImageAttachment,
 } from '../types';
-import { MessageSquarePlus, Loader2, Bug, GitBranch, GitPullRequest } from 'lucide-react';
+import { MessageSquarePlus, Loader2, Bug, GitBranch, GitPullRequest, Square } from 'lucide-react';
 import { cn } from '../lib/cn';
 
 interface ChatViewProps {
@@ -43,6 +43,8 @@ interface ChatViewProps {
 }
 
 const INLINE_PROMPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const ESC_DOUBLE_PRESS_TIMEOUT_MS = 500;
+const ESC_INTERRUPT_MESSAGE = 'Press Esc again to interrupt';
 
 type ImageDraft = {
   id: string;
@@ -186,7 +188,7 @@ export function ChatView({
   const isPinnedToBottom = useRef(true);
   const scrollStateBySession = useRef<Record<string, { top: number; pinned: boolean }>>({});
   const scrollSessionId = useRef<string | null>(null);
-  const { sendPrompt, respondToControl } = useWebSocket();
+  const { sendPrompt, respondToControl, stopSession } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
   const setDefaultModelMutation = useSetDefaultModel();
@@ -213,6 +215,7 @@ export function ChatView({
   const [pendingControlResponse, setPendingControlResponse] = useState<unknown | null>(null);
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [escHint, setEscHint] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, string[]>>({});
   const [attachmentsBySession, setAttachmentsBySession] = useState<Record<string, ImageDraft[]>>(
@@ -222,6 +225,8 @@ export function ChatView({
   const lastHistoryEventCount = useRef<Record<string, number>>({});
   const [historyRawEvents, setHistoryRawEvents] = useState<AgentEvent[]>([]);
   const rawEvents = useRawSessionEvents(session?.id ?? null, true);
+  const lastEscPressRef = useRef<number | null>(null);
+  const escTimeoutRef = useRef<number | null>(null);
 
   const historyLimit = 200;
   const hasMoreHistory = historyOffset > 0;
@@ -361,7 +366,24 @@ export function ChatView({
     setPendingControlResponse(null);
     setShowRawEvents(false);
     setIsAwaitingResponse(false);
+    setEscHint(null);
+    lastEscPressRef.current = null;
+    if (escTimeoutRef.current !== null) {
+      window.clearTimeout(escTimeoutRef.current);
+      escTimeoutRef.current = null;
+    }
   }, [session?.id]);
+
+  const clearEscHint = useCallback(() => {
+    if (escTimeoutRef.current !== null) {
+      window.clearTimeout(escTimeoutRef.current);
+      escTimeoutRef.current = null;
+    }
+    lastEscPressRef.current = null;
+    setEscHint(null);
+  }, []);
+
+  useEffect(() => () => clearEscHint(), [clearEscHint]);
 
 
   useEffect(() => {
@@ -370,14 +392,36 @@ export function ChatView({
         event.preventDefault();
         setShowRawEvents((prev) => !prev);
       }
-      if (event.key === 'Escape' && showRawEvents) {
-        setShowRawEvents(false);
+      if (event.key === 'Escape') {
+        if (showRawEvents) {
+          setShowRawEvents(false);
+          return;
+        }
+        if (event.defaultPrevented) return;
+        if (!session?.id || !(isProcessing || isAwaitingResponse)) return;
+        if (document.querySelector('dialog[open]')) return;
+        event.preventDefault();
+        const now = Date.now();
+        const lastPress = lastEscPressRef.current;
+        if (lastPress && now - lastPress < ESC_DOUBLE_PRESS_TIMEOUT_MS) {
+          stopSession(session.id);
+          clearEscHint();
+          return;
+        }
+        lastEscPressRef.current = now;
+        setEscHint(ESC_INTERRUPT_MESSAGE);
+        if (escTimeoutRef.current !== null) {
+          window.clearTimeout(escTimeoutRef.current);
+        }
+        escTimeoutRef.current = window.setTimeout(() => {
+          clearEscHint();
+        }, ESC_DOUBLE_PRESS_TIMEOUT_MS);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showRawEvents]);
+  }, [showRawEvents, session?.id, isProcessing, isAwaitingResponse, stopSession, clearEscHint]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -876,6 +920,7 @@ export function ChatView({
   const queuedMessages = queueData?.messages ?? [];
   const canSendQueued = !!session && !!workspace && !isProcessing;
   const currentAttachments = session ? attachmentsBySession[session.id] ?? [] : [];
+  const canStop = isProcessing || isAwaitingResponse;
 
   const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
     if (!session) return;
@@ -907,6 +952,12 @@ export function ChatView({
     updateSessionMutation.mutate({ id: session.id, data: { agent_mode: nextMode } });
   }, [effectiveAgentMode, session, updateSessionMutation]);
 
+  const handleStopSession = useCallback(() => {
+    if (!session?.id) return;
+    stopSession(session.id);
+    clearEscHint();
+  }, [session?.id, stopSession, clearEscHint]);
+
   // Keyboard shortcut for toggling plan mode (Ctrl+Shift+P)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -921,6 +972,12 @@ export function ChatView({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [canChangeMode, handleToggleAgentMode]);
+
+  useEffect(() => {
+    if (!canStop) {
+      clearEscHint();
+    }
+  }, [canStop, clearEscHint]);
 
   // Loading session state (when workspace is selected but session is being created/fetched)
   if (isLoadingSession) {
@@ -1027,6 +1084,21 @@ export function ChatView({
           </button>
 
           <button
+            onClick={handleStopSession}
+            disabled={!canStop}
+            className={cn(
+              'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
+              canStop
+                ? 'text-text-muted hover:bg-surface-elevated hover:text-text'
+                : 'cursor-not-allowed opacity-50 text-text-muted'
+            )}
+            aria-label="Stop session"
+          >
+            <Square className="h-3.5 w-3.5" />
+            Stop
+          </button>
+
+          <button
             onClick={() => setShowRawEvents((prev) => !prev)}
             className={cn(
               'flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors',
@@ -1120,6 +1192,7 @@ export function ChatView({
         placeholder={isProcessing ? 'Waiting for response...' : 'Type a message...'}
         focusKey={session?.id ?? null}
         history={userMessageHistory}
+        notice={escHint}
         modelDisplayName={session?.model_display_name}
         agentType={session?.agent_type}
         agentMode={session?.agent_type === 'claude' ? effectiveAgentMode : undefined}
