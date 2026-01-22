@@ -68,6 +68,11 @@ function applyTabOrder(sessions: Session[], order: string[]): Session[] {
   return [...ordered, ...missing];
 }
 
+function findExistingSessionForWorkspace(sessions: Session[], workspaceId: string): Session | null {
+  // Sessions are already in UI tab order (after tab_order + tab_index sorting).
+  return sessions.find((session) => session.workspace_id === workspaceId) ?? null;
+}
+
 function parseGitHubRepo(repoUrl: string): string | null {
   if (!repoUrl) return null;
   if (repoUrl.startsWith('git@')) {
@@ -296,12 +301,7 @@ function AppContent() {
     setSelectedWorkspaceId(workspace.id);
 
     // If we already have an open session tab for this workspace, focus it.
-    const existing = orderedSessions
-      .filter((session) => session.workspace_id === workspace.id)
-      .reduce<Session | null>(
-        (best, session) => (best && best.tab_index > session.tab_index ? best : session),
-        null
-      );
+    const existing = findExistingSessionForWorkspace(orderedSessions, workspace.id);
 
     if (existing) {
       handleSelectSession(existing);
@@ -642,12 +642,7 @@ function AppContent() {
       return;
     }
 
-    const existing = orderedSessions
-      .filter((session) => session.workspace_id === selectedWorkspaceId)
-      .reduce<Session | null>(
-        (best, session) => (best && best.tab_index > session.tab_index ? best : session),
-        null
-      );
+    const existing = findExistingSessionForWorkspace(orderedSessions, selectedWorkspaceId);
 
     if (existing) {
       handleSelectSession(existing);
