@@ -2554,7 +2554,7 @@ impl App {
                         for ws in workspaces {
                             workspace_ids.push(ws.id);
                             let mut archived_commit_sha = None;
-                            if let (Some(ref base_path), Some(settings)) =
+                            if let (Some(base_path), Some(settings)) =
                                 (repo_base_path.as_ref(), repo_settings)
                             {
                                 match worktree_manager.get_branch_sha(
@@ -3485,9 +3485,7 @@ impl App {
 
     /// Schedule the workspace creation process for a repository.
     fn start_workspace_creation(&mut self, repo_id: uuid::Uuid) -> Option<Effect> {
-        let Some(repo_dao) = self.repo_dao() else {
-            return None;
-        };
+        let repo_dao = self.repo_dao()?;
 
         let Ok(Some(repo)) = repo_dao.get_by_id(repo_id) else {
             tracing::error!(repo_id = %repo_id, "Repository not found");
