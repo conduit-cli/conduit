@@ -204,11 +204,13 @@ impl WorkspaceRepoManager {
             std::fs::create_dir_all(parent)?;
         }
 
+        // Use the parent directory of the repo for cloning (works even for root-level repos).
+        let base_dir = repo_path.parent().unwrap_or(repo_path);
         let output = Command::new("git")
             .args(["clone", "--no-hardlinks", "--"])
             .arg(repo_path)
             .arg(&workspace_path)
-            .current_dir(repo_path.parent().unwrap_or(repo_path))
+            .current_dir(base_dir)
             .output()?;
 
         if !output.status.success() {
@@ -273,11 +275,13 @@ impl WorkspaceRepoManager {
             std::fs::create_dir_all(parent)?;
         }
 
+        // Use the parent directory of the repo for cloning (works even for root-level repos).
+        let base_dir = repo_path.parent().unwrap_or(repo_path);
         let output = Command::new("git")
             .args(["clone", "--no-hardlinks", "--"])
             .arg(repo_path)
             .arg(&workspace_path)
-            .current_dir(repo_path.parent().unwrap_or(repo_path))
+            .current_dir(base_dir)
             .output()?;
 
         if !output.status.success() {

@@ -101,7 +101,7 @@
 # Configure default workspace behavior (per repository overrides available in UI).
 #
 # [workspaces]
-# # default_mode = "worktree"     # "worktree" (default) or "checkout"
+# # mode = "worktree"             # "worktree" (default) or "checkout"
 # # archive_delete_branch = true  # delete local branch on archive
 # # archive_remote_prompt = true  # prompt for remote deletion on archive
 #
