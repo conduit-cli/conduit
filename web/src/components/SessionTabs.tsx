@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { X, FileText } from 'lucide-react';
+import { X, FileText, Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { useProcessingSessions } from '../hooks';
+import { useProcessingSessions, useUnseenSessions } from '../hooks';
 import type { Session, Workspace, FileViewerTab } from '../types';
 
 interface SessionTabsProps {
@@ -55,6 +55,7 @@ export function SessionTabs({
   onCloseFileViewer,
 }: SessionTabsProps) {
   const processingSessionIds = useProcessingSessions();
+  const unseenSessionIds = useUnseenSessions();
 
   useEffect(() => {
     if (sessions.length === 0) return;
@@ -111,6 +112,31 @@ export function SessionTabs({
         const label = sessionLabel(session, workspaces);
         const isActive = session.id === activeSessionId && !activeFileViewerId;
         const isProcessing = processingSessionIds.has(session.id);
+        const hasUnseen = unseenSessionIds.has(session.id) && !isActive;
+
+        // Render tab indicator with priority: processing > unseen > agent type
+        const renderIndicator = () => {
+          if (isProcessing) {
+            return <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-500" />;
+          }
+          if (hasUnseen) {
+            return <span className="h-2 w-2 rounded-full bg-green-500" />;
+          }
+          // Default: agent type indicator
+          return (
+            <span
+              className={cn(
+                'h-2 w-2 rounded-full',
+                session.agent_type === 'claude'
+                  ? 'bg-orange-400'
+                  : session.agent_type === 'codex'
+                  ? 'bg-green-400'
+                  : 'bg-blue-400'
+              )}
+            />
+          );
+        };
+
         return (
           <button
             key={session.id}
@@ -123,16 +149,7 @@ export function SessionTabs({
                 : 'text-text-muted hover:bg-surface-elevated hover:text-text'
             )}
           >
-            <span
-              className={cn(
-                'h-2 w-2 rounded-full',
-                session.agent_type === 'claude'
-                  ? 'bg-orange-400'
-                  : session.agent_type === 'codex'
-                  ? 'bg-green-400'
-                  : 'bg-blue-400'
-              )}
-            />
+            {renderIndicator()}
             <span className="max-w-36 truncate">{label}</span>
             {index < 9 && (
               <span className="ml-0.5 text-[10px] text-text-muted/50 tabular-nums">

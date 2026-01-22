@@ -9,6 +9,8 @@ interface WebSocketContextValue {
   ws: ConduitWebSocket;
   connectionState: ConnectionState;
   processingSessionIds: Set<string>;
+  unseenSessionIds: Set<string>;
+  clearUnseenSession: (sessionId: string) => void;
   sendInput: (
     sessionId: string,
     input: string,
@@ -45,6 +47,8 @@ interface WebSocketProviderProps {
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [processingSessionIds, setProcessingSessionIds] = useState<Set<string>>(new Set());
+  const [unseenSessionIds, setUnseenSessionIds] = useState<Set<string>>(new Set());
+  const activeSessionIdRef = useRef<string | null>(null);
   const runningSessionsRef = useRef(new Set<string>());
   const pendingPromptsRef = useRef(
     new Map<
@@ -85,6 +89,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
             next.delete(message.session_id);
             return next;
           });
+          // Mark session as having unseen content if it's not the active session
+          if (message.session_id !== activeSessionIdRef.current) {
+            setUnseenSessionIds((prev) => {
+              const next = new Set(prev);
+              next.add(message.session_id);
+              return next;
+            });
+          }
         }
       }
 
@@ -168,10 +180,22 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     [ws]
   );
 
+  const clearUnseenSession = useCallback((sessionId: string) => {
+    activeSessionIdRef.current = sessionId;
+    setUnseenSessionIds((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+
   const value: WebSocketContextValue = {
     ws,
     connectionState,
     processingSessionIds,
+    unseenSessionIds,
+    clearUnseenSession,
     sendInput,
     sendPrompt,
     startSession,
@@ -201,6 +225,18 @@ export function useWebSocketConnection(): ConnectionState {
 export function useProcessingSessions(): Set<string> {
   const { processingSessionIds } = useWebSocket();
   return processingSessionIds;
+}
+
+// Hook for accessing which sessions have unseen content
+export function useUnseenSessions(): Set<string> {
+  const { unseenSessionIds } = useWebSocket();
+  return unseenSessionIds;
+}
+
+// Hook for clearing unseen state when viewing a session
+export function useClearUnseenSession(): (sessionId: string) => void {
+  const { clearUnseenSession } = useWebSocket();
+  return clearUnseenSession;
 }
 
 // Hook for subscribing to session events

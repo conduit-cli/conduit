@@ -38,6 +38,7 @@ import {
   useUpdateRepositorySettings,
   useWorkspaceActions,
   useUpdateSession,
+  useClearUnseenSession,
 } from './hooks';
 import type { Repository, Workspace, Session, SessionEvent, AgentEvent, WorkspaceMode } from './types';
 
@@ -122,6 +123,7 @@ function AppContent() {
   const { data: uiState } = useUiState({ enabled: !!bootstrap });
   const updateUiState = useUpdateUiState();
   const closeSession = useCloseSession();
+  const clearUnseenSession = useClearUnseenSession();
   const archiveWorkspace = useArchiveWorkspace();
   const autoCreateWorkspace = useAutoCreateWorkspace();
   const updateRepositorySettings = useUpdateRepositorySettings();
@@ -269,6 +271,13 @@ function AppContent() {
     if (!activeSessionId || resolvedUiState?.active_session_id === activeSessionId) return;
     updateUiState.mutate({ active_session_id: activeSessionId });
   }, [activeSessionId, resolvedUiState?.active_session_id, updateUiState]);
+
+  // Clear unseen indicator when switching to a session
+  useEffect(() => {
+    if (activeSessionId) {
+      clearUnseenSession(activeSessionId);
+    }
+  }, [activeSessionId, clearUnseenSession]);
 
   useEffect(() => {
     if (!activeSessionId) {
