@@ -571,10 +571,12 @@ impl ChatView {
         }
 
         // Update previous message's spacing if needed (it may have changed)
-        if !self.messages.is_empty() && self.cache_width.is_some() {
-            let prev_idx = self.messages.len() - 1;
-            self.invalidate_cache_entry(prev_idx);
-            self.update_cache_entry(prev_idx, self.cache_width.unwrap());
+        if !self.messages.is_empty() {
+            if let Some(width) = self.cache_width {
+                let prev_idx = self.messages.len() - 1;
+                self.invalidate_cache_entry(prev_idx);
+                self.update_cache_entry(prev_idx, width);
+            }
         }
 
         self.messages.push(message);
@@ -667,10 +669,12 @@ impl ChatView {
             self.streaming_joiner_before = None;
 
             // Update previous message's spacing if needed
-            if !self.messages.is_empty() && self.cache_width.is_some() {
-                let prev_idx = self.messages.len() - 1;
-                self.invalidate_cache_entry(prev_idx);
-                self.update_cache_entry(prev_idx, self.cache_width.unwrap());
+            if !self.messages.is_empty() {
+                if let Some(width) = self.cache_width {
+                    let prev_idx = self.messages.len() - 1;
+                    self.invalidate_cache_entry(prev_idx);
+                    self.update_cache_entry(prev_idx, width);
+                }
             }
 
             self.messages.push(ChatMessage::assistant(content));
