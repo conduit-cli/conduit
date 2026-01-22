@@ -185,6 +185,7 @@ export function ChatView({
   const isPrependingHistory = useRef(false);
   const isPinnedToBottom = useRef(true);
   const scrollStateBySession = useRef<Record<string, { top: number; pinned: boolean }>>({});
+  const scrollSessionId = useRef<string | null>(null);
   const { sendPrompt, respondToControl } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
@@ -313,23 +314,25 @@ export function ChatView({
     const container = scrollContainerRef.current;
     if (!container) return;
 
+    const sessionId = session?.id ?? null;
+
     const updatePinnedState = () => {
       const distanceFromBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
       const pinned = distanceFromBottom < 48;
       isPinnedToBottom.current = pinned;
 
-      if (session?.id && hasInitiallyScrolled) {
-        scrollStateBySession.current[session.id] = {
-          top: container.scrollTop,
-          pinned,
-        };
-      }
+      // Ignore scroll persistence until the initial scroll restoration has completed for this session.
+      if (!sessionId || scrollSessionId.current !== sessionId) return;
+      scrollStateBySession.current[sessionId] = {
+        top: container.scrollTop,
+        pinned,
+      };
     };
 
     updatePinnedState();
     container.addEventListener('scroll', updatePinnedState, { passive: true });
     return () => container.removeEventListener('scroll', updatePinnedState);
-  }, [session?.id, hasInitiallyScrolled]);
+  }, [session?.id]);
 
   // Track processing state based on websocket events
   useEffect(() => {
@@ -401,6 +404,7 @@ export function ChatView({
   // Reset scroll state when session changes
   useEffect(() => {
     setHasInitiallyScrolled(false);
+    scrollSessionId.current = null;
   }, [session?.id]);
 
   useEffect(() => {
@@ -468,6 +472,9 @@ export function ChatView({
       } else {
         container.scrollTop = container.scrollHeight;
         isPinnedToBottom.current = true;
+      }
+      if (session?.id) {
+        scrollSessionId.current = session.id;
       }
       setHasInitiallyScrolled(true);
       return;
