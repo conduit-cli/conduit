@@ -70,8 +70,7 @@ impl RepositoryStore {
 
         let repos = stmt
             .query_map([], Self::row_to_repository)?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<SqliteResult<Vec<_>>>()?;
 
         Ok(repos)
     }
