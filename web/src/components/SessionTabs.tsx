@@ -19,8 +19,15 @@ interface SessionTabsProps {
 }
 
 function sessionLabel(session: Session, workspaces: Workspace[]): string {
+  const workspace = session.workspace_id
+    ? workspaces.find((w) => w.id === session.workspace_id)
+    : undefined;
+
+  if (workspace && session.title) {
+    return `${workspace.name} · ${session.title}`;
+  }
+
   if (session.title) return session.title;
-  const workspace = workspaces.find((w) => w.id === session.workspace_id);
   if (workspace) return workspace.name;
   return `Session ${session.tab_index + 1}`;
 }

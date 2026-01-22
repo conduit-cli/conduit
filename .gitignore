@@ -6,3 +6,8 @@
 /tests/e2e/screenshots/*.png
 /tests/e2e/artifacts/
 /termwright-artifacts
+
+# Local debug screenshots (agent-browser, manual repros)
+/after-click-*.png
+/open-new-tab.png
+/web-ui.png

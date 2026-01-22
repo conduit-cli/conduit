@@ -110,9 +110,19 @@ impl SessionTabStore {
     /// Get all session tabs ordered by tab_index
     pub fn get_all(&self) -> SqliteResult<Vec<SessionTab>> {
         let conn = self.conn.lock().unwrap();
+        // Hide sessions that belong to archived workspaces. (Archived workspaces should have their
+        // sessions closed, but older DBs may still contain "open" sessions pointing at archived
+        // workspaces.)
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title
-             FROM session_tabs WHERE is_open = 1 ORDER BY tab_index",
+            "SELECT st.id, st.tab_index, st.is_open, st.workspace_id, st.agent_type, st.agent_mode, st.agent_session_id, st.model, st.pr_number, st.created_at, st.pending_user_message, st.queued_messages, st.input_history, st.fork_seed_id, st.title
+             FROM session_tabs st
+             LEFT JOIN workspaces w ON st.workspace_id = w.id
+             WHERE st.is_open = 1
+               AND (
+                 st.workspace_id IS NULL
+                 OR (w.id IS NOT NULL AND w.archived_at IS NULL)
+               )
+             ORDER BY st.tab_index",
         )?;
 
         let tabs = stmt

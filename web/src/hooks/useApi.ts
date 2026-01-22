@@ -309,6 +309,24 @@ export function useAutoCreateWorkspace() {
   });
 }
 
+// Get or create session for a workspace (explicit action)
+export function useGetOrCreateWorkspaceSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (workspaceId: string) => api.getOrCreateWorkspaceSession(workspaceId),
+    onSuccess: (session) => {
+      // Optimistically add/update the session so the UI can switch immediately.
+      queryClient.setQueryData(queryKeys.session(session.id), session);
+      queryClient.setQueryData<Session[]>(queryKeys.sessions, (prev) => {
+        const sessions = prev ?? [];
+        const without = sessions.filter((s) => s.id !== session.id);
+        return [...without, session];
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+    },
+  });
+}
+
 // Get or create session for a workspace
 // This auto-creates a session if one doesn't exist, matching TUI behavior
 export function useWorkspaceSession(

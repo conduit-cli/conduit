@@ -184,6 +184,7 @@ export function ChatView({
   const pendingScrollAdjustment = useRef<{ previousHeight: number; previousTop: number } | null>(null);
   const isPrependingHistory = useRef(false);
   const isPinnedToBottom = useRef(true);
+  const scrollStateBySession = useRef<Record<string, { top: number; pinned: boolean }>>({});
   const { sendPrompt, respondToControl } = useWebSocket();
   const wsEvents = useSessionEvents(session?.id ?? null);
   const updateSessionMutation = useUpdateSession();
@@ -314,13 +315,21 @@ export function ChatView({
 
     const updatePinnedState = () => {
       const distanceFromBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
-      isPinnedToBottom.current = distanceFromBottom < 48;
+      const pinned = distanceFromBottom < 48;
+      isPinnedToBottom.current = pinned;
+
+      if (session?.id && hasInitiallyScrolled) {
+        scrollStateBySession.current[session.id] = {
+          top: container.scrollTop,
+          pinned,
+        };
+      }
     };
 
     updatePinnedState();
     container.addEventListener('scroll', updatePinnedState, { passive: true });
     return () => container.removeEventListener('scroll', updatePinnedState);
-  }, []);
+  }, [session?.id, hasInitiallyScrolled]);
 
   // Track processing state based on websocket events
   useEffect(() => {
@@ -447,12 +456,20 @@ export function ChatView({
     if (isPrependingHistory.current) return;
 
     const container = scrollContainerRef.current;
+    const saved = session?.id ? scrollStateBySession.current[session.id] : undefined;
 
     // Initial scroll when history loads - instant, no animation
     if ((historyEvents.length > 0 || wsEvents.length > 0 || optimisticUserMessages.length > 0) && !hasInitiallyScrolled) {
-      container.scrollTop = container.scrollHeight;
+      if (saved) {
+        container.scrollTop = saved.pinned
+          ? container.scrollHeight
+          : Math.min(saved.top, container.scrollHeight);
+        isPinnedToBottom.current = saved.pinned;
+      } else {
+        container.scrollTop = container.scrollHeight;
+        isPinnedToBottom.current = true;
+      }
       setHasInitiallyScrolled(true);
-      isPinnedToBottom.current = true;
       return;
     }
 

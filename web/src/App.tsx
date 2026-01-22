@@ -27,7 +27,7 @@ import {
   useWorkspaceStatus,
   useSessionEventsFromApi,
   useSessionEvents,
-  useWorkspaceSession,
+  useGetOrCreateWorkspaceSession,
   useCloseSession,
   useOnboardingBaseDir,
   useWorkspaceArchivePreflight,
@@ -124,8 +124,6 @@ function AppContent() {
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [autoCreateEnabled, setAutoCreateEnabled] = useState(true);
-  const [suppressedWorkspaceIds, setSuppressedWorkspaceIds] = useState<Set<string>>(new Set());
   const [historyReady, setHistoryReady] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -165,13 +163,7 @@ function AppContent() {
     activeWorkspace ??
     resolvedWorkspaces.find((workspace) => workspace.id === selectedWorkspaceId) ??
     null;
-  const allowAutoCreate =
-    autoCreateEnabled &&
-    (!selectedWorkspaceId || !suppressedWorkspaceIds.has(selectedWorkspaceId));
-  const {
-    data: workspaceSession,
-    isLoading: isLoadingWorkspaceSession,
-  } = useWorkspaceSession(selectedWorkspaceId, { enabled: allowAutoCreate });
+  const openWorkspaceSession = useGetOrCreateWorkspaceSession();
 
   const wsEvents = useSessionEvents(activeSessionId);
   const { data: historyEvents = [] } = useSessionEventsFromApi(activeSessionId, {
@@ -182,7 +174,7 @@ function AppContent() {
     () => latestUsageFromEvents(wsEvents, historyEvents),
     [wsEvents, historyEvents]
   );
-  const isLoadingSession = isLoadingWorkspaceSession && !activeSessionId;
+  const isLoadingSession = openWorkspaceSession.isPending && !activeSessionId;
   const { data: archivePreflight } = useWorkspaceArchivePreflight(
     archiveWorkspaceTarget?.id ?? null,
     { enabled: !!archiveWorkspaceTarget }
@@ -241,18 +233,6 @@ function AppContent() {
   }, [bootstrap, activeSessionId, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!autoCreateEnabled) return;
-    if (!selectedWorkspaceId || !workspaceSession) return;
-    if (workspaceSession.workspace_id !== selectedWorkspaceId) return;
-    if (workspaceSession.id === activeSessionId) return;
-    setActiveSessionId(workspaceSession.id);
-    updateUiState.mutate({
-      active_session_id: workspaceSession.id,
-      last_workspace_id: selectedWorkspaceId,
-    });
-  }, [activeSessionId, autoCreateEnabled, selectedWorkspaceId, updateUiState, workspaceSession]);
-
-  useEffect(() => {
     if (activeSessionId || orderedSessions.length === 0 || !resolvedUiState) return;
     const preferred =
       resolvedUiState.active_session_id &&
@@ -300,19 +280,7 @@ function AppContent() {
     updateUiState.mutate({ last_workspace_id: activeSession.workspace_id });
   }, [activeSessionId, activeSession?.workspace_id, selectedWorkspaceId, updateUiState]);
 
-  const handleSelectWorkspace = (workspace: Workspace) => {
-    setAutoCreateEnabled(true);
-    setSuppressedWorkspaceIds((prev) => {
-      if (!prev.has(workspace.id)) return prev;
-      const next = new Set(prev);
-      next.delete(workspace.id);
-      return next;
-    });
-    setSelectedWorkspaceId(workspace.id);
-  };
-
   const handleSelectSession = (session: Session) => {
-    setAutoCreateEnabled(true);
     setActiveSessionId(session.id);
     setActiveFileViewerId(null); // Deselect file viewer when selecting session
     updateUiState.mutate({
@@ -320,14 +288,34 @@ function AppContent() {
       last_workspace_id: session.workspace_id ?? null,
     });
     if (session.workspace_id) {
-      setSuppressedWorkspaceIds((prev) => {
-        if (!prev.has(session.workspace_id!)) return prev;
-        const next = new Set(prev);
-        next.delete(session.workspace_id!);
-        return next;
-      });
       setSelectedWorkspaceId(session.workspace_id);
     }
+  };
+
+  const handleSelectWorkspace = (workspace: Workspace) => {
+    setSelectedWorkspaceId(workspace.id);
+
+    // If we already have an open session tab for this workspace, focus it.
+    const existing = orderedSessions
+      .filter((session) => session.workspace_id === workspace.id)
+      .reduce<Session | null>(
+        (best, session) => (best && best.tab_index > session.tab_index ? best : session),
+        null
+      );
+
+    if (existing) {
+      handleSelectSession(existing);
+      return;
+    }
+
+    // Otherwise explicitly open/reopen a session for this workspace.
+    setActiveFileViewerId(null);
+    setActiveSessionId(null);
+    openWorkspaceSession.mutate(workspace.id, {
+      onSuccess: (session) => {
+        handleSelectSession(session);
+      },
+    });
   };
 
   const handleOpenFile = useCallback((filePath: string, workspaceId: string) => {
@@ -394,13 +382,6 @@ function AppContent() {
     const currentIndex = orderedSessions.findIndex((s) => s.id === sessionId);
     const isActiveTab = sessionId === activeSessionId;
     const sessionToClose = orderedSessions.find((session) => session.id === sessionId) ?? null;
-    if (sessionToClose?.workspace_id) {
-      setSuppressedWorkspaceIds((prev) => {
-        const next = new Set(prev);
-        next.add(sessionToClose.workspace_id!);
-        return next;
-      });
-    }
 
     if (isActiveTab) {
       if (orderedSessions.length > 1) {
@@ -416,7 +397,6 @@ function AppContent() {
         }
       } else {
         // Last tab
-        setAutoCreateEnabled(false);
         setActiveSessionId(null);
         updateUiState.mutate({ active_session_id: null });
       }
@@ -471,13 +451,6 @@ function AppContent() {
           setSelectedWorkspaceId(null);
           updateUiState.mutate({ last_workspace_id: null });
         }
-
-        setSuppressedWorkspaceIds((prev) => {
-          if (!prev.has(workspaceId)) return prev;
-          const next = new Set(prev);
-          next.delete(workspaceId);
-          return next;
-        });
 
         setArchiveWorkspaceTarget(null);
         setArchiveRemotePromptTarget(null);
@@ -571,7 +544,6 @@ function AppContent() {
             });
             setSelectedWorkspaceId(next.workspace_id ?? null);
           } else {
-            setAutoCreateEnabled(false);
             setActiveSessionId(null);
             updateUiState.mutate({ active_session_id: null });
           }
@@ -582,15 +554,6 @@ function AppContent() {
           setSelectedWorkspaceId(null);
           updateUiState.mutate({ last_workspace_id: null });
         }
-
-        // Clean up suppressed workspace IDs
-        setSuppressedWorkspaceIds((prev) => {
-          const next = new Set(prev);
-          for (const wsId of affectedWorkspaceIds) {
-            next.delete(wsId);
-          }
-          return next.size !== prev.size ? next : prev;
-        });
 
         setRemoveRepositoryTarget(null);
       },
@@ -679,7 +642,25 @@ function AppContent() {
       return;
     }
 
-    setAutoCreateEnabled(true);
+    const existing = orderedSessions
+      .filter((session) => session.workspace_id === selectedWorkspaceId)
+      .reduce<Session | null>(
+        (best, session) => (best && best.tab_index > session.tab_index ? best : session),
+        null
+      );
+
+    if (existing) {
+      handleSelectSession(existing);
+      return;
+    }
+
+    setActiveFileViewerId(null);
+    setActiveSessionId(null);
+    openWorkspaceSession.mutate(selectedWorkspaceId, {
+      onSuccess: (session) => {
+        handleSelectSession(session);
+      },
+    });
   };
 
   const handleOpenImport = () => {

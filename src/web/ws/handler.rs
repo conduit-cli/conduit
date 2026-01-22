@@ -24,7 +24,7 @@ use super::messages::{ClientMessage, ImageAttachment, ServerMessage};
 struct ActiveSession {
     agent_type: AgentType,
     /// Process ID for stopping the agent
-    pid: u32,
+    pid: Option<u32>,
     /// Sender to broadcast events to all subscribers
     event_tx: broadcast::Sender<AgentEvent>,
     /// Input sender for sending follow-up messages
@@ -114,7 +114,10 @@ impl SessionManager {
         // Check if session already exists
         {
             let sessions = self.sessions.read().await;
-            if sessions.contains_key(&session_id) {
+            if sessions
+                .get(&session_id)
+                .is_some_and(|existing| existing.pid.is_some())
+            {
                 return Err(format!("Session {} is already running", session_id));
             }
         }
@@ -152,25 +155,37 @@ impl SessionManager {
             .await
             .map_err(|e| format!("Failed to start agent: {}", e))?;
 
-        // Create broadcast channel for events
-        let (event_tx, event_rx) = broadcast::channel(256);
-
         let pid = handle.pid;
         let input_tx = handle.input_tx.take();
 
-        // Store the session (without handle, we'll own the events receiver in the spawn)
-        {
+        // Reuse an existing event channel if we already have one (e.g. if the UI subscribed
+        // before the session started). This prevents "Session <id> not found" errors when
+        // selecting non-running session tabs.
+        let (event_tx, event_rx) = {
             let mut sessions = self.sessions.write().await;
-            sessions.insert(
-                session_id,
-                ActiveSession {
-                    agent_type,
-                    pid,
-                    event_tx: event_tx.clone(),
-                    input_tx,
-                },
-            );
-        }
+            if let Some(existing) = sessions.get_mut(&session_id) {
+                // Another start could have raced us.
+                if existing.pid.is_some() {
+                    return Err(format!("Session {} is already running", session_id));
+                }
+                existing.agent_type = agent_type;
+                existing.pid = Some(pid);
+                existing.input_tx = input_tx;
+                (existing.event_tx.clone(), existing.event_tx.subscribe())
+            } else {
+                let (event_tx, event_rx) = broadcast::channel(256);
+                sessions.insert(
+                    session_id,
+                    ActiveSession {
+                        agent_type,
+                        pid: Some(pid),
+                        event_tx: event_tx.clone(),
+                        input_tx,
+                    },
+                );
+                (event_tx, event_rx)
+            }
+        };
 
         // Spawn task to forward events from agent to broadcast channel
         let sessions_ref = self.sessions.clone();
@@ -212,12 +227,45 @@ impl SessionManager {
         &self,
         session_id: Uuid,
     ) -> Result<broadcast::Receiver<AgentEvent>, String> {
-        let sessions = self.sessions.read().await;
-        if let Some(session) = sessions.get(&session_id) {
-            Ok(session.event_tx.subscribe())
-        } else {
-            Err(format!("Session {} not found", session_id))
+        // If the session is running (or already has a channel), subscribe immediately.
+        {
+            let sessions = self.sessions.read().await;
+            if let Some(session) = sessions.get(&session_id) {
+                return Ok(session.event_tx.subscribe());
+            }
         }
+
+        // Otherwise, validate the session exists in the DB and create an idle channel so the UI
+        // can safely subscribe without showing an error.
+        let store = {
+            let core = self.core.read().await;
+            core.session_tab_store_clone()
+                .ok_or_else(|| "Database not available".to_string())?
+        };
+
+        let tab = store
+            .get_by_id(session_id)
+            .map_err(|e| format!("Failed to get session {}: {}", session_id, e))?
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+        let (event_tx, event_rx) = broadcast::channel(256);
+        let mut sessions = self.sessions.write().await;
+        // Another subscribe/start could have raced us.
+        if let Some(existing) = sessions.get(&session_id) {
+            return Ok(existing.event_tx.subscribe());
+        }
+
+        sessions.insert(
+            session_id,
+            ActiveSession {
+                agent_type: tab.agent_type,
+                pid: None,
+                event_tx,
+                input_tx: None,
+            },
+        );
+
+        Ok(event_rx)
     }
 
     /// Stop a running session.
@@ -228,49 +276,53 @@ impl SessionManager {
             #[cfg(unix)]
             {
                 use std::process::Command;
-                match Command::new("kill")
-                    .arg("-TERM")
-                    .arg(session.pid.to_string())
-                    .status()
-                {
-                    Ok(status) if status.success() => {}
-                    Ok(status) => {
-                        tracing::warn!(
-                            pid = session.pid,
-                            exit_status = ?status.code(),
-                            "Failed to terminate session process with kill"
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %err,
-                            pid = session.pid,
-                            "Failed to execute kill for session process"
-                        );
+                if let Some(pid) = session.pid {
+                    match Command::new("kill")
+                        .arg("-TERM")
+                        .arg(pid.to_string())
+                        .status()
+                    {
+                        Ok(status) if status.success() => {}
+                        Ok(status) => {
+                            tracing::warn!(
+                                pid,
+                                exit_status = ?status.code(),
+                                "Failed to terminate session process with kill"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                pid,
+                                "Failed to execute kill for session process"
+                            );
+                        }
                     }
                 }
             }
             #[cfg(windows)]
             {
                 use std::process::Command;
-                match Command::new("taskkill")
-                    .args(["/PID", &session.pid.to_string(), "/F"])
-                    .status()
-                {
-                    Ok(status) if status.success() => {}
-                    Ok(status) => {
-                        tracing::warn!(
-                            pid = session.pid,
-                            exit_status = ?status.code(),
-                            "Failed to terminate session process with taskkill"
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %err,
-                            pid = session.pid,
-                            "Failed to execute taskkill for session process"
-                        );
+                if let Some(pid) = session.pid {
+                    match Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/F"])
+                        .status()
+                    {
+                        Ok(status) if status.success() => {}
+                        Ok(status) => {
+                            tracing::warn!(
+                                pid,
+                                exit_status = ?status.code(),
+                                "Failed to terminate session process with taskkill"
+                            );
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                pid,
+                                "Failed to execute taskkill for session process"
+                            );
+                        }
                     }
                 }
             }
@@ -560,7 +612,9 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         });
 
                         let mut subs = subscriptions.write().await;
-                        subs.insert(session_id, task);
+                        if let Some(existing) = subs.insert(session_id, task) {
+                            existing.abort();
+                        }
 
                         if let Err(send_err) =
                             tx.send(ServerMessage::Subscribed { session_id }).await
@@ -820,7 +874,9 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         });
 
                         let mut subs = subscriptions.write().await;
-                        subs.insert(session_id, task);
+                        if let Some(existing) = subs.insert(session_id, task) {
+                            existing.abort();
+                        }
 
                         if let Err(send_err) = tx
                             .send(ServerMessage::session_started(session_id, agent_type, None))
