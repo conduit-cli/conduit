@@ -191,6 +191,7 @@ impl SessionService {
             None,
         );
         session.title = params.title;
+        session.title_generated = session.title.is_some();
 
         let session = store
             .create_with_next_index(session)

@@ -212,6 +212,8 @@ pub struct SessionTab {
     pub fork_seed_id: Option<Uuid>,
     /// AI-generated session title/description
     pub title: Option<String>,
+    /// Whether a title has already been generated and persisted
+    pub title_generated: bool,
 }
 
 impl SessionTab {
@@ -240,6 +242,7 @@ impl SessionTab {
             input_history: Vec::new(),
             fork_seed_id: None,
             title: None,
+            title_generated: false,
         }
     }
 }

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     input_history TEXT NOT NULL DEFAULT '[]',
     fork_seed_id TEXT,
     title TEXT,
+    title_generated INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 );
 
@@ -416,7 +417,28 @@ CREATE TABLE IF NOT EXISTS fork_seeds_new (
             )?;
         }
 
-        // Migration 11: Add workspace mode + archive settings to repositories table
+        // Migration 11: Add title_generated column to session_tabs table
+        let has_title_generated: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='title_generated'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_title_generated {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN title_generated INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "UPDATE session_tabs SET title_generated = 1 WHERE title IS NOT NULL",
+            [],
+        )?;
+
+        // Migration 12: Add workspace mode + archive settings to repositories table
         let has_workspace_mode: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name='workspace_mode'",

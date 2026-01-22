@@ -423,7 +423,7 @@ impl SessionManager {
 }
 
 fn should_generate_title(hidden: bool, session: &crate::data::SessionTab) -> bool {
-    !hidden && session.title.is_none() && session.agent_session_id.is_none()
+    !hidden && session.title.is_none() && !session.title_generated
 }
 
 async fn generate_title_and_branch_for_session(
@@ -450,7 +450,7 @@ async fn generate_title_and_branch_for_session(
         .map_err(|e| format!("Failed to load session {}: {}", session_id, e))?
         .ok_or_else(|| format!("Session {} not found for title generation", session_id))?;
 
-    if session.title.is_some() || session.agent_session_id.is_some() {
+    if session.title.is_some() || session.title_generated {
         return Ok(None);
     }
 
@@ -586,6 +586,7 @@ async fn generate_title_and_branch_for_session(
 
     let sanitized_title = app_prompt::sanitize_title(&metadata.title);
     session.title = Some(sanitized_title.clone());
+    session.title_generated = true;
     if let Err(err) = session_store.update(&session) {
         tracing::warn!(
             error = %err,
