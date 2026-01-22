@@ -427,30 +427,26 @@ mod tests {
     use tempfile::tempdir;
 
     fn init_git_repo(path: &Path) -> std::io::Result<()> {
-        Command::new("git")
-            .args(["init"])
-            .current_dir(path)
-            .output()?;
+        fn run_git_checked(path: &Path, args: &[&str]) -> std::io::Result<()> {
+            let output = Command::new("git").args(args).current_dir(path).output()?;
+            if output.status.success() {
+                return Ok(());
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("git {:?} failed: {}{}", args, stdout, stderr),
+            ))
+        }
 
-        Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(path)
-            .output()?;
-
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(path)
-            .output()?;
+        run_git_checked(path, &["init"])?;
+        run_git_checked(path, &["config", "user.email", "test@test.com"])?;
+        run_git_checked(path, &["config", "user.name", "Test"])?;
 
         std::fs::write(path.join("README.md"), "# Test")?;
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(path)
-            .output()?;
-        Command::new("git")
-            .args(["commit", "-m", "Initial commit"])
-            .current_dir(path)
-            .output()?;
+        run_git_checked(path, &["add", "."])?;
+        run_git_checked(path, &["commit", "-m", "Initial commit"])?;
 
         Ok(())
     }

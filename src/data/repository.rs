@@ -144,9 +144,23 @@ impl RepositoryStore {
         let created_at_str: String = row.get(7)?;
         let updated_at_str: String = row.get(8)?;
 
-        let workspace_mode = workspace_mode_raw
-            .as_deref()
-            .and_then(|value| WorkspaceMode::from_str(value).ok());
+        let workspace_mode = match workspace_mode_raw {
+            None => None,
+            Some(value) => {
+                let parsed = WorkspaceMode::from_str(&value).map_err(|_| {
+                    let err = std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Invalid workspace_mode '{}'", value),
+                    );
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(err),
+                    )
+                })?;
+                Some(parsed)
+            }
+        };
 
         Ok(Repository {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
@@ -175,7 +189,11 @@ impl RepositoryStore {
     ) -> SqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE repositories SET workspace_mode = ?2, archive_delete_branch = ?3, archive_remote_prompt = ?4, updated_at = ?5
+            "UPDATE repositories
+             SET workspace_mode = COALESCE(?2, workspace_mode),
+                 archive_delete_branch = COALESCE(?3, archive_delete_branch),
+                 archive_remote_prompt = COALESCE(?4, archive_remote_prompt),
+                 updated_at = ?5
              WHERE id = ?1",
             params![
                 id.to_string(),
