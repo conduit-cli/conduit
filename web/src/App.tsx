@@ -299,6 +299,7 @@ function AppContent() {
 
   const handleSelectWorkspace = (workspace: Workspace) => {
     setSelectedWorkspaceId(workspace.id);
+    updateUiState.mutate({ last_workspace_id: workspace.id });
 
     // If we already have an open session tab for this workspace, focus it.
     const existing = findExistingSessionForWorkspace(orderedSessions, workspace.id);

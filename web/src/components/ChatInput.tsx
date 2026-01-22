@@ -205,7 +205,11 @@ export function ChatInput({
   return (
     <div className="border-t border-border bg-surface p-4">
       {notice && (
-        <div className="mb-2 text-xs text-text-muted">
+        <div
+          className="mb-2 text-xs text-text-muted"
+          role="status"
+          aria-live="polite"
+        >
           {notice}
         </div>
       )}
@@ -216,6 +220,7 @@ export function ChatInput({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            data-chat-input="true"
             placeholder={placeholder}
             disabled={effectiveInputDisabled}
             rows={1}

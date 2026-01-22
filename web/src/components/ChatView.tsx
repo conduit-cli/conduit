@@ -400,6 +400,17 @@ export function ChatView({
         if (event.defaultPrevented) return;
         if (!session?.id || !(isProcessing || isAwaitingResponse)) return;
         if (document.querySelector('dialog[open]')) return;
+        const activeElement = document.activeElement;
+        const targetElement = event.target as HTMLElement | null;
+        const isChatInputFocused =
+          activeElement instanceof HTMLTextAreaElement &&
+          activeElement.dataset.chatInput === 'true';
+        const isWithinChatView =
+          (targetElement instanceof HTMLElement &&
+            targetElement.closest('[data-chat-view-root]') !== null) ||
+          (activeElement instanceof HTMLElement &&
+            activeElement.closest('[data-chat-view-root]') !== null);
+        if (!isChatInputFocused && !isWithinChatView) return;
         event.preventDefault();
         const now = Date.now();
         const lastPress = lastEscPressRef.current;
@@ -1014,7 +1025,7 @@ export function ChatView({
   }
 
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="relative flex h-full flex-col" data-chat-view-root>
       {/* Session header */}
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
