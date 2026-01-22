@@ -156,11 +156,6 @@ pub async fn list_repository_workspaces(
         }
     }
 
-    // Get workspaces for the repository
-    let workspace_store = core
-        .workspace_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
     let workspaces = workspace_store
         .get_by_repository(repository_id)
         .map_err(|e| WebError::Internal(format!("Failed to list workspaces: {}", e)))?;
