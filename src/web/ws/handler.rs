@@ -533,12 +533,17 @@ async fn generate_title_and_branch_for_session(
                                 match dao.get_by_id(ws_id) {
                                     Ok(Some(mut ws)) => {
                                         ws.branch = new_branch_name.clone();
-                                        if let Err(err) = dao.update(&ws) {
-                                            tracing::warn!(
-                                                error = %err,
-                                                workspace_id = %ws_id,
-                                                "Failed to persist branch rename to database"
-                                            );
+                                        match dao.update(&ws) {
+                                            Ok(()) => {
+                                                new_branch = Some(new_branch_name.clone());
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(
+                                                    error = %err,
+                                                    workspace_id = %ws_id,
+                                                    "Failed to persist branch rename to database"
+                                                );
+                                            }
                                         }
                                     }
                                     Ok(None) => {
@@ -556,7 +561,6 @@ async fn generate_title_and_branch_for_session(
                                     }
                                 }
                             }
-                            new_branch = Some(new_branch_name);
                         }
                         Ok(Err(err)) => {
                             tracing::warn!(
@@ -588,6 +592,10 @@ async fn generate_title_and_branch_for_session(
             %session_id,
             "Failed to persist session title"
         );
+        return Err(format!(
+            "Failed to persist session title for {}: {}",
+            session_id, err
+        ));
     }
 
     Ok(Some(TitleGenerationOutcome {
