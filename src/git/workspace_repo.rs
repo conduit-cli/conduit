@@ -202,7 +202,7 @@ impl WorkspaceRepoManager {
         }
 
         // Use the parent directory of the repo for cloning (works even for root-level repos).
-        let base_dir = repo_path.parent().unwrap_or(repo_path);
+        let base_dir = repo_path.parent().unwrap_or(Path::new("."));
         let output = Command::new("git")
             .args(["clone", "--no-hardlinks", "--"])
             .arg(repo_path)
@@ -274,7 +274,7 @@ impl WorkspaceRepoManager {
         }
 
         // Use the parent directory of the repo for cloning (works even for root-level repos).
-        let base_dir = repo_path.parent().unwrap_or(repo_path);
+        let base_dir = repo_path.parent().unwrap_or(Path::new("."));
         let output = Command::new("git")
             .args(["clone", "--no-hardlinks", "--"])
             .arg(repo_path)
