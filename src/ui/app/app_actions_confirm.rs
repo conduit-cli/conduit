@@ -17,7 +17,9 @@ impl App {
                     match node.node_type {
                         NodeType::Action(ActionType::NewWorkspace) => {
                             if let Some(parent_id) = node.parent_id {
-                                effects.push(self.start_workspace_creation(parent_id));
+                                if let Some(effect) = self.start_workspace_creation(parent_id) {
+                                    effects.push(effect);
+                                }
                             }
                         }
                         NodeType::Workspace => {
@@ -129,26 +131,100 @@ impl App {
                 }
             }
             InputMode::Confirming => {
-                if self.state.confirmation_dialog_state.is_confirm_selected() {
-                    if let Some(context) = self.state.confirmation_dialog_state.context.clone() {
-                        match context {
-                            ConfirmationContext::ArchiveWorkspace(id) => {
-                                effects.push(self.execute_archive_workspace(id));
+                if let Some(context) = self.state.confirmation_dialog_state.context.clone() {
+                    match context {
+                        ConfirmationContext::SelectWorkspaceMode { repo_id } => {
+                            let mode = if self.state.confirmation_dialog_state.is_confirm_selected()
+                            {
+                                crate::git::WorkspaceMode::Worktree
+                            } else {
+                                crate::git::WorkspaceMode::Checkout
+                            };
+                            match self.apply_repo_workspace_mode(repo_id, mode) {
+                                Ok(()) => {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.state.input_mode = InputMode::SidebarNavigation;
+                                    if let Some(effect) = self.start_workspace_creation(repo_id) {
+                                        effects.push(effect);
+                                    }
+                                }
+                                Err(err) => {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.show_error("Unable to Set Workspace Mode", &err);
+                                }
+                            }
+                            return Ok(());
+                        }
+                        ConfirmationContext::ArchiveWorkspaceRemoteDelete { workspace_id } => {
+                            let delete_remote =
+                                self.state.confirmation_dialog_state.is_confirm_selected();
+                            effects
+                                .push(self.execute_archive_workspace(workspace_id, delete_remote));
+                            self.state.confirmation_dialog_state.hide();
+                            self.state.input_mode = InputMode::SidebarNavigation;
+                            return Ok(());
+                        }
+                        ConfirmationContext::ArchiveWorkspace(id) => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
+                                if let Some((workspace, settings, base_path)) =
+                                    self.resolve_workspace_settings(id)
+                                {
+                                    if settings.archive_delete_branch
+                                        && settings.archive_remote_prompt
+                                    {
+                                        let should_prompt = match base_path.as_ref() {
+                                            Some(path) => match self
+                                                .worktree_manager()
+                                                .remote_branch_exists(path, &workspace.branch)
+                                            {
+                                                Ok(true) => true,
+                                                Ok(false) => false,
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        error = %err,
+                                                        workspace_id = %workspace.id,
+                                                        branch = %workspace.branch,
+                                                        "Failed to check remote branch existence"
+                                                    );
+                                                    false
+                                                }
+                                            },
+                                            None => false,
+                                        };
+                                        if should_prompt {
+                                            self.prompt_archive_remote_delete(&workspace);
+                                            return Ok(());
+                                        }
+                                    }
+                                } else {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.show_error(
+                                        "Archive Failed",
+                                        "Workspace or repository not found.",
+                                    );
+                                    return Ok(());
+                                }
+
+                                effects.push(self.execute_archive_workspace(id, false));
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::SidebarNavigation;
                                 return Ok(());
                             }
-                            ConfirmationContext::RemoveProject(id) => {
+                        }
+                        ConfirmationContext::RemoveProject(id) => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
                                 effects.push(self.execute_remove_project(id));
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::SidebarNavigation;
                                 return Ok(());
                             }
-                            ConfirmationContext::CreatePullRequest {
-                                tab_index,
-                                working_dir,
-                                preflight,
-                            } => {
+                        }
+                        ConfirmationContext::CreatePullRequest {
+                            tab_index,
+                            working_dir,
+                            preflight,
+                        } => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
                                 effects.extend(self.submit_pr_workflow(
@@ -158,22 +234,28 @@ impl App {
                                 )?);
                                 return Ok(());
                             }
-                            ConfirmationContext::OpenExistingPr { working_dir, .. } => {
+                        }
+                        ConfirmationContext::OpenExistingPr { working_dir, .. } => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
                                 effects.push(Effect::OpenPrInBrowser { working_dir });
                                 return Ok(());
                             }
-                            ConfirmationContext::SteerFallback { message_id } => {
+                        }
+                        ConfirmationContext::SteerFallback { message_id } => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
                                 effects.extend(self.confirm_steer_fallback(message_id)?);
                                 return Ok(());
                             }
-                            ConfirmationContext::ForkSession {
-                                parent_workspace_id,
-                                base_branch,
-                            } => {
+                        }
+                        ConfirmationContext::ForkSession {
+                            parent_workspace_id,
+                            base_branch,
+                        } => {
+                            if self.state.confirmation_dialog_state.is_confirm_selected() {
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::Normal;
                                 if let Some(effect) =

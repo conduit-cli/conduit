@@ -29,6 +29,10 @@ pub enum WebError {
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),
+
+    /// Conflict error (e.g., resource state mismatch).
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 /// Error response body.
@@ -66,6 +70,7 @@ impl IntoResponse for WebError {
                     Some(msg.clone()),
                 )
             }
+            WebError::Conflict(msg) => (StatusCode::CONFLICT, "Conflict", Some(msg.clone())),
         };
 
         let body = Json(ErrorResponse {

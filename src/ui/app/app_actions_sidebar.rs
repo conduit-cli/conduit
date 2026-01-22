@@ -47,7 +47,9 @@ impl App {
                         match node.node_type {
                             NodeType::Action(ActionType::NewWorkspace) => {
                                 if let Some(parent_id) = node.parent_id {
-                                    effects.push(self.start_workspace_creation(parent_id));
+                                    if let Some(effect) = self.start_workspace_creation(parent_id) {
+                                        effects.push(effect);
+                                    }
                                 }
                             }
                             NodeType::Workspace => {

@@ -29,6 +29,7 @@ pub enum Effect {
     },
     ArchiveWorkspace {
         workspace_id: Uuid,
+        delete_remote: bool,
     },
     RemoveProject {
         repo_id: Uuid,

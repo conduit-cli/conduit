@@ -32,12 +32,14 @@ import {
   useOnboardingBaseDir,
   useWorkspaceArchivePreflight,
   useArchiveWorkspace,
+  useAutoCreateWorkspace,
   useRepositoryRemovePreflight,
   useRemoveRepository,
+  useUpdateRepositorySettings,
   useWorkspaceActions,
   useUpdateSession,
 } from './hooks';
-import type { Repository, Workspace, Session, SessionEvent, AgentEvent } from './types';
+import type { Repository, Workspace, Session, SessionEvent, AgentEvent, WorkspaceMode } from './types';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -116,6 +118,8 @@ function AppContent() {
   const updateUiState = useUpdateUiState();
   const closeSession = useCloseSession();
   const archiveWorkspace = useArchiveWorkspace();
+  const autoCreateWorkspace = useAutoCreateWorkspace();
+  const updateRepositorySettings = useUpdateRepositorySettings();
   const updateSession = useUpdateSession();
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -129,7 +133,10 @@ function AppContent() {
   const [isProjectPickerOpen, setIsProjectPickerOpen] = useState(false);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [createWorkspaceRepo, setCreateWorkspaceRepo] = useState<Repository | null>(null);
+  const [workspaceModeTarget, setWorkspaceModeTarget] = useState<Repository | null>(null);
+  const [pendingWorkspaceRepoId, setPendingWorkspaceRepoId] = useState<string | null>(null);
   const [archiveWorkspaceTarget, setArchiveWorkspaceTarget] = useState<Workspace | null>(null);
+  const [archiveRemotePromptTarget, setArchiveRemotePromptTarget] = useState<Workspace | null>(null);
   const [removeRepositoryTarget, setRemoveRepositoryTarget] = useState<Repository | null>(null);
   const [fileViewerTabs, setFileViewerTabs] = useState<FileViewerTab[]>([]);
   const [activeFileViewerId, setActiveFileViewerId] = useState<string | null>(null);
@@ -185,6 +192,25 @@ function AppContent() {
     { enabled: !!removeRepositoryTarget }
   );
   const removeRepository = useRemoveRepository();
+  const archiveRepo = archiveWorkspaceTarget
+    ? resolvedRepositories.find((candidate) => candidate.id === archiveWorkspaceTarget.repository_id)
+    : null;
+  const archiveDescription = useMemo(() => {
+    if (!archiveRepo) return 'This will remove the workspace and delete the branch.';
+    const mode = archiveRepo.workspace_mode_effective;
+    const deleteBranch = archiveRepo.archive_delete_branch_effective;
+    const remotePrompt = archiveRepo.archive_remote_prompt_effective;
+
+    let description =
+      mode === 'checkout' ? 'This will remove the checkout.' : 'This will remove the worktree.';
+    if (deleteBranch) {
+      description += ' The local branch will be deleted.';
+    }
+    if (deleteBranch && remotePrompt) {
+      description += ' You will be asked about deleting the remote branch.';
+    }
+    return description;
+  }, [archiveRepo]);
 
   useEffect(() => {
     setHistoryReady(true);
@@ -408,9 +434,8 @@ function AppContent() {
     setArchiveWorkspaceTarget(workspace);
   };
 
-  const handleConfirmArchive = () => {
-    if (!archiveWorkspaceTarget) return;
-    const workspaceId = archiveWorkspaceTarget.id;
+  const performArchive = (workspace: Workspace, deleteRemote: boolean) => {
+    const workspaceId = workspace.id;
     const sessionIdsToRemove = orderedSessions
       .filter((session) => session.workspace_id === workspaceId)
       .map((session) => session.id);
@@ -418,7 +443,7 @@ function AppContent() {
       (session) => session.workspace_id !== workspaceId
     );
 
-    archiveWorkspace.mutate(workspaceId, {
+    archiveWorkspace.mutate({ id: workspaceId, delete_remote: deleteRemote }, {
       onSuccess: () => {
         if (sessionIdsToRemove.length > 0) {
           const newTabOrder = (resolvedUiState?.tab_order ?? []).filter(
@@ -455,8 +480,55 @@ function AppContent() {
         });
 
         setArchiveWorkspaceTarget(null);
+        setArchiveRemotePromptTarget(null);
       },
     });
+  };
+
+  const handleConfirmArchive = () => {
+    if (!archiveWorkspaceTarget) return;
+    const repo = resolvedRepositories.find(
+      (candidate) => candidate.id === archiveWorkspaceTarget.repository_id
+    );
+    const deleteBranch = repo?.archive_delete_branch_effective ?? true;
+    const remotePrompt = repo?.archive_remote_prompt_effective ?? true;
+    const remoteExists = archivePreflight?.remote_branch_exists;
+
+    if (deleteBranch && remotePrompt && remoteExists !== false) {
+      setArchiveRemotePromptTarget(archiveWorkspaceTarget);
+      setArchiveWorkspaceTarget(null);
+      return;
+    }
+
+    performArchive(archiveWorkspaceTarget, false);
+  };
+
+  const handleRemoteArchiveChoice = (deleteRemote: boolean) => {
+    if (!archiveRemotePromptTarget) return;
+    const target = archiveRemotePromptTarget;
+    setArchiveRemotePromptTarget(null);
+    performArchive(target, deleteRemote);
+  };
+
+  const handleSelectWorkspaceMode = (mode: WorkspaceMode) => {
+    if (!workspaceModeTarget) return;
+    const repoId = workspaceModeTarget.id;
+    updateRepositorySettings.mutate(
+      { id: repoId, data: { workspace_mode: mode } },
+      {
+        onSuccess: () => {
+          const pendingRepoId = pendingWorkspaceRepoId ?? repoId;
+          setWorkspaceModeTarget(null);
+          setPendingWorkspaceRepoId(null);
+          autoCreateWorkspace.mutate(pendingRepoId, {
+            onSuccess: (workspace) => {
+              setSelectedWorkspaceId(workspace.id);
+              updateUiState.mutate({ last_workspace_id: workspace.id });
+            },
+          });
+        },
+      }
+    );
   };
 
   const handleRemoveRepository = (repository: Repository) => {
@@ -912,6 +984,11 @@ function AppContent() {
           repositoryName={createWorkspaceRepo.name}
           isOpen={!!createWorkspaceRepo}
           onClose={() => setCreateWorkspaceRepo(null)}
+          onModeRequired={() => {
+            setPendingWorkspaceRepoId(createWorkspaceRepo.id);
+            setWorkspaceModeTarget(createWorkspaceRepo);
+            setCreateWorkspaceRepo(null);
+          }}
           onSuccess={(workspace) => {
             setCreateWorkspaceRepo(null);
             setSelectedWorkspaceId(workspace.id);
@@ -946,7 +1023,7 @@ function AppContent() {
         isOpen={!!archiveWorkspaceTarget}
         onClose={() => setArchiveWorkspaceTarget(null)}
         title={`Archive "${archiveWorkspaceTarget?.name ?? ''}"?`}
-        description="This will remove the worktree and delete the branch."
+        description={archiveDescription}
         confirmLabel="Archive"
         onConfirm={handleConfirmArchive}
         warnings={archivePreflight?.warnings}
@@ -959,6 +1036,18 @@ function AppContent() {
               ? 'warning'
               : 'info'
         }
+      />
+      <ConfirmDialog
+        isOpen={!!archiveRemotePromptTarget}
+        onClose={() => setArchiveRemotePromptTarget(null)}
+        title={`Delete remote branch for "${archiveRemotePromptTarget?.name ?? ''}"?`}
+        description={`Delete branch "${archiveRemotePromptTarget?.branch ?? ''}" from the remote repository?`}
+        confirmLabel="Delete Remote"
+        cancelLabel="Keep Remote"
+        onConfirm={() => handleRemoteArchiveChoice(true)}
+        onCancel={() => handleRemoteArchiveChoice(false)}
+        isPending={archiveWorkspace.isPending}
+        confirmVariant="warning"
       />
       <ConfirmDialog
         isOpen={!!removeRepositoryTarget}
@@ -976,6 +1065,21 @@ function AppContent() {
               ? 'warning'
               : 'info'
         }
+      />
+      <ConfirmDialog
+        isOpen={!!workspaceModeTarget}
+        onClose={() => {
+          setWorkspaceModeTarget(null);
+          setPendingWorkspaceRepoId(null);
+        }}
+        title={`Select workspace mode for "${workspaceModeTarget?.name ?? ''}"`}
+        description="Worktrees are lightweight and share git metadata. Checkouts create full clones for complete isolation."
+        confirmLabel="Use Worktrees"
+        cancelLabel="Use Checkouts"
+        onConfirm={() => handleSelectWorkspaceMode('worktree')}
+        onCancel={() => handleSelectWorkspaceMode('checkout')}
+        isPending={updateRepositorySettings.isPending || autoCreateWorkspace.isPending}
+        confirmVariant="info"
       />
     </FileViewerContext.Provider>
   );

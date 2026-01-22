@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::agent::AgentType;
+use crate::git::WorkspaceMode;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -49,6 +50,12 @@ pub struct Repository {
     pub base_path: Option<PathBuf>,
     /// Remote repository URL (for future cloning support)
     pub repository_url: Option<String>,
+    /// Workspace mode override (None = use config default)
+    pub workspace_mode: Option<WorkspaceMode>,
+    /// Whether to delete local branch on archive (None = config default)
+    pub archive_delete_branch: Option<bool>,
+    /// Whether to prompt for remote deletion on archive (None = config default)
+    pub archive_remote_prompt: Option<bool>,
     /// When the repository was added
     pub created_at: DateTime<Utc>,
     /// Last time the repository was modified
@@ -64,6 +71,9 @@ impl Repository {
             name: name.into(),
             base_path: Some(base_path),
             repository_url: None,
+            workspace_mode: None,
+            archive_delete_branch: None,
+            archive_remote_prompt: None,
             created_at: now,
             updated_at: now,
         }
@@ -77,9 +87,24 @@ impl Repository {
             name: name.into(),
             base_path: None,
             repository_url: Some(url.into()),
+            workspace_mode: None,
+            archive_delete_branch: None,
+            archive_remote_prompt: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn workspace_mode_or(&self, default: WorkspaceMode) -> WorkspaceMode {
+        self.workspace_mode.unwrap_or(default)
+    }
+
+    pub fn archive_delete_branch_or(&self, default: bool) -> bool {
+        self.archive_delete_branch.unwrap_or(default)
+    }
+
+    pub fn archive_remote_prompt_or(&self, default: bool) -> bool {
+        self.archive_remote_prompt.unwrap_or(default)
     }
 }
 

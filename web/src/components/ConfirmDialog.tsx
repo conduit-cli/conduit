@@ -7,7 +7,9 @@ interface ConfirmDialogProps {
   title: string;
   description: string;
   confirmLabel: string;
+  cancelLabel?: string;
   onConfirm: () => void;
+  onCancel?: () => void;
   onClose: () => void;
   warnings?: string[];
   error?: string | null;
@@ -26,7 +28,9 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
+  cancelLabel = 'Cancel',
   onConfirm,
+  onCancel,
   onClose,
   warnings,
   error,
@@ -106,11 +110,11 @@ export function ConfirmDialog({
 
       <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
         <button
-          onClick={onClose}
+          onClick={onCancel ?? onClose}
           disabled={isPending}
           className="rounded-lg px-4 py-2 text-sm font-medium text-text-muted transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50"
         >
-          Cancel
+          {cancelLabel}
         </button>
         <button
           onClick={onConfirm}

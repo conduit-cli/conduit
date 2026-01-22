@@ -15,8 +15,70 @@ impl App {
                 if self.state.input_mode == InputMode::Confirming {
                     if let Some(context) = self.state.confirmation_dialog_state.context.clone() {
                         match context {
+                            ConfirmationContext::SelectWorkspaceMode { repo_id } => {
+                                match self.apply_repo_workspace_mode(
+                                    repo_id,
+                                    crate::git::WorkspaceMode::Worktree,
+                                ) {
+                                    Ok(()) => {
+                                        self.state.confirmation_dialog_state.hide();
+                                        self.state.input_mode = InputMode::SidebarNavigation;
+                                        if let Some(effect) = self.start_workspace_creation(repo_id)
+                                        {
+                                            effects.push(effect);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        self.state.confirmation_dialog_state.hide();
+                                        self.show_error("Unable to Set Workspace Mode", &err);
+                                    }
+                                }
+                            }
                             ConfirmationContext::ArchiveWorkspace(id) => {
-                                effects.push(self.execute_archive_workspace(id));
+                                if let Some((workspace, settings, base_path)) =
+                                    self.resolve_workspace_settings(id)
+                                {
+                                    if settings.archive_delete_branch
+                                        && settings.archive_remote_prompt
+                                    {
+                                        let should_prompt = match base_path.as_ref() {
+                                            Some(path) => match self
+                                                .worktree_manager()
+                                                .remote_branch_exists(path, &workspace.branch)
+                                            {
+                                                Ok(true) => true,
+                                                Ok(false) => false,
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        error = %err,
+                                                        workspace_id = %workspace.id,
+                                                        branch = %workspace.branch,
+                                                        "Failed to check remote branch existence"
+                                                    );
+                                                    false
+                                                }
+                                            },
+                                            None => false,
+                                        };
+                                        if should_prompt {
+                                            self.prompt_archive_remote_delete(&workspace);
+                                            return Ok(());
+                                        }
+                                    }
+                                } else {
+                                    self.state.confirmation_dialog_state.hide();
+                                    self.show_error(
+                                        "Archive Failed",
+                                        "Workspace or repository not found.",
+                                    );
+                                    return Ok(());
+                                }
+                                effects.push(self.execute_archive_workspace(id, false));
+                                self.state.confirmation_dialog_state.hide();
+                                self.state.input_mode = InputMode::SidebarNavigation;
+                            }
+                            ConfirmationContext::ArchiveWorkspaceRemoteDelete { workspace_id } => {
+                                effects.push(self.execute_archive_workspace(workspace_id, true));
                                 self.state.confirmation_dialog_state.hide();
                                 self.state.input_mode = InputMode::SidebarNavigation;
                             }
@@ -66,7 +128,39 @@ impl App {
             }
             Action::ConfirmNo => {
                 if self.state.input_mode == InputMode::Confirming {
-                    self.state.input_mode = self.dismiss_confirmation_dialog();
+                    if let Some(context) = self.state.confirmation_dialog_state.context.clone() {
+                        match context {
+                            ConfirmationContext::SelectWorkspaceMode { repo_id } => {
+                                match self.apply_repo_workspace_mode(
+                                    repo_id,
+                                    crate::git::WorkspaceMode::Checkout,
+                                ) {
+                                    Ok(()) => {
+                                        self.state.confirmation_dialog_state.hide();
+                                        self.state.input_mode = InputMode::SidebarNavigation;
+                                        if let Some(effect) = self.start_workspace_creation(repo_id)
+                                        {
+                                            effects.push(effect);
+                                        }
+                                    }
+                                    Err(err) => {
+                                        self.state.confirmation_dialog_state.hide();
+                                        self.show_error("Unable to Set Workspace Mode", &err);
+                                    }
+                                }
+                            }
+                            ConfirmationContext::ArchiveWorkspaceRemoteDelete { workspace_id } => {
+                                effects.push(self.execute_archive_workspace(workspace_id, false));
+                                self.state.confirmation_dialog_state.hide();
+                                self.state.input_mode = InputMode::SidebarNavigation;
+                            }
+                            _ => {
+                                self.state.input_mode = self.dismiss_confirmation_dialog();
+                            }
+                        }
+                    } else {
+                        self.state.input_mode = self.dismiss_confirmation_dialog();
+                    }
                 }
             }
             Action::ConfirmToggle => {

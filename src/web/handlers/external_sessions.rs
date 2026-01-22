@@ -12,7 +12,7 @@ use crate::agent::AgentType;
 use crate::core::services::session_service::CreateImportedSessionParams;
 use crate::core::services::{ServiceError, SessionService};
 use crate::data::{Repository, Workspace};
-use crate::git::WorktreeManager;
+use crate::git::{WorkspaceMode, WorktreeManager};
 use crate::session::{discover_all_sessions, ExternalSession};
 use crate::util::names::{generate_branch_name, get_git_username};
 use crate::web::error::WebError;
@@ -131,7 +131,7 @@ pub async fn import_external_session(
         Json(ImportExternalSessionResponse {
             session: SessionResponse::from(session_tab),
             workspace: workspace.map(WorkspaceResponse::from),
-            repository: repository.map(RepositoryResponse::from),
+            repository: repository.map(|repo| RepositoryResponse::from_repo(repo, core.config())),
         }),
     ))
 }
@@ -182,7 +182,8 @@ fn ensure_workspace_for_external_session(
             .and_then(|n| n.to_str())
             .unwrap_or("Imported")
             .to_string();
-        let repo = Repository::from_local_path(name, repo_root.clone());
+        let mut repo = Repository::from_local_path(name, repo_root.clone());
+        repo.workspace_mode = Some(WorkspaceMode::Checkout);
         repo_store
             .create(&repo)
             .map_err(|e| WebError::Internal(format!("Failed to create repository: {}", e)))?;

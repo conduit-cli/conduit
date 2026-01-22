@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, PathBuf};
 use uuid::Uuid;
 
+use crate::core::resolve_repo_workspace_settings;
 use crate::data::Repository;
+use crate::git::WorkspaceMode;
 use crate::web::error::WebError;
 use crate::web::state::WebAppState;
 
@@ -20,17 +22,30 @@ pub struct RepositoryResponse {
     pub name: String,
     pub base_path: Option<String>,
     pub repository_url: Option<String>,
+    pub workspace_mode: Option<WorkspaceMode>,
+    pub workspace_mode_effective: WorkspaceMode,
+    pub archive_delete_branch: Option<bool>,
+    pub archive_delete_branch_effective: bool,
+    pub archive_remote_prompt: Option<bool>,
+    pub archive_remote_prompt_effective: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-impl From<Repository> for RepositoryResponse {
-    fn from(repo: Repository) -> Self {
+impl RepositoryResponse {
+    pub(crate) fn from_repo(repo: Repository, config: &crate::config::Config) -> Self {
+        let settings = resolve_repo_workspace_settings(config, &repo);
         Self {
             id: repo.id,
             name: repo.name,
             base_path: repo.base_path.map(|p| p.to_string_lossy().to_string()),
             repository_url: repo.repository_url,
+            workspace_mode: repo.workspace_mode,
+            workspace_mode_effective: settings.mode,
+            archive_delete_branch: repo.archive_delete_branch,
+            archive_delete_branch_effective: settings.archive_delete_branch,
+            archive_remote_prompt: repo.archive_remote_prompt,
+            archive_remote_prompt_effective: settings.archive_remote_prompt,
             created_at: repo.created_at.to_rfc3339(),
             updated_at: repo.updated_at.to_rfc3339(),
         }
@@ -51,6 +66,14 @@ pub struct CreateRepositoryRequest {
     pub repository_url: Option<String>,
 }
 
+/// Request to update repository workspace settings.
+#[derive(Debug, Deserialize)]
+pub struct UpdateRepositorySettingsRequest {
+    pub workspace_mode: Option<WorkspaceMode>,
+    pub archive_delete_branch: Option<bool>,
+    pub archive_remote_prompt: Option<bool>,
+}
+
 /// List all repositories.
 pub async fn list_repositories(
     State(state): State<WebAppState>,
@@ -59,13 +82,17 @@ pub async fn list_repositories(
     let store = core
         .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let config = core.config();
 
     let repos = store
         .get_all()
         .map_err(|e| WebError::Internal(format!("Failed to list repositories: {}", e)))?;
 
     Ok(Json(ListRepositoriesResponse {
-        repositories: repos.into_iter().map(RepositoryResponse::from).collect(),
+        repositories: repos
+            .into_iter()
+            .map(|repo| RepositoryResponse::from_repo(repo, config))
+            .collect(),
     }))
 }
 
@@ -78,13 +105,14 @@ pub async fn get_repository(
     let store = core
         .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let config = core.config();
 
     let repo = store
         .get_by_id(id)
         .map_err(|e| WebError::Internal(format!("Failed to get repository: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Repository {} not found", id)))?;
 
-    Ok(Json(RepositoryResponse::from(repo)))
+    Ok(Json(RepositoryResponse::from_repo(repo, config)))
 }
 
 /// Create a new repository.
@@ -119,12 +147,68 @@ pub async fn create_repository(
     let store = core
         .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let config = core.config();
 
     store
         .create(&repo)
         .map_err(|e| WebError::Internal(format!("Failed to create repository: {}", e)))?;
 
-    Ok((StatusCode::CREATED, Json(RepositoryResponse::from(repo))))
+    Ok((
+        StatusCode::CREATED,
+        Json(RepositoryResponse::from_repo(repo, config)),
+    ))
+}
+
+/// Update repository workspace settings.
+pub async fn update_repository_settings(
+    State(state): State<WebAppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateRepositorySettingsRequest>,
+) -> Result<Json<RepositoryResponse>, WebError> {
+    let core = state.core().await;
+    let repo_store = core
+        .repo_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let workspace_store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    let repo = repo_store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to get repository: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Repository {} not found", id)))?;
+
+    if let Some(mode) = req.workspace_mode {
+        let active_count = workspace_store
+            .count_active_by_repository(id)
+            .map_err(|e| WebError::Internal(format!("Failed to check workspaces: {}", e)))?;
+
+        if active_count > 0 && repo.workspace_mode != Some(mode) {
+            return Err(WebError::Conflict(
+                "workspace_mode_locked_active_workspaces".to_string(),
+            ));
+        }
+    }
+
+    let workspace_mode = req.workspace_mode.or(repo.workspace_mode);
+    let archive_delete_branch = req.archive_delete_branch.or(repo.archive_delete_branch);
+    let archive_remote_prompt = req.archive_remote_prompt.or(repo.archive_remote_prompt);
+
+    repo_store
+        .update_settings(
+            id,
+            workspace_mode,
+            archive_delete_branch,
+            archive_remote_prompt,
+        )
+        .map_err(|e| WebError::Internal(format!("Failed to update repository: {}", e)))?;
+
+    let updated = repo_store
+        .get_by_id(id)
+        .map_err(|e| WebError::Internal(format!("Failed to load repository: {}", e)))?
+        .ok_or_else(|| WebError::NotFound(format!("Repository {} not found", id)))?;
+
+    Ok(Json(RepositoryResponse::from_repo(updated, core.config())))
 }
 
 /// Delete a repository.
@@ -282,6 +366,7 @@ pub async fn remove_repository(
         .map_err(|e| WebError::Internal(format!("Failed to get workspaces: {}", e)))?;
 
     let worktree_manager = core.worktree_manager();
+    let settings = resolve_repo_workspace_settings(core.config(), &repo);
     let mut errors = Vec::new();
 
     // Process each workspace
@@ -290,7 +375,7 @@ pub async fn remove_repository(
 
         if let Some(ref base_path) = repo.base_path {
             // Get branch SHA
-            match worktree_manager.get_branch_sha(base_path, &ws.branch) {
+            match worktree_manager.get_branch_sha(settings.mode, base_path, &ws.path, &ws.branch) {
                 Ok(sha) => {
                     archived_commit_sha = Some(sha);
                 }
@@ -303,12 +388,14 @@ pub async fn remove_repository(
             }
 
             // Remove worktree
-            if let Err(e) = worktree_manager.remove_worktree(base_path, &ws.path) {
+            if let Err(e) = worktree_manager.remove_workspace(settings.mode, base_path, &ws.path) {
                 errors.push(format!("Failed to remove worktree '{}': {}", ws.name, e));
             }
 
             // Delete branch
-            if let Err(e) = worktree_manager.delete_branch(base_path, &ws.branch) {
+            if let Err(e) =
+                worktree_manager.delete_branch(settings.mode, base_path, &ws.path, &ws.branch)
+            {
                 errors.push(format!(
                     "Failed to delete branch '{}' for workspace '{}': {}",
                     ws.branch, ws.name, e

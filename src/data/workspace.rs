@@ -73,6 +73,26 @@ impl WorkspaceStore {
         Ok(workspaces)
     }
 
+    /// Count active (non-archived) workspaces for a repository
+    pub fn count_active_by_repository(&self, repository_id: Uuid) -> SqliteResult<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE repository_id = ?1 AND archived_at IS NULL",
+            params![repository_id.to_string()],
+            |row| row.get(0),
+        )
+    }
+
+    /// Count all workspaces (including archived) for a repository
+    pub fn count_all_by_repository(&self, repository_id: Uuid) -> SqliteResult<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE repository_id = ?1",
+            params![repository_id.to_string()],
+            |row| row.get(0),
+        )
+    }
+
     /// Get ALL workspace names for a repository (including archived)
     ///
     /// Used for uniqueness checks to prevent resurrection of old workspace names.

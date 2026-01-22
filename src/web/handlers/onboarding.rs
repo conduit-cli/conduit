@@ -188,7 +188,7 @@ pub async fn add_project(
         .map_err(|e| WebError::Internal(format!("Failed to check repositories: {e}")))?
     {
         return Ok(Json(AddProjectResponse {
-            repository: RepositoryResponse::from(existing),
+            repository: RepositoryResponse::from_repo(existing, core.config()),
         }));
     }
 
@@ -204,6 +204,6 @@ pub async fn add_project(
         .map_err(|e| WebError::Internal(format!("Failed to create repository: {e}")))?;
 
     Ok(Json(AddProjectResponse {
-        repository: RepositoryResponse::from(repo),
+        repository: RepositoryResponse::from_repo(repo, core.config()),
     }))
 }

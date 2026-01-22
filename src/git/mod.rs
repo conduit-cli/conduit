@@ -2,6 +2,8 @@
 
 mod pr;
 mod status;
+mod workspace_mode;
+mod workspace_repo;
 mod worktree;
 
 pub use pr::{
@@ -9,4 +11,6 @@ pub use pr::{
     PrState, PrStatus, ReviewDecision,
 };
 pub use status::GitDiffStats;
+pub use workspace_mode::WorkspaceMode;
+pub use workspace_repo::WorkspaceRepoManager;
 pub use worktree::{WorktreeInfo, WorktreeManager};

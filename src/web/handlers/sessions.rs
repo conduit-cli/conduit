@@ -12,6 +12,7 @@ use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentMode, AgentType,
     ModelRegistry,
 };
+use crate::core::resolve_repo_workspace_settings;
 use crate::core::services::session_service::CreateForkedSessionParams;
 use crate::core::services::{
     CreateSessionParams, ServiceError, SessionService, UpdateSessionParams,
@@ -502,6 +503,7 @@ pub async fn fork_session(
         .ok_or_else(|| WebError::BadRequest("Repository has no base path".to_string()))?;
 
     let worktree_manager = core.worktree_manager();
+    let settings = resolve_repo_workspace_settings(core.config(), &repo);
     let base_branch = worktree_manager
         .get_current_branch(&workspace.path)
         .unwrap_or_else(|_| workspace.branch.clone());
@@ -566,8 +568,14 @@ pub async fn fork_session(
     let branch_name = generate_branch_name(&get_git_username(), &workspace_name);
 
     let worktree_path = worktree_manager
-        .create_worktree_from_branch(&base_repo_path, &base_branch, &branch_name, &workspace_name)
-        .map_err(|e| WebError::Internal(format!("Failed to create worktree: {}", e)))?;
+        .create_workspace_from_branch(
+            settings.mode,
+            &base_repo_path,
+            &base_branch,
+            &branch_name,
+            &workspace_name,
+        )
+        .map_err(|e| WebError::Internal(format!("Failed to create workspace: {}", e)))?;
 
     let new_workspace = Workspace::new(
         workspace.repository_id,
@@ -577,7 +585,7 @@ pub async fn fork_session(
     );
     if let Err(e) = workspace_store.create(&new_workspace) {
         if let Err(cleanup_err) =
-            worktree_manager.remove_worktree(&base_repo_path, &new_workspace.path)
+            worktree_manager.remove_workspace(settings.mode, &base_repo_path, &new_workspace.path)
         {
             tracing::error!(
                 error = %cleanup_err,
@@ -586,7 +594,12 @@ pub async fn fork_session(
                 "Failed to clean up worktree after DB error"
             );
         }
-        if let Err(branch_err) = worktree_manager.delete_branch(&base_repo_path, &branch_name) {
+        if let Err(branch_err) = worktree_manager.delete_branch(
+            settings.mode,
+            &base_repo_path,
+            &new_workspace.path,
+            &branch_name,
+        ) {
             tracing::error!(
                 error = %branch_err,
                 base_path = %base_repo_path.display(),

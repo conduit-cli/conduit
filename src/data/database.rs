@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS repositories (
     name TEXT NOT NULL,
     base_path TEXT,
     repository_url TEXT,
+    workspace_mode TEXT,
+    archive_delete_branch INTEGER,
+    archive_remote_prompt INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -412,6 +415,57 @@ CREATE TABLE IF NOT EXISTS fork_seeds_new (
                 [],
             )?;
         }
+
+        // Migration 11: Add workspace mode + archive settings to repositories table
+        let has_workspace_mode: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name='workspace_mode'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_workspace_mode {
+            conn.execute(
+                "ALTER TABLE repositories ADD COLUMN workspace_mode TEXT",
+                [],
+            )?;
+        }
+
+        let has_archive_delete_branch: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name='archive_delete_branch'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_archive_delete_branch {
+            conn.execute(
+                "ALTER TABLE repositories ADD COLUMN archive_delete_branch INTEGER",
+                [],
+            )?;
+        }
+
+        let has_archive_remote_prompt: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name='archive_remote_prompt'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_archive_remote_prompt {
+            conn.execute(
+                "ALTER TABLE repositories ADD COLUMN archive_remote_prompt INTEGER",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "UPDATE repositories SET workspace_mode = 'worktree' WHERE workspace_mode IS NULL",
+            [],
+        )?;
 
         Ok(())
     }

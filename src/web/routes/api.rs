@@ -21,6 +21,10 @@ pub fn api_routes() -> Router<WebAppState> {
         .route("/repositories/{id}", get(repositories::get_repository))
         .route(
             "/repositories/{id}",
+            patch(repositories::update_repository_settings),
+        )
+        .route(
+            "/repositories/{id}",
             delete(repositories::delete_repository),
         )
         .route(

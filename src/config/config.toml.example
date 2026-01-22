@@ -94,6 +94,16 @@
 # selected_refresh_interval_ms = 5000
 # # Refresh interval (ms) for PR status on the selected workspace
 # pr_refresh_interval_ms = 60000
+
+# ============================================================================
+# Workspace Defaults
+# ============================================================================
+# Configure default workspace behavior (per repository overrides available in UI).
+#
+# [workspaces]
+# # default_mode = "worktree"     # "worktree" (default) or "checkout"
+# # archive_delete_branch = true  # delete local branch on archive
+# # archive_remote_prompt = true  # prompt for remote deletion on archive
 #
 # Configure paths to external tools if they are not in your PATH or if
 # you want to use a specific version. All paths are optional - by default,

@@ -52,6 +52,10 @@ pub enum ConfirmationContext {
         /// The branch to fork from (computed at dialog show time for consistency)
         base_branch: String,
     },
+    /// Selecting workspace mode for a repository
+    SelectWorkspaceMode { repo_id: Uuid },
+    /// Confirm whether to delete a remote branch after archive
+    ArchiveWorkspaceRemoteDelete { workspace_id: Uuid },
 }
 
 impl ConfirmationType {
@@ -159,6 +163,7 @@ impl ConfirmationDialogState {
         self.warnings = warnings;
         self.confirmation_type = confirmation_type;
         self.confirm_text = confirm_text.into();
+        self.cancel_text = "Cancel".to_string();
         self.selected = 0; // Default to Cancel for safety
         self.context = context;
     }

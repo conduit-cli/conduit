@@ -1,10 +1,18 @@
 // API types matching Rust backend
 
+export type WorkspaceMode = 'worktree' | 'checkout';
+
 export interface Repository {
   id: string;
   name: string;
   base_path: string | null;
   repository_url: string | null;
+  workspace_mode: WorkspaceMode | null;
+  workspace_mode_effective: WorkspaceMode;
+  archive_delete_branch: boolean | null;
+  archive_delete_branch_effective: boolean;
+  archive_remote_prompt: boolean | null;
+  archive_remote_prompt_effective: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -30,6 +38,7 @@ export interface ArchivePreflightResponse {
   warnings: string[];
   severity: 'info' | 'warning' | 'danger';
   error: string | null;
+  remote_branch_exists: boolean | null;
 }
 
 export interface RepositoryRemovePreflightResponse {
@@ -91,11 +100,21 @@ export interface CreateRepositoryRequest {
   repository_url?: string;
 }
 
+export interface UpdateRepositorySettingsRequest {
+  workspace_mode?: WorkspaceMode;
+  archive_delete_branch?: boolean;
+  archive_remote_prompt?: boolean;
+}
+
 export interface CreateWorkspaceRequest {
   name: string;
   branch: string;
   path: string;
   is_default?: boolean;
+}
+
+export interface ArchiveWorkspaceRequest {
+  delete_remote?: boolean;
 }
 
 export interface CreateSessionRequest {

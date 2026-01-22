@@ -19,7 +19,8 @@ pub use core::ConduitCore;
 pub use data::{Database, Repository, RepositoryStore, Workspace, WorkspaceStore};
 pub use git::{
     CheckState, CheckStatus, MergeReadiness, MergeableStatus, PrManager, PrPreflightResult,
-    PrState, PrStatus, ReviewDecision, WorktreeInfo, WorktreeManager,
+    PrState, PrStatus, ReviewDecision, WorkspaceMode, WorkspaceRepoManager, WorktreeInfo,
+    WorktreeManager,
 };
 pub use session::{
     discover_all_sessions, discover_claude_sessions, discover_codex_sessions, ExternalSession,

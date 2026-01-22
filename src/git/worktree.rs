@@ -383,6 +383,36 @@ impl WorktreeManager {
         Ok(())
     }
 
+    /// Delete a remote branch in the repository (origin only)
+    pub fn delete_remote_branch(
+        &self,
+        repo_path: &Path,
+        branch: &str,
+    ) -> Result<(), WorktreeError> {
+        self.validate_git_repo(repo_path)?;
+
+        let output = Command::new("git")
+            .args(["push", "origin", "--delete", "--"])
+            .arg(branch)
+            .current_dir(repo_path)
+            .output()?;
+
+        if !output.status.success() {
+            let fallback = Command::new("git")
+                .args(["push", "origin", &format!(":{}", branch)])
+                .current_dir(repo_path)
+                .output()?;
+
+            if !fallback.status.success() {
+                return Err(WorktreeError::CommandFailed(
+                    String::from_utf8_lossy(&fallback.stderr).to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Rename a local branch in the repository
     ///
     /// # Arguments
@@ -624,6 +654,11 @@ impl WorktreeManager {
                 .join("worktrees")
                 .join(name)
         }
+    }
+
+    /// Get the managed workspace path for a repo/name.
+    pub fn workspace_path(&self, repo_path: &Path, name: &str) -> PathBuf {
+        self.worktree_path(repo_path, name)
     }
 
     /// Parse the porcelain output of `git worktree list`

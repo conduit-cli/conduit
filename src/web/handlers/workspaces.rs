@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::core::resolve_repo_workspace_settings;
 use crate::core::services::{ServiceError, SessionService};
 use crate::data::Workspace;
 use crate::git::PrManager;
@@ -85,6 +86,13 @@ pub struct ArchivePreflightResponse {
     pub warnings: Vec<String>,
     pub severity: String,
     pub error: Option<String>,
+    pub remote_branch_exists: Option<bool>,
+}
+
+/// Request to archive a workspace.
+#[derive(Debug, Deserialize)]
+pub struct ArchiveWorkspaceRequest {
+    pub delete_remote: Option<bool>,
 }
 
 /// Request to create a new workspace.
@@ -130,10 +138,23 @@ pub async fn list_repository_workspaces(
         .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
-    let _repo = repo_store
+    let repo = repo_store
         .get_by_id(repository_id)
         .map_err(|e| WebError::Internal(format!("Failed to get repository: {}", e)))?
         .ok_or_else(|| WebError::NotFound(format!("Repository {} not found", repository_id)))?;
+
+    let workspace_store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+
+    if repo.workspace_mode.is_none() {
+        let total = workspace_store
+            .count_all_by_repository(repository_id)
+            .map_err(|e| WebError::Internal(format!("Failed to check workspaces: {}", e)))?;
+        if total == 0 {
+            return Err(WebError::Conflict("workspace_mode_required".to_string()));
+        }
+    }
 
     // Get workspaces for the repository
     let workspace_store = core
@@ -178,6 +199,9 @@ pub async fn get_workspace_archive_preflight(
     let core = state.core().await;
     let store = core
         .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let repo_store = core
+        .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
     let workspace = store
@@ -240,6 +264,26 @@ pub async fn get_workspace_archive_preflight(
         "info"
     };
 
+    let remote_branch_exists = repo_store
+        .get_by_id(workspace.repository_id)
+        .ok()
+        .flatten()
+        .and_then(|repo| repo.base_path)
+        .and_then(|base_path| {
+            match worktree_manager.remote_branch_exists(&base_path, &workspace.branch) {
+                Ok(exists) => Some(exists),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        workspace_id = %workspace.id,
+                        branch = %workspace.branch,
+                        "Failed to check remote branch existence"
+                    );
+                    None
+                }
+            }
+        });
+
     Ok(Json(ArchivePreflightResponse {
         branch_name: workspace.branch.clone(),
         is_dirty,
@@ -249,6 +293,7 @@ pub async fn get_workspace_archive_preflight(
         warnings,
         severity: severity.to_string(),
         error,
+        remote_branch_exists,
     }))
 }
 
@@ -279,6 +324,9 @@ pub async fn create_workspace(
     let repo_store = core
         .repo_store()
         .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
+    let workspace_store = core
+        .workspace_store()
+        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
 
     let _repo = repo_store
         .get_by_id(repository_id)
@@ -303,10 +351,6 @@ pub async fn create_workspace(
     };
 
     // Save to database
-    let workspace_store = core
-        .workspace_store()
-        .ok_or_else(|| WebError::Internal("Database not available".to_string()))?;
-
     workspace_store
         .create(&workspace)
         .map_err(|e| WebError::Internal(format!("Failed to create workspace: {}", e)))?;
@@ -324,6 +368,7 @@ pub async fn create_workspace(
 pub async fn archive_workspace(
     State(state): State<WebAppState>,
     Path(id): Path<Uuid>,
+    Json(req): Json<ArchiveWorkspaceRequest>,
 ) -> Result<StatusCode, WebError> {
     let core = state.core().await;
     let workspace_store = core
@@ -349,12 +394,20 @@ pub async fn archive_workspace(
             WebError::NotFound(format!("Repository {} not found", workspace.repository_id))
         })?;
 
+    let settings = resolve_repo_workspace_settings(core.config(), &repo);
+    let delete_remote = settings.archive_delete_branch && req.delete_remote.unwrap_or(false);
+
     let worktree_manager = core.worktree_manager();
     let mut warnings = Vec::new();
     let mut archived_commit_sha = None;
 
     if let Some(base_path) = repo.base_path {
-        match worktree_manager.get_branch_sha(&base_path, &workspace.branch) {
+        match worktree_manager.get_branch_sha(
+            settings.mode,
+            &base_path,
+            &workspace.path,
+            &workspace.branch,
+        ) {
             Ok(commit_sha) => {
                 archived_commit_sha = Some(commit_sha);
             }
@@ -363,15 +416,33 @@ pub async fn archive_workspace(
             }
         }
 
-        if let Err(err) = worktree_manager.remove_worktree(&base_path, &workspace.path) {
+        if let Err(err) =
+            worktree_manager.remove_workspace(settings.mode, &base_path, &workspace.path)
+        {
             warnings.push(format!("Failed to remove worktree: {}", err));
         }
 
-        if let Err(err) = worktree_manager.delete_branch(&base_path, &workspace.branch) {
-            warnings.push(format!(
-                "Failed to delete branch '{}': {}",
-                workspace.branch, err
-            ));
+        if settings.archive_delete_branch {
+            if let Err(err) = worktree_manager.delete_branch(
+                settings.mode,
+                &base_path,
+                &workspace.path,
+                &workspace.branch,
+            ) {
+                warnings.push(format!(
+                    "Failed to delete branch '{}': {}",
+                    workspace.branch, err
+                ));
+            }
+        }
+
+        if delete_remote {
+            if let Err(err) = worktree_manager.delete_remote_branch(&base_path, &workspace.branch) {
+                warnings.push(format!(
+                    "Failed to delete remote branch '{}': {}",
+                    workspace.branch, err
+                ));
+            }
         }
     } else {
         warnings.push("Repository has no base path; worktree not removed".to_string());
@@ -458,6 +529,12 @@ pub async fn auto_create_workspace(
         .get_all_names_by_repository(repository_id)
         .map_err(|e| WebError::Internal(format!("Failed to get workspace names: {}", e)))?;
 
+    if repo.workspace_mode.is_none() && existing_names.is_empty() {
+        return Err(WebError::Conflict("workspace_mode_required".to_string()));
+    }
+
+    let settings = resolve_repo_workspace_settings(core.config(), &repo);
+
     // Generate unique workspace name
     let workspace_name = generate_workspace_name(&existing_names);
 
@@ -472,11 +549,11 @@ pub async fn auto_create_workspace(
         .map(PathBuf::from)
         .ok_or_else(|| WebError::BadRequest("Repository has no base path".to_string()))?;
 
-    // Create git worktree
+    // Create workspace checkout or worktree
     let worktree_manager = core.worktree_manager();
     let worktree_path = worktree_manager
-        .create_worktree(&repo_path, &branch_name, &workspace_name)
-        .map_err(|e| WebError::Internal(format!("Failed to create worktree: {}", e)))?;
+        .create_workspace(settings.mode, &repo_path, &branch_name, &workspace_name)
+        .map_err(|e| WebError::Internal(format!("Failed to create workspace: {}", e)))?;
 
     // Create workspace model
     let workspace = Workspace::new(repository_id, &workspace_name, &branch_name, worktree_path);
@@ -484,15 +561,15 @@ pub async fn auto_create_workspace(
     // Save to database
     workspace_store.create(&workspace).map_err(|e| {
         // If database save fails, try to clean up the worktree
-        if let Err(err) = core
-            .worktree_manager()
-            .remove_worktree(&repo_path, &workspace.path)
+        if let Err(err) =
+            core.worktree_manager()
+                .remove_workspace(settings.mode, &repo_path, &workspace.path)
         {
             tracing::warn!(
                 error = %err,
                 repo_path = %repo_path.display(),
                 workspace_path = %workspace.path.display(),
-                "Failed to remove worktree after workspace save failure"
+                "Failed to remove workspace after workspace save failure"
             );
         }
         WebError::Internal(format!("Failed to save workspace: {}", e))

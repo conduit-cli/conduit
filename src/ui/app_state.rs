@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -206,6 +206,16 @@ pub struct AppState {
     pub was_splash_visible: bool,
     /// Pending fork request data (set during confirmation)
     pub pending_fork_request: Option<PendingForkRequest>,
+    /// Workspace IDs with in-flight sidebar operations
+    pub busy_workspaces: HashSet<Uuid>,
+    /// Repository IDs with in-flight sidebar operations
+    pub busy_repos: HashSet<Uuid>,
+    /// Repository IDs with in-flight "new workspace" actions
+    pub busy_repo_actions: HashSet<Uuid>,
+    /// Whether the footer message was set by busy-state logic
+    pub busy_footer_message_active: bool,
+    /// Cached footer message for busy state
+    pub busy_footer_message: Option<String>,
 }
 
 /// Pending fork request data captured before workspace creation
@@ -306,6 +316,11 @@ impl AppState {
             logo_shine: LogoShineAnimation::new(),
             was_splash_visible: true, // Start on splash screen
             pending_fork_request: None,
+            busy_workspaces: HashSet::new(),
+            busy_repos: HashSet::new(),
+            busy_repo_actions: HashSet::new(),
+            busy_footer_message_active: false,
+            busy_footer_message: None,
         }
     }
 

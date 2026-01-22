@@ -33,12 +33,13 @@ use crate::agent::{
     GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
+use crate::core::resolve_repo_workspace_settings;
 use crate::core::ConduitCore;
 use crate::data::{
     AppStateStore, ForkSeed, ForkSeedStore, QueuedImageAttachment, QueuedMessage,
     QueuedMessageMode, Repository, RepositoryStore, SessionTab, SessionTabStore, WorkspaceStore,
 };
-use crate::git::{PrManager, PrStatus, WorktreeManager};
+use crate::git::{PrManager, PrStatus, WorkspaceMode, WorkspaceRepoManager};
 use crate::ui::action::Action;
 use crate::ui::app_prompt;
 use crate::ui::app_queue;
@@ -258,14 +259,14 @@ impl App {
 
     /// Get the worktree manager.
     #[inline]
-    fn worktree_manager(&self) -> &WorktreeManager {
+    fn worktree_manager(&self) -> &WorkspaceRepoManager {
         self.core.worktree_manager()
     }
 
     /// Get a mutable reference to the worktree manager.
     #[inline]
     #[allow(dead_code)] // Will be used by web interface
-    fn worktree_manager_mut(&mut self) -> &mut WorktreeManager {
+    fn worktree_manager_mut(&mut self) -> &mut WorkspaceRepoManager {
         self.core.worktree_manager_mut()
     }
 
@@ -644,6 +645,116 @@ impl App {
         for repo_id in expanded_repos {
             self.state.sidebar_data.expand_repo(repo_id);
         }
+
+        self.sync_sidebar_busy_state();
+    }
+
+    fn sync_sidebar_busy_state(&mut self) {
+        let busy_repos: Vec<Uuid> = self.state.busy_repos.iter().copied().collect();
+        let busy_repo_actions: Vec<Uuid> = self.state.busy_repo_actions.iter().copied().collect();
+        let busy_workspaces: Vec<Uuid> = self.state.busy_workspaces.iter().copied().collect();
+
+        for repo_id in busy_repos {
+            self.state.sidebar_data.set_repo_busy(repo_id, true);
+        }
+        for repo_id in busy_repo_actions {
+            self.state.sidebar_data.set_action_busy(repo_id, true);
+        }
+        for workspace_id in busy_workspaces {
+            self.state
+                .sidebar_data
+                .set_workspace_busy(workspace_id, true);
+        }
+    }
+
+    fn busy_footer_message(&self) -> Option<String> {
+        if !self.state.busy_repos.is_empty() {
+            return Some("Removing project...".to_string());
+        }
+        if !self.state.busy_repo_actions.is_empty() {
+            return Some("Creating workspace...".to_string());
+        }
+        if !self.state.busy_workspaces.is_empty() {
+            return Some("Working on workspace...".to_string());
+        }
+        None
+    }
+
+    fn sync_busy_footer_message(&mut self) {
+        let desired = self.busy_footer_message();
+
+        if desired.is_none() {
+            if self.state.busy_footer_message_active {
+                if self.state.footer_message.as_deref() == self.state.busy_footer_message.as_deref()
+                {
+                    self.state.set_footer_message(None);
+                }
+                self.state.busy_footer_message_active = false;
+                self.state.busy_footer_message = None;
+            }
+            return;
+        }
+
+        self.state.busy_footer_message = desired.clone();
+
+        if self.state.footer_message_expires_at.is_some() {
+            self.state.busy_footer_message_active = true;
+            return;
+        }
+
+        if self.state.footer_message.is_some() && !self.state.busy_footer_message_active {
+            self.state.busy_footer_message_active = true;
+            return;
+        }
+
+        self.state.set_footer_message(desired);
+        self.state.busy_footer_message_active = true;
+    }
+
+    fn mark_workspace_busy(&mut self, workspace_id: Uuid) {
+        if self.state.busy_workspaces.insert(workspace_id) {
+            self.state
+                .sidebar_data
+                .set_workspace_busy(workspace_id, true);
+            self.sync_busy_footer_message();
+        }
+    }
+
+    fn clear_workspace_busy(&mut self, workspace_id: Uuid) {
+        if self.state.busy_workspaces.remove(&workspace_id) {
+            self.state
+                .sidebar_data
+                .set_workspace_busy(workspace_id, false);
+            self.sync_busy_footer_message();
+        }
+    }
+
+    fn mark_repo_busy(&mut self, repo_id: Uuid) {
+        if self.state.busy_repos.insert(repo_id) {
+            self.state.sidebar_data.set_repo_busy(repo_id, true);
+            self.sync_busy_footer_message();
+        }
+    }
+
+    fn clear_repo_busy(&mut self, repo_id: Uuid) {
+        if self.state.busy_repos.remove(&repo_id) {
+            self.state.sidebar_data.set_repo_busy(repo_id, false);
+            self.sync_busy_footer_message();
+        }
+    }
+
+    fn mark_repo_action_busy(&mut self, repo_id: Uuid) {
+        if self.state.busy_repo_actions.insert(repo_id) {
+            self.state.sidebar_data.set_action_busy(repo_id, true);
+            self.sync_busy_footer_message();
+        }
+    }
+
+    fn clear_repo_action_busy(&mut self, repo_id: Uuid) {
+        if self.state.busy_repo_actions.remove(&repo_id) {
+            self.state.sidebar_data.set_action_busy(repo_id, false);
+            self.sync_busy_footer_message();
+        }
     }
 
     /// Save session state to database for restoration on next startup.
@@ -1017,6 +1128,7 @@ impl App {
 
         // Clear expired timed footer messages
         self.state.clear_expired_footer_message();
+        self.sync_busy_footer_message();
 
         self.state.theme_picker_state.tick();
         let can_show_picker_error = self.state.theme_picker_state.is_visible()
@@ -2049,6 +2161,7 @@ impl App {
                     let repo_dao = self.repo_dao_clone();
                     let workspace_dao = self.workspace_dao_clone();
                     let worktree_manager = self.worktree_manager().clone();
+                    let config = self.config().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2067,6 +2180,7 @@ impl App {
                                 .base_path
                                 .clone()
                                 .ok_or_else(|| "Repository has no base path".to_string())?;
+                            let settings = resolve_repo_workspace_settings(&config, &repo);
 
                             // Get ALL workspace names (including archived) to prevent resurrection
                             // of old workspace names when creating new ones
@@ -2081,8 +2195,13 @@ impl App {
                                 crate::util::generate_branch_name(&username, &workspace_name);
 
                             let worktree_path = worktree_manager
-                                .create_worktree(&base_path, &branch_name, &workspace_name)
-                                .map_err(|e| format!("Failed to create worktree: {}", e))?;
+                                .create_workspace(
+                                    settings.mode,
+                                    &base_path,
+                                    &branch_name,
+                                    &workspace_name,
+                                )
+                                .map_err(|e| format!("Failed to create workspace: {}", e))?;
 
                             let workspace = crate::data::Workspace::new(
                                 repo_id,
@@ -2093,19 +2212,24 @@ impl App {
                             let workspace_id = workspace.id;
 
                             if let Err(e) = workspace_dao.create(&workspace) {
-                                if let Err(cleanup_err) =
-                                    worktree_manager.remove_worktree(&base_path, &workspace.path)
-                                {
+                                if let Err(cleanup_err) = worktree_manager.remove_workspace(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                ) {
                                     tracing::error!(
                                         error = %cleanup_err,
                                         base_path = %base_path.display(),
                                         workspace_path = %workspace.path.display(),
-                                        "Failed to clean up worktree after DB error"
+                                        "Failed to clean up workspace after DB error"
                                     );
                                 }
-                                if let Err(branch_err) =
-                                    worktree_manager.delete_branch(&base_path, &branch_name)
-                                {
+                                if let Err(branch_err) = worktree_manager.delete_branch(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                    &branch_name,
+                                ) {
                                     tracing::error!(
                                         error = %branch_err,
                                         base_path = %base_path.display(),
@@ -2125,7 +2249,7 @@ impl App {
 
                         send_app_event(
                             &event_tx,
-                            AppEvent::WorkspaceCreated { result },
+                            AppEvent::WorkspaceCreated { repo_id, result },
                             "workspace_created",
                         );
                     });
@@ -2137,6 +2261,7 @@ impl App {
                     let repo_dao = self.repo_dao_clone();
                     let workspace_dao = self.workspace_dao_clone();
                     let worktree_manager = self.worktree_manager().clone();
+                    let config = self.config().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2160,6 +2285,7 @@ impl App {
                                 .base_path
                                 .clone()
                                 .ok_or_else(|| "Repository has no base path".to_string())?;
+                            let settings = resolve_repo_workspace_settings(&config, &repo);
 
                             // Use the base_branch that was computed when the dialog was shown
                             // to ensure consistency between what was displayed and what is used
@@ -2177,13 +2303,14 @@ impl App {
                                 crate::util::generate_branch_name(&username, &workspace_name);
 
                             let worktree_path = worktree_manager
-                                .create_worktree_from_branch(
+                                .create_workspace_from_branch(
+                                    settings.mode,
                                     &base_path,
                                     &base_branch,
                                     &branch_name,
                                     &workspace_name,
                                 )
-                                .map_err(|e| format!("Failed to create worktree: {}", e))?;
+                                .map_err(|e| format!("Failed to create workspace: {}", e))?;
 
                             let workspace = crate::data::Workspace::new(
                                 parent_workspace.repository_id,
@@ -2194,19 +2321,24 @@ impl App {
                             let workspace_id = workspace.id;
 
                             if let Err(e) = workspace_dao.create(&workspace) {
-                                if let Err(cleanup_err) =
-                                    worktree_manager.remove_worktree(&base_path, &workspace.path)
-                                {
+                                if let Err(cleanup_err) = worktree_manager.remove_workspace(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                ) {
                                     tracing::error!(
                                         error = %cleanup_err,
                                         base_path = %base_path.display(),
                                         workspace_path = %workspace.path.display(),
-                                        "Failed to clean up worktree after DB error"
+                                        "Failed to clean up workspace after DB error"
                                     );
                                 }
-                                if let Err(branch_err) =
-                                    worktree_manager.delete_branch(&base_path, &branch_name)
-                                {
+                                if let Err(branch_err) = worktree_manager.delete_branch(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                    &branch_name,
+                                ) {
                                     tracing::error!(
                                         error = %branch_err,
                                         base_path = %base_path.display(),
@@ -2227,15 +2359,22 @@ impl App {
 
                         send_app_event(
                             &event_tx,
-                            AppEvent::ForkWorkspaceCreated { result },
+                            AppEvent::ForkWorkspaceCreated {
+                                parent_workspace_id,
+                                result,
+                            },
                             "fork_workspace_created",
                         );
                     });
                 }
-                Effect::ArchiveWorkspace { workspace_id } => {
+                Effect::ArchiveWorkspace {
+                    workspace_id,
+                    delete_remote,
+                } => {
                     let repo_dao = self.repo_dao_clone();
                     let workspace_dao = self.workspace_dao_clone();
                     let worktree_manager = self.worktree_manager().clone();
+                    let config = self.config().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2247,18 +2386,24 @@ impl App {
                                 .map_err(|e| format!("Failed to load workspace: {}", e))?
                                 .ok_or_else(|| "Workspace not found".to_string())?;
 
-                            let repo_base_path = repo_dao
+                            let repo = repo_dao.as_ref().and_then(|dao| {
+                                dao.get_by_id(workspace.repository_id).ok().flatten()
+                            });
+                            let repo_base_path =
+                                repo.as_ref().and_then(|repo| repo.base_path.clone());
+                            let settings = repo
                                 .as_ref()
-                                .and_then(|dao| {
-                                    dao.get_by_id(workspace.repository_id).ok().flatten()
-                                })
-                                .and_then(|repo| repo.base_path);
+                                .map(|repo| resolve_repo_workspace_settings(&config, repo));
 
                             let mut warnings = Vec::new();
                             let mut archived_commit_sha = None;
-                            if let Some(base_path) = repo_base_path {
-                                match worktree_manager.get_branch_sha(&base_path, &workspace.branch)
-                                {
+                            if let (Some(base_path), Some(settings)) = (repo_base_path, settings) {
+                                match worktree_manager.get_branch_sha(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                    &workspace.branch,
+                                ) {
                                     Ok(commit_sha) => {
                                         archived_commit_sha = Some(commit_sha);
                                     }
@@ -2267,19 +2412,37 @@ impl App {
                                     }
                                 }
 
-                                if let Err(e) =
-                                    worktree_manager.remove_worktree(&base_path, &workspace.path)
-                                {
+                                if let Err(e) = worktree_manager.remove_workspace(
+                                    settings.mode,
+                                    &base_path,
+                                    &workspace.path,
+                                ) {
                                     warnings.push(format!("Failed to remove worktree: {}", e));
                                 }
 
-                                if let Err(e) =
-                                    worktree_manager.delete_branch(&base_path, &workspace.branch)
-                                {
-                                    warnings.push(format!(
-                                        "Failed to delete branch '{}': {}",
-                                        workspace.branch, e
-                                    ));
+                                if settings.archive_delete_branch {
+                                    if let Err(e) = worktree_manager.delete_branch(
+                                        settings.mode,
+                                        &base_path,
+                                        &workspace.path,
+                                        &workspace.branch,
+                                    ) {
+                                        warnings.push(format!(
+                                            "Failed to delete branch '{}': {}",
+                                            workspace.branch, e
+                                        ));
+                                    }
+                                }
+
+                                if delete_remote && settings.archive_delete_branch {
+                                    if let Err(e) = worktree_manager
+                                        .delete_remote_branch(&base_path, &workspace.branch)
+                                    {
+                                        warnings.push(format!(
+                                            "Failed to delete remote branch '{}': {}",
+                                            workspace.branch, e
+                                        ));
+                                    }
                                 }
                             }
 
@@ -2298,7 +2461,10 @@ impl App {
 
                         send_app_event(
                             &event_tx,
-                            AppEvent::WorkspaceArchived { result },
+                            AppEvent::WorkspaceArchived {
+                                workspace_id,
+                                result,
+                            },
                             "workspace_archived",
                         );
                     });
@@ -2307,6 +2473,7 @@ impl App {
                     let repo_dao = self.repo_dao_clone();
                     let workspace_dao = self.workspace_dao_clone();
                     let worktree_manager = self.worktree_manager().clone();
+                    let config = self.config().clone();
                     let event_tx = self.event_tx.clone();
 
                     tokio::task::spawn_blocking(move || {
@@ -2344,47 +2511,58 @@ impl App {
                             return;
                         };
 
-                        let (repo_base_path, repo_name) = match repo_dao.get_by_id(repo_id) {
-                            Ok(Some(repo)) => (repo.base_path, repo.name),
-                            Ok(None) => {
-                                errors.push("Repository not found".to_string());
-                                send_app_event(
-                                    &event_tx,
-                                    AppEvent::ProjectRemoved {
-                                        result: RemoveProjectResult {
-                                            repo_id,
-                                            workspace_ids,
-                                            errors,
+                        let (repo_base_path, repo_name, repo_settings) =
+                            match repo_dao.get_by_id(repo_id) {
+                                Ok(Some(repo)) => {
+                                    let settings = resolve_repo_workspace_settings(&config, &repo);
+                                    (repo.base_path, repo.name, Some(settings))
+                                }
+                                Ok(None) => {
+                                    errors.push("Repository not found".to_string());
+                                    send_app_event(
+                                        &event_tx,
+                                        AppEvent::ProjectRemoved {
+                                            result: RemoveProjectResult {
+                                                repo_id,
+                                                workspace_ids,
+                                                errors,
+                                            },
                                         },
-                                    },
-                                    "project_removed",
-                                );
-                                return;
-                            }
-                            Err(e) => {
-                                errors.push(format!("Failed to load repository: {}", e));
-                                send_app_event(
-                                    &event_tx,
-                                    AppEvent::ProjectRemoved {
-                                        result: RemoveProjectResult {
-                                            repo_id,
-                                            workspace_ids,
-                                            errors,
+                                        "project_removed",
+                                    );
+                                    return;
+                                }
+                                Err(e) => {
+                                    errors.push(format!("Failed to load repository: {}", e));
+                                    send_app_event(
+                                        &event_tx,
+                                        AppEvent::ProjectRemoved {
+                                            result: RemoveProjectResult {
+                                                repo_id,
+                                                workspace_ids,
+                                                errors,
+                                            },
                                         },
-                                    },
-                                    "project_removed",
-                                );
-                                return;
-                            }
-                        };
+                                        "project_removed",
+                                    );
+                                    return;
+                                }
+                            };
 
                         let workspaces =
                             workspace_dao.get_by_repository(repo_id).unwrap_or_default();
                         for ws in workspaces {
                             workspace_ids.push(ws.id);
                             let mut archived_commit_sha = None;
-                            if let Some(ref base_path) = repo_base_path {
-                                match worktree_manager.get_branch_sha(base_path, &ws.branch) {
+                            if let (Some(ref base_path), Some(settings)) =
+                                (repo_base_path.as_ref(), repo_settings)
+                            {
+                                match worktree_manager.get_branch_sha(
+                                    settings.mode,
+                                    base_path,
+                                    &ws.path,
+                                    &ws.branch,
+                                ) {
                                     Ok(sha) => {
                                         archived_commit_sha = Some(sha);
                                     }
@@ -2396,18 +2574,23 @@ impl App {
                                     }
                                 }
 
-                                if let Err(e) =
-                                    worktree_manager.remove_worktree(base_path, &ws.path)
-                                {
+                                if let Err(e) = worktree_manager.remove_workspace(
+                                    settings.mode,
+                                    base_path,
+                                    &ws.path,
+                                ) {
                                     errors.push(format!(
                                         "Failed to remove worktree '{}': {}",
                                         ws.name, e
                                     ));
                                 }
 
-                                if let Err(e) =
-                                    worktree_manager.delete_branch(base_path, &ws.branch)
-                                {
+                                if let Err(e) = worktree_manager.delete_branch(
+                                    settings.mode,
+                                    base_path,
+                                    &ws.path,
+                                    &ws.branch,
+                                ) {
                                     errors.push(format!(
                                         "Failed to delete branch '{}' for workspace '{}': {}",
                                         ws.branch, ws.name, e
@@ -3301,8 +3484,42 @@ impl App {
     }
 
     /// Schedule the workspace creation process for a repository.
-    fn start_workspace_creation(&mut self, repo_id: uuid::Uuid) -> Effect {
-        Effect::CreateWorkspace { repo_id }
+    fn start_workspace_creation(&mut self, repo_id: uuid::Uuid) -> Option<Effect> {
+        let Some(repo_dao) = self.repo_dao() else {
+            return None;
+        };
+
+        let Ok(Some(repo)) = repo_dao.get_by_id(repo_id) else {
+            tracing::error!(repo_id = %repo_id, "Repository not found");
+            return None;
+        };
+
+        if repo.workspace_mode.is_none() {
+            let description = format!(
+                "Choose how Conduit should create workspaces for \"{}\".\n\nYou can change this later when no active workspaces exist.",
+                repo.name
+            );
+            self.state.close_overlays();
+            self.state.confirmation_dialog_state.show(
+                "Select Workspace Mode",
+                description,
+                Vec::new(),
+                ConfirmationType::Info,
+                "Use Worktrees",
+                Some(ConfirmationContext::SelectWorkspaceMode { repo_id }),
+            );
+            self.state.confirmation_dialog_state.cancel_text = "Use Checkouts".to_string();
+            if self.config().workspaces.default_mode == WorkspaceMode::Worktree {
+                self.state.confirmation_dialog_state.select_confirm();
+            } else {
+                self.state.confirmation_dialog_state.select_cancel();
+            }
+            self.state.input_mode = InputMode::Confirming;
+            return None;
+        }
+
+        self.mark_repo_action_busy(repo_id);
+        Some(Effect::CreateWorkspace { repo_id })
     }
 
     /// Find the visible index of a workspace by its ID
@@ -3369,7 +3586,9 @@ impl App {
             | Some(ConfirmationContext::SteerFallback { .. }) => InputMode::Normal,
             // Sidebar operations return to sidebar navigation
             Some(ConfirmationContext::ArchiveWorkspace(_))
-            | Some(ConfirmationContext::RemoveProject(_)) => InputMode::SidebarNavigation,
+            | Some(ConfirmationContext::ArchiveWorkspaceRemoteDelete { .. })
+            | Some(ConfirmationContext::RemoveProject(_))
+            | Some(ConfirmationContext::SelectWorkspaceMode { .. }) => InputMode::SidebarNavigation,
             // No context: return to Normal if tabs exist, otherwise SidebarNavigation
             // (avoids unexpectedly flipping to sidebar when user has active tabs)
             None => {
@@ -3388,11 +3607,19 @@ impl App {
         let Some(workspace_dao) = self.workspace_dao() else {
             return;
         };
+        let Some(repo_dao) = self.repo_dao() else {
+            return;
+        };
 
         let Ok(Some(workspace)) = workspace_dao.get_by_id(workspace_id) else {
             tracing::error!(workspace_id = %workspace_id, "Workspace not found");
             return;
         };
+        let Ok(Some(repo)) = repo_dao.get_by_id(workspace.repository_id) else {
+            tracing::error!(workspace_id = %workspace_id, "Repository not found for workspace");
+            return;
+        };
+        let settings = resolve_repo_workspace_settings(self.config(), &repo);
 
         // Get git branch status
         let branch_status = self.worktree_manager().get_branch_status(&workspace.path);
@@ -3445,11 +3672,24 @@ impl App {
             }
         };
 
+        // Build confirmation message
+        let mut message = match settings.mode {
+            WorkspaceMode::Worktree => "This will remove the worktree.".to_string(),
+            WorkspaceMode::Checkout => "This will remove the checkout.".to_string(),
+        };
+
+        if settings.archive_delete_branch {
+            message.push_str(" The local branch will be deleted.");
+        }
+        if settings.archive_delete_branch && settings.archive_remote_prompt {
+            message.push_str(" You'll be asked about deleting the remote branch.");
+        }
+
         // Show confirmation dialog
         self.state.close_overlays();
         self.state.confirmation_dialog_state.show(
             format!("Archive \"{}\"?", workspace.name),
-            "This will remove the worktree and delete the branch.",
+            message,
             warnings,
             confirmation_type,
             "Archive",
@@ -3475,8 +3715,96 @@ impl App {
     }
 
     /// Execute the archive workspace action after confirmation
-    fn execute_archive_workspace(&mut self, workspace_id: uuid::Uuid) -> Effect {
-        Effect::ArchiveWorkspace { workspace_id }
+    fn execute_archive_workspace(
+        &mut self,
+        workspace_id: uuid::Uuid,
+        delete_remote: bool,
+    ) -> Effect {
+        self.mark_workspace_busy(workspace_id);
+        Effect::ArchiveWorkspace {
+            workspace_id,
+            delete_remote,
+        }
+    }
+
+    fn resolve_workspace_settings(
+        &self,
+        workspace_id: uuid::Uuid,
+    ) -> Option<(
+        crate::data::Workspace,
+        crate::core::RepoWorkspaceSettings,
+        Option<std::path::PathBuf>,
+    )> {
+        let workspace_dao = self.workspace_dao()?;
+        let repo_dao = self.repo_dao()?;
+
+        let workspace = workspace_dao.get_by_id(workspace_id).ok().flatten()?;
+        let repo = repo_dao.get_by_id(workspace.repository_id).ok().flatten()?;
+        let settings = resolve_repo_workspace_settings(self.config(), &repo);
+        let base_path = repo.base_path.clone();
+        Some((workspace, settings, base_path))
+    }
+
+    fn prompt_archive_remote_delete(&mut self, workspace: &crate::data::Workspace) {
+        self.state.close_overlays();
+        self.state.confirmation_dialog_state.show(
+            format!("Delete remote branch for \"{}\"?", workspace.name),
+            format!(
+                "Delete branch '{}' from the remote repository?",
+                workspace.branch
+            ),
+            Vec::new(),
+            ConfirmationType::Warning,
+            "Delete Remote",
+            Some(ConfirmationContext::ArchiveWorkspaceRemoteDelete {
+                workspace_id: workspace.id,
+            }),
+        );
+        self.state.confirmation_dialog_state.cancel_text = "Keep Remote".to_string();
+        self.state.confirmation_dialog_state.select_cancel();
+        self.state.input_mode = InputMode::Confirming;
+    }
+
+    fn apply_repo_workspace_mode(
+        &mut self,
+        repo_id: uuid::Uuid,
+        mode: WorkspaceMode,
+    ) -> Result<(), String> {
+        let repo_dao = self
+            .repo_dao()
+            .ok_or_else(|| "Repository database unavailable".to_string())?;
+        let workspace_dao = self
+            .workspace_dao()
+            .ok_or_else(|| "Workspace database unavailable".to_string())?;
+
+        let repo = repo_dao
+            .get_by_id(repo_id)
+            .map_err(|e| format!("Failed to load repository: {}", e))?
+            .ok_or_else(|| "Repository not found".to_string())?;
+
+        if let Some(existing_mode) = repo.workspace_mode {
+            if existing_mode == mode {
+                return Ok(());
+            }
+        }
+
+        let active_count = workspace_dao
+            .count_active_by_repository(repo_id)
+            .map_err(|e| format!("Failed to check workspaces: {}", e))?;
+        if active_count > 0 {
+            return Err("Cannot change workspace mode while active workspaces exist.".to_string());
+        }
+
+        repo_dao
+            .update_settings(
+                repo_id,
+                Some(mode),
+                repo.archive_delete_branch,
+                repo.archive_remote_prompt,
+            )
+            .map_err(|e| format!("Failed to update repository settings: {}", e))?;
+
+        Ok(())
     }
 
     /// Initiate project removal - shows confirmation dialog
@@ -3560,6 +3888,7 @@ impl App {
     fn execute_remove_project(&mut self, repo_id: uuid::Uuid) -> Effect {
         // Set spinner mode
         self.state.input_mode = InputMode::RemovingProject;
+        self.mark_repo_busy(repo_id);
 
         Effect::RemoveProject { repo_id }
     }
@@ -4043,7 +4372,7 @@ impl App {
                 NodeType::Action(ActionType::NewWorkspace) => {
                     // Create new workspace
                     if let Some(parent_id) = node.parent_id {
-                        return Some(self.start_workspace_creation(parent_id));
+                        return self.start_workspace_creation(parent_id);
                     }
                 }
             }
@@ -4586,111 +4915,128 @@ impl App {
                     self.show_error("Export Failed", &err);
                 }
             },
-            AppEvent::WorkspaceCreated { result } => match result {
-                Ok(created) => {
-                    self.refresh_sidebar_data();
-                    self.state.sidebar_data.expand_repo(created.repo_id);
-                    if let Some(index) = self.find_workspace_index(created.workspace_id) {
-                        self.state.sidebar_state.tree_state.selected = index;
-                    }
-                    // Open workspace, close sidebar, and focus prompt box
-                    self.open_workspace_with_options(created.workspace_id, true);
-                }
-                Err(err) => {
-                    self.show_error("Workspace Creation Failed", &err);
-                }
-            },
-            AppEvent::ForkWorkspaceCreated { result } => match result {
-                Ok(created) => {
-                    self.refresh_sidebar_data();
-                    self.state.sidebar_data.expand_repo(created.repo_id);
-                    if let Some(index) = self.find_workspace_index(created.workspace_id) {
-                        self.state.sidebar_state.tree_state.selected = index;
-                    }
-                    match self.finish_fork_session(created.workspace_id) {
-                        Ok(mut fork_effects) => {
-                            effects.append(&mut fork_effects);
+            AppEvent::WorkspaceCreated { repo_id, result } => {
+                self.clear_repo_action_busy(repo_id);
+                match result {
+                    Ok(created) => {
+                        self.refresh_sidebar_data();
+                        self.state.sidebar_data.expand_repo(created.repo_id);
+                        if let Some(index) = self.find_workspace_index(created.workspace_id) {
+                            self.state.sidebar_state.tree_state.selected = index;
                         }
-                        Err(err) => {
-                            // Clean up fork seed
-                            if let Some(pending) = self.state.pending_fork_request.take() {
-                                if let Some(seed_id) = pending.fork_seed_id {
-                                    if let Some(dao) = self.fork_seed_dao() {
-                                        if let Err(e) = dao.delete(seed_id) {
-                                            tracing::debug!(
-                                                error = %e,
-                                                seed_id = %seed_id,
-                                                "Failed to delete fork seed after fork error"
-                                            );
+                        // Open workspace, close sidebar, and focus prompt box
+                        self.open_workspace_with_options(created.workspace_id, true);
+                    }
+                    Err(err) => {
+                        self.show_error("Workspace Creation Failed", &err);
+                    }
+                }
+            }
+            AppEvent::ForkWorkspaceCreated {
+                parent_workspace_id,
+                result,
+            } => {
+                self.clear_workspace_busy(parent_workspace_id);
+                match result {
+                    Ok(created) => {
+                        self.refresh_sidebar_data();
+                        self.state.sidebar_data.expand_repo(created.repo_id);
+                        if let Some(index) = self.find_workspace_index(created.workspace_id) {
+                            self.state.sidebar_state.tree_state.selected = index;
+                        }
+                        match self.finish_fork_session(created.workspace_id) {
+                            Ok(mut fork_effects) => {
+                                effects.append(&mut fork_effects);
+                            }
+                            Err(err) => {
+                                // Clean up fork seed
+                                if let Some(pending) = self.state.pending_fork_request.take() {
+                                    if let Some(seed_id) = pending.fork_seed_id {
+                                        if let Some(dao) = self.fork_seed_dao() {
+                                            if let Err(e) = dao.delete(seed_id) {
+                                                tracing::debug!(
+                                                    error = %e,
+                                                    seed_id = %seed_id,
+                                                    "Failed to delete fork seed after fork error"
+                                                );
+                                            }
                                         }
                                     }
                                 }
+                                // Attempt to clean up the created workspace
+                                let cleanup_msg = self
+                                    .cleanup_fork_workspace(created.workspace_id, created.repo_id);
+                                let error_msg = match cleanup_msg {
+                                    Some(cleanup_err) => format!(
+                                        "{}\n\nWorkspace cleanup failed: {}. \
+                                         You may need to manually remove it from the sidebar.",
+                                        err, cleanup_err
+                                    ),
+                                    None => err.to_string(),
+                                };
+                                self.show_error("Fork Failed", &error_msg);
                             }
-                            // Attempt to clean up the created workspace
-                            let cleanup_msg =
-                                self.cleanup_fork_workspace(created.workspace_id, created.repo_id);
-                            let error_msg = match cleanup_msg {
-                                Some(cleanup_err) => format!(
-                                    "{}\n\nWorkspace cleanup failed: {}. \
-                                     You may need to manually remove it from the sidebar.",
-                                    err, cleanup_err
-                                ),
-                                None => err.to_string(),
-                            };
-                            self.show_error("Fork Failed", &error_msg);
                         }
                     }
-                }
-                Err(err) => {
-                    if let Some(pending) = self.state.pending_fork_request.take() {
-                        if let Some(seed_id) = pending.fork_seed_id {
-                            if let Some(dao) = self.fork_seed_dao() {
-                                if let Err(e) = dao.delete(seed_id) {
-                                    tracing::debug!(
-                                        error = %e,
-                                        seed_id = %seed_id,
-                                        "Failed to delete fork seed after fork error"
-                                    );
+                    Err(err) => {
+                        if let Some(pending) = self.state.pending_fork_request.take() {
+                            if let Some(seed_id) = pending.fork_seed_id {
+                                if let Some(dao) = self.fork_seed_dao() {
+                                    if let Err(e) = dao.delete(seed_id) {
+                                        tracing::debug!(
+                                            error = %e,
+                                            seed_id = %seed_id,
+                                            "Failed to delete fork seed after fork error"
+                                        );
+                                    }
                                 }
                             }
                         }
+                        self.show_error("Fork Failed", &err);
                     }
-                    self.show_error("Fork Failed", &err);
                 }
-            },
-            AppEvent::WorkspaceArchived { result } => match result {
-                Ok(archived) => {
-                    if !archived.warnings.is_empty() {
-                        self.show_error_with_details(
-                            "Archive Warning",
-                            "Workspace archived with warnings",
-                            &archived.warnings.join("\n"),
-                        );
-                    }
+            }
+            AppEvent::WorkspaceArchived {
+                workspace_id,
+                result,
+            } => {
+                self.clear_workspace_busy(workspace_id);
+                match result {
+                    Ok(archived) => {
+                        if !archived.warnings.is_empty() {
+                            self.show_error_with_details(
+                                "Archive Warning",
+                                "Workspace archived with warnings",
+                                &archived.warnings.join("\n"),
+                            );
+                        }
 
-                    self.close_tabs_for_workspace(archived.workspace_id);
+                        self.close_tabs_for_workspace(archived.workspace_id);
 
-                    let current_selection = self.state.sidebar_state.tree_state.selected;
-                    self.refresh_sidebar_data();
+                        let current_selection = self.state.sidebar_state.tree_state.selected;
+                        self.refresh_sidebar_data();
 
-                    let visible_count = self.state.sidebar_data.visible_nodes().len();
-                    if visible_count > 0 {
-                        let new_selection = if current_selection > 0 {
-                            current_selection - 1
+                        let visible_count = self.state.sidebar_data.visible_nodes().len();
+                        if visible_count > 0 {
+                            let new_selection = if current_selection > 0 {
+                                current_selection - 1
+                            } else {
+                                0
+                            };
+                            self.state.sidebar_state.tree_state.selected =
+                                new_selection.min(visible_count - 1);
                         } else {
-                            0
-                        };
-                        self.state.sidebar_state.tree_state.selected =
-                            new_selection.min(visible_count - 1);
-                    } else {
-                        self.state.sidebar_state.tree_state.selected = 0;
+                            self.state.sidebar_state.tree_state.selected = 0;
+                        }
+                    }
+                    Err(err) => {
+                        self.show_error("Archive Failed", &err);
                     }
                 }
-                Err(err) => {
-                    self.show_error("Archive Failed", &err);
-                }
-            },
+            }
             AppEvent::ProjectRemoved { result } => {
+                self.clear_repo_busy(result.repo_id);
+                self.clear_repo_action_busy(result.repo_id);
                 for workspace_id in &result.workspace_ids {
                     self.close_tabs_for_workspace(*workspace_id);
                 }
@@ -5051,6 +5397,13 @@ impl App {
                 workspace_id,
                 branch,
             } => {
+                if self.state.busy_workspaces.contains(&workspace_id) {
+                    tracing::debug!(
+                        workspace_id = %workspace_id,
+                        "Skipping branch update for busy workspace"
+                    );
+                    return;
+                }
                 // Update all sessions with this workspace
                 for session in self.state.tab_manager.sessions_mut() {
                     if session.workspace_id == Some(workspace_id) {
@@ -6862,6 +7215,7 @@ impl App {
         pending.fork_seed_id = Some(fork_seed.id);
         self.state.pending_fork_request = Some(pending);
 
+        self.mark_workspace_busy(parent_workspace_id);
         Some(Effect::ForkWorkspace {
             parent_workspace_id,
             base_branch,
@@ -7030,7 +7384,11 @@ impl App {
                 // Try to prune stale worktree metadata since the path may have been deleted
                 if let Ok(Some(repo)) = repo_dao.get_by_id(workspace.repository_id) {
                     if let Some(base_path) = &repo.base_path {
-                        if let Err(prune_err) = self.worktree_manager().prune_worktrees(base_path) {
+                        let repo_settings = resolve_repo_workspace_settings(self.config(), &repo);
+                        if let Err(prune_err) = self
+                            .worktree_manager()
+                            .prune_workspaces(repo_settings.mode, base_path)
+                        {
                             tracing::debug!(
                                 error = %prune_err,
                                 "Failed to prune stale worktrees"
@@ -7099,6 +7457,7 @@ impl App {
                 ));
             }
         };
+        let settings = resolve_repo_workspace_settings(self.config(), &repo);
 
         // Collect cleanup warnings for resources that may need manual cleanup
         let mut cleanup_warnings: Vec<String> = Vec::new();
@@ -7116,9 +7475,9 @@ impl App {
                     "Worktree at {} may need manual removal (outside managed directory)",
                     workspace.path.display()
                 ));
-            } else if let Err(e) = self
-                .worktree_manager()
-                .remove_worktree(base_path, &workspace.path)
+            } else if let Err(e) =
+                self.worktree_manager()
+                    .remove_workspace(settings.mode, base_path, &workspace.path)
             {
                 tracing::warn!(
                     error = %e,
@@ -7133,10 +7492,12 @@ impl App {
 
             // Also try to delete the branch (only if we successfully managed the worktree path)
             if path_is_managed {
-                if let Err(e) = self
-                    .worktree_manager()
-                    .delete_branch(base_path, &workspace.branch)
-                {
+                if let Err(e) = self.worktree_manager().delete_branch(
+                    settings.mode,
+                    base_path,
+                    &workspace.path,
+                    &workspace.branch,
+                ) {
                     tracing::warn!(
                         error = %e,
                         workspace_id = %workspace_id,
@@ -8729,7 +9090,7 @@ async fn generate_title_and_branch_impl(
     working_dir: PathBuf,
     workspace_id: Option<uuid::Uuid>,
     current_branch: String,
-    worktree_manager: WorktreeManager,
+    worktree_manager: WorkspaceRepoManager,
     workspace_dao: Option<WorkspaceStore>,
 ) -> Result<TitleGeneratedResult, String> {
     use crate::util::{generate_title_and_branch, get_git_username, sanitize_branch_suffix};
@@ -9474,13 +9835,13 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_confirmation_action_archive_workspace() {
+    fn test_handle_confirmation_action_archive_workspace_remote_delete() {
         let mut app = build_test_app_with_sessions(&[]);
         let workspace_id = Uuid::new_v4();
         app.state.input_mode = InputMode::Confirming;
         app.state.confirmation_dialog_state.visible = true;
         app.state.confirmation_dialog_state.context =
-            Some(ConfirmationContext::ArchiveWorkspace(workspace_id));
+            Some(ConfirmationContext::ArchiveWorkspaceRemoteDelete { workspace_id });
 
         let mut effects = Vec::new();
         app.handle_confirmation_action(Action::ConfirmYes, &mut effects)
@@ -9488,7 +9849,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::ArchiveWorkspace { workspace_id: id }] if *id == workspace_id
+            [Effect::ArchiveWorkspace { workspace_id: id, delete_remote: true }] if *id == workspace_id
         ));
         assert_eq!(app.state.input_mode, InputMode::SidebarNavigation);
         assert!(!app.state.confirmation_dialog_state.visible);

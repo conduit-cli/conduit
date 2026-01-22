@@ -6,6 +6,7 @@ use serde::Deserialize;
 use toml_edit::{DocumentMut, Item, Table};
 
 use crate::agent::{AgentType, ModelRegistry};
+use crate::git::WorkspaceMode;
 use crate::ui::action::Action;
 use crate::util::paths::config_path;
 use crate::util::tools::{Tool, ToolPaths};
@@ -55,6 +56,8 @@ pub struct Config {
     pub ui: UiConfig,
     /// Web workspace status configuration
     pub web_status: WebStatusConfig,
+    /// Workspace defaults
+    pub workspaces: WorkspacesConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -148,6 +151,20 @@ pub struct TomlWebStatusConfig {
     pub pr_refresh_interval_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspacesConfig {
+    pub default_mode: WorkspaceMode,
+    pub archive_delete_branch: bool,
+    pub archive_remote_prompt: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TomlWorkspacesConfig {
+    pub mode: Option<WorkspaceMode>,
+    pub archive_delete_branch: Option<bool>,
+    pub archive_remote_prompt: Option<bool>,
+}
+
 /// TOML representation of default model
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlDefaultModelConfig {
@@ -199,6 +216,11 @@ impl Default for Config {
                 status_scan_concurrency: 2,
                 selected_refresh_interval_ms: 5000,
                 pr_refresh_interval_ms: 60000,
+            },
+            workspaces: WorkspacesConfig {
+                default_mode: WorkspaceMode::Worktree,
+                archive_delete_branch: true,
+                archive_remote_prompt: true,
             },
         }
     }
@@ -272,6 +294,8 @@ pub struct TomlConfig {
     pub ui: Option<TomlUiConfig>,
     /// Web status configuration
     pub web_status: Option<TomlWebStatusConfig>,
+    /// Workspace defaults
+    pub workspaces: Option<TomlWorkspacesConfig>,
 }
 
 impl TomlKeybindings {
@@ -667,6 +691,18 @@ impl Config {
                         }
                         if let Some(pr_refresh_interval_ms) = web_status.pr_refresh_interval_ms {
                             config.web_status.pr_refresh_interval_ms = pr_refresh_interval_ms;
+                        }
+                    }
+                    // Load workspace defaults
+                    if let Some(workspaces) = toml_config.workspaces {
+                        if let Some(mode) = workspaces.mode {
+                            config.workspaces.default_mode = mode;
+                        }
+                        if let Some(delete_branch) = workspaces.archive_delete_branch {
+                            config.workspaces.archive_delete_branch = delete_branch;
+                        }
+                        if let Some(remote_prompt) = workspaces.archive_remote_prompt {
+                            config.workspaces.archive_remote_prompt = remote_prompt;
                         }
                     }
                 }

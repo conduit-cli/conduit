@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '../lib/api';
 import type {
   CreateRepositoryRequest,
+  UpdateRepositorySettingsRequest,
   CreateWorkspaceRequest,
   CreateSessionRequest,
   UpdateSessionRequest,
@@ -111,6 +112,18 @@ export function useCreateRepository() {
     mutationFn: (data: CreateRepositoryRequest) => api.createRepository(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+    },
+  });
+}
+
+export function useUpdateRepositorySettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateRepositorySettingsRequest }) =>
+      api.updateRepositorySettings(id, data),
+    onSuccess: (_repo, vars) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.repositories });
+      queryClient.invalidateQueries({ queryKey: queryKeys.repository(vars.id) });
     },
   });
 }
@@ -229,12 +242,13 @@ export function useCreateWorkspace(repositoryId: string) {
 export function useArchiveWorkspace() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.archiveWorkspace(id),
-    onSuccess: (_data, id) => {
+    mutationFn: (payload: { id: string; delete_remote?: boolean }) =>
+      api.archiveWorkspace(payload.id, { delete_remote: payload.delete_remote }),
+    onSuccess: (_data, payload) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStatus(id) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSession(id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStatus(payload.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.workspaceSession(payload.id) });
     },
   });
 }

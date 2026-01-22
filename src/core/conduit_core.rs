@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::data::{
     AppStateStore, Database, ForkSeedStore, RepositoryStore, SessionTabStore, WorkspaceStore,
 };
-use crate::git::WorktreeManager;
+use crate::git::WorkspaceRepoManager;
 use crate::util::{Tool, ToolAvailability};
 
 /// Core infrastructure for Conduit, shared between TUI and web interfaces.
@@ -41,7 +41,7 @@ pub struct ConduitCore {
     /// Gemini CLI runner
     gemini_runner: Arc<GeminiCliRunner>,
     /// Worktree manager
-    worktree_manager: WorktreeManager,
+    worktree_manager: WorkspaceRepoManager,
 }
 
 impl ConduitCore {
@@ -81,7 +81,8 @@ impl ConduitCore {
         crate::util::migrate_worktrees_to_workspaces();
 
         // Initialize worktree manager with managed directory (~/.conduit/workspaces)
-        let worktree_manager = WorktreeManager::with_managed_dir(crate::util::workspaces_dir());
+        let worktree_manager =
+            WorkspaceRepoManager::with_managed_dir(crate::util::workspaces_dir());
 
         // Create runners with configured paths if available
         let claude_runner = match tools.get_path(Tool::Claude) {
@@ -189,12 +190,12 @@ impl ConduitCore {
     }
 
     /// Get the worktree manager.
-    pub fn worktree_manager(&self) -> &WorktreeManager {
+    pub fn worktree_manager(&self) -> &WorkspaceRepoManager {
         &self.worktree_manager
     }
 
     /// Get a mutable reference to the worktree manager.
-    pub fn worktree_manager_mut(&mut self) -> &mut WorktreeManager {
+    pub fn worktree_manager_mut(&mut self) -> &mut WorkspaceRepoManager {
         &mut self.worktree_manager
     }
 

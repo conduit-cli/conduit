@@ -264,6 +264,7 @@ interface SidebarProps {
   selectedWorkspaceId?: string | null;
   onSelectWorkspace?: (workspace: Workspace) => void;
   onCreateWorkspace?: (repository: Repository) => void;
+  onModeRequired?: (repository: Repository) => void;
   onArchiveWorkspace?: (workspace: Workspace) => void;
   onRemoveRepository?: (repository: Repository) => void;
   onAddProject?: () => void;
@@ -274,6 +275,7 @@ export function Sidebar({
   selectedWorkspaceId,
   onSelectWorkspace,
   onCreateWorkspace,
+  onModeRequired,
   onArchiveWorkspace,
   onRemoveRepository,
   onAddProject,
@@ -416,6 +418,10 @@ export function Sidebar({
           repositoryName={createWorkspaceRepo.name}
           isOpen={!!createWorkspaceRepo}
           onClose={() => setCreateWorkspaceRepo(null)}
+          onModeRequired={() => {
+            onModeRequired?.(createWorkspaceRepo);
+            setCreateWorkspaceRepo(null);
+          }}
           onSuccess={handleWorkspaceCreated}
         />
       )}

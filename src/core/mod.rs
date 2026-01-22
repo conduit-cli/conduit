@@ -8,6 +8,8 @@
 
 mod conduit_core;
 pub mod dto;
+mod repo_settings;
 pub mod services;
 
 pub use conduit_core::ConduitCore;
+pub use repo_settings::{resolve_repo_workspace_settings, RepoWorkspaceSettings};

@@ -14,6 +14,7 @@ import type {
   ListModelsResponse,
   AgentsResponse,
   CreateRepositoryRequest,
+  UpdateRepositorySettingsRequest,
   CreateWorkspaceRequest,
   CreateSessionRequest,
   UpdateSessionRequest,
@@ -34,6 +35,7 @@ import type {
   PrPreflightResponse,
   PrCreateResponse,
   ArchivePreflightResponse,
+  ArchiveWorkspaceRequest,
   RepositoryRemovePreflightResponse,
   RepositoryRemoveResponse,
   OnboardingBaseDirResponse,
@@ -46,7 +48,7 @@ import type { Theme, ThemeListResponse } from './themes';
 
 const API_BASE = '/api';
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
 
   constructor(status: number, message: string) {
@@ -120,6 +122,16 @@ export async function createRepository(data: CreateRepositoryRequest): Promise<R
   });
 }
 
+export async function updateRepositorySettings(
+  id: string,
+  data: UpdateRepositorySettingsRequest
+): Promise<Repository> {
+  return request(`/repositories/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function deleteRepository(id: string): Promise<void> {
   await request(`/repositories/${id}`, { method: 'DELETE' });
 }
@@ -154,8 +166,14 @@ export async function createWorkspace(repositoryId: string, data: CreateWorkspac
   });
 }
 
-export async function archiveWorkspace(id: string): Promise<void> {
-  await request(`/workspaces/${id}/archive`, { method: 'POST' });
+export async function archiveWorkspace(
+  id: string,
+  data?: ArchiveWorkspaceRequest
+): Promise<void> {
+  await request(`/workspaces/${id}/archive`, {
+    method: 'POST',
+    body: JSON.stringify(data ?? {}),
+  });
 }
 
 export async function getWorkspaceArchivePreflight(id: string): Promise<ArchivePreflightResponse> {

@@ -88,15 +88,18 @@ pub enum AppEvent {
 
     /// Workspace creation completed
     WorkspaceCreated {
+        repo_id: Uuid,
         result: Result<WorkspaceCreated, String>,
     },
     /// Fork workspace creation completed
     ForkWorkspaceCreated {
+        parent_workspace_id: Uuid,
         result: Result<ForkWorkspaceCreated, String>,
     },
 
     /// Workspace archive completed
     WorkspaceArchived {
+        workspace_id: Uuid,
         result: Result<WorkspaceArchived, String>,
     },
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { X, Loader2, Info } from 'lucide-react';
 import { useAutoCreateWorkspace } from '../hooks';
+import { ApiError } from '../lib/api';
 import type { Workspace } from '../types';
 import { cn } from '../lib/cn';
 
@@ -9,6 +10,7 @@ interface CreateWorkspaceDialogProps {
   repositoryName: string;
   isOpen: boolean;
   onClose: () => void;
+  onModeRequired: () => void;
   onSuccess: (workspace: Workspace) => void;
 }
 
@@ -17,6 +19,7 @@ export function CreateWorkspaceDialog({
   repositoryName,
   isOpen,
   onClose,
+  onModeRequired,
   onSuccess,
 }: CreateWorkspaceDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -55,6 +58,12 @@ export function CreateWorkspaceDialog({
     mutate(repositoryId, {
       onSuccess: (workspace) => {
         onSuccess(workspace);
+      },
+      onError: (err) => {
+        if (err instanceof ApiError && err.status === 409) {
+          reset();
+          onModeRequired();
+        }
       },
     });
   };

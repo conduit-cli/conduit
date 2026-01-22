@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::git::{CheckState, CheckStatus, GitDiffStats, MergeReadiness, PrState, PrStatus};
 
 use super::{
-    accent_error, accent_success, pr_closed_bg, pr_draft_bg, pr_merged_bg, pr_open_bg,
-    pr_unknown_bg, selected_bg, text_muted,
+    accent_error, accent_primary, accent_success, pr_closed_bg, pr_draft_bg, pr_merged_bg,
+    pr_open_bg, pr_unknown_bg, selected_bg, text_muted,
 };
 
 /// Enable mock PR display for layout testing.
@@ -24,6 +24,8 @@ const MOCK_SIDEBAR_PR_DISPLAY: bool = false;
 
 /// Spinner frames for checks pending (Ripple)
 const RIPPLE_FRAMES: &[&str] = &["·", "∙", "•", "●", "•", "∙"];
+/// Spinner frames for busy workspace operations
+const SIDEBAR_BUSY_SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // Layout constants for tree view rendering
 // Note: DEPTH_0 constant defined for documentation completeness but not currently used
@@ -94,6 +96,8 @@ pub struct TreeNode {
     pub git_stats: Option<GitDiffStats>,
     /// PR status for workspaces (updated by background tracker or session updates)
     pub pr_status: Option<PrStatus>,
+    /// Whether this node is busy (operation in progress)
+    pub is_busy: bool,
 }
 
 impl TreeNode {
@@ -111,6 +115,7 @@ impl TreeNode {
             node_type: NodeType::Repository,
             git_stats: None,
             pr_status: None,
+            is_busy: false,
         }
     }
 
@@ -127,6 +132,7 @@ impl TreeNode {
             node_type: NodeType::Workspace,
             git_stats: None,
             pr_status: None,
+            is_busy: false,
         }
     }
 
@@ -146,6 +152,7 @@ impl TreeNode {
             node_type: NodeType::Action(action_type),
             git_stats: None,
             pr_status: None,
+            is_busy: false,
         }
     }
 
@@ -162,7 +169,7 @@ impl TreeNode {
     /// Calculate the visual row height of this node (including spacer for depth-0)
     /// Used for scroll offset calculations
     fn visual_height(&self) -> usize {
-        let base_height = if self.node_type == NodeType::Workspace && self.suffix.is_some() {
+        let base_height = if self.is_two_line_workspace() {
             2 // Two-line workspace
         } else {
             1
@@ -217,6 +224,11 @@ impl TreeNode {
             }
         }
         result
+    }
+
+    /// Check if this workspace should render as two lines
+    fn is_two_line_workspace(&self) -> bool {
+        self.node_type == NodeType::Workspace && (self.suffix.is_some() || self.is_busy)
     }
 }
 
@@ -441,8 +453,7 @@ impl StatefulWidget for TreeView<'_> {
             };
 
             // Check if this is a workspace with a suffix (renders on 2 lines)
-            let is_two_line_workspace =
-                node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let is_two_line_workspace = node.is_two_line_workspace();
 
             // For two-line workspaces: line 1 = branch (suffix), line 2 = name
             let mut spans = vec![
@@ -459,6 +470,8 @@ impl StatefulWidget for TreeView<'_> {
                         (inner.width as usize).saturating_sub(WORKSPACE_NAME_LINE_INDENT);
                     let branch_display = truncate_branch_name(suffix, available);
                     spans.push(Span::styled(branch_display, label_style));
+                } else if node.is_busy {
+                    spans.push(Span::styled("working...", self.suffix_style));
                 }
             } else {
                 // Single line items show label
@@ -466,6 +479,11 @@ impl StatefulWidget for TreeView<'_> {
                 // Non-workspace nodes show suffix inline
                 if let Some(suffix) = &node.suffix {
                     spans.push(Span::styled(format!(" ({})", suffix), self.suffix_style));
+                }
+                if node.is_busy {
+                    let spinner = busy_spinner_char(self.spinner_frame);
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(spinner, Style::default().fg(accent_primary())));
                 }
             }
 
@@ -639,6 +657,44 @@ impl SidebarData {
         self.nodes.push(repo_node);
     }
 
+    /// Mark a repository node as busy.
+    pub fn set_repo_busy(&mut self, repo_id: Uuid, is_busy: bool) {
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository && node.id == repo_id {
+                node.is_busy = is_busy;
+                return;
+            }
+        }
+    }
+
+    /// Mark the "+ New workspace" action node as busy for a repository.
+    pub fn set_action_busy(&mut self, repo_id: Uuid, is_busy: bool) {
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository && node.id == repo_id {
+                for child in &mut node.children {
+                    if matches!(child.node_type, NodeType::Action(ActionType::NewWorkspace)) {
+                        child.is_busy = is_busy;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mark a workspace node as busy.
+    pub fn set_workspace_busy(&mut self, workspace_id: Uuid, is_busy: bool) {
+        for node in &mut self.nodes {
+            if node.node_type == NodeType::Repository {
+                for child in &mut node.children {
+                    if child.id == workspace_id && child.node_type == NodeType::Workspace {
+                        child.is_busy = is_busy;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// Get flattened visible nodes
     pub fn visible_nodes(&self) -> Vec<&TreeNode> {
         self.nodes.iter().flat_map(|n| n.flatten()).collect()
@@ -683,7 +739,7 @@ impl SidebarData {
             }
 
             // Check if click is on this item's row(s)
-            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let is_two_line = node.is_two_line_workspace();
             let item_height = if is_two_line { 2 } else { 1 };
 
             if visual_row >= current_row && visual_row < current_row + item_height {
@@ -895,7 +951,7 @@ impl SidebarData {
                 current_row += 1;
             }
 
-            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let is_two_line = node.is_two_line_workspace();
 
             if is_two_line {
                 // First row is branch line, second row is name line
@@ -1055,6 +1111,10 @@ fn ripple_char(spinner_frame: usize) -> &'static str {
     RIPPLE_FRAMES[idx]
 }
 
+fn busy_spinner_char(spinner_frame: usize) -> &'static str {
+    SIDEBAR_BUSY_SPINNER_FRAMES[spinner_frame % SIDEBAR_BUSY_SPINNER_FRAMES.len()]
+}
+
 fn build_right_side_spans(node: &TreeNode, spinner_frame: usize) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mock_status = if MOCK_SIDEBAR_PR_DISPLAY {
@@ -1166,6 +1226,16 @@ fn build_right_side_spans(node: &TreeNode, spinner_frame: usize) -> Vec<Span<'st
         }
     }
 
+    if node.is_busy {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" ", Style::default()));
+        }
+        spans.push(Span::styled(
+            busy_spinner_char(spinner_frame),
+            Style::default().fg(accent_primary()),
+        ));
+    }
+
     // Trailing space for padding
     if !spans.is_empty() {
         spans.push(Span::raw(" "));
@@ -1209,7 +1279,7 @@ mod tests {
         let visible = sidebar.visible_nodes();
         println!("Visible nodes:");
         for (i, node) in visible.iter().enumerate() {
-            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let is_two_line = node.is_two_line_workspace();
             println!(
                 "  [{}] depth={}, type={:?}, label='{}', suffix={:?}, two_line={}",
                 i, node.depth, node.node_type, node.label, node.suffix, is_two_line
@@ -1225,7 +1295,7 @@ mod tests {
             if node.depth == 0 {
                 current_row += 1; // blank line before repo
             }
-            let is_two_line = node.node_type == NodeType::Workspace && node.suffix.is_some();
+            let is_two_line = node.is_two_line_workspace();
             if is_two_line {
                 // branch line is current_row, name line is current_row + 1
                 name_line_row = Some(current_row + 1);
