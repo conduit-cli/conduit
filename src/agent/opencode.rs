@@ -200,6 +200,7 @@ struct TimeInfo {
 struct OpencodeSharedState {
     completed_messages: Mutex<HashSet<String>>,
     turn_in_flight: AtomicBool,
+    sse_active: AtomicBool,
 }
 
 impl OpencodeSharedState {
@@ -214,6 +215,32 @@ impl OpencodeSharedState {
 
     fn take_turn_in_flight(&self) -> bool {
         self.turn_in_flight.swap(false, Ordering::SeqCst)
+    }
+
+    fn try_mark_sse_active(&self) -> bool {
+        self.sse_active
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    fn mark_sse_inactive(&self) {
+        self.sse_active.store(false, Ordering::SeqCst);
+    }
+}
+
+struct SseActiveGuard {
+    shared_state: Arc<OpencodeSharedState>,
+}
+
+impl SseActiveGuard {
+    fn new(shared_state: Arc<OpencodeSharedState>) -> Self {
+        Self { shared_state }
+    }
+}
+
+impl Drop for SseActiveGuard {
+    fn drop(&mut self) {
+        self.shared_state.mark_sse_inactive();
     }
 }
 
@@ -970,6 +997,7 @@ impl OpencodeRunner {
         event_tx: mpsc::Sender<AgentEvent>,
         shared_state: Arc<OpencodeSharedState>,
     ) {
+        let _sse_guard = SseActiveGuard::new(shared_state.clone());
         let mut state = OpencodeEventState::default();
         let mut events = match client.subscribe_events() {
             Ok(events) => events,
@@ -1207,7 +1235,7 @@ impl OpencodeRunner {
                                         }))
                                         .await;
                                 }
-                                continue;
+                                break;
                             }
                         }
                         "session.error" => {
@@ -1516,6 +1544,18 @@ impl AgentRunner for OpencodeRunner {
 
         let model_ref = config.model.as_deref().and_then(ModelRef::parse);
         let shared_state = Arc::new(OpencodeSharedState::default());
+        let spawn_event_stream =
+            |client: OpenCodeClient,
+             session_id: String,
+             event_tx: mpsc::Sender<AgentEvent>,
+             shared_state: Arc<OpencodeSharedState>| {
+                if !shared_state.try_mark_sse_active() {
+                    return;
+                }
+                tokio::spawn(async move {
+                    OpencodeRunner::handle_events(client, session_id, event_tx, shared_state).await
+                });
+            };
         let input_tx = {
             let (input_tx, mut input_rx) = mpsc::channel::<AgentInput>(16);
             let client = client.clone();
@@ -1525,6 +1565,12 @@ impl AgentRunner for OpencodeRunner {
             let shared_state = shared_state.clone();
             tokio::spawn(async move {
                 while let Some(input) = input_rx.recv().await {
+                    spawn_event_stream(
+                        client.clone(),
+                        session_id.clone(),
+                        event_tx.clone(),
+                        shared_state.clone(),
+                    );
                     match input {
                         AgentInput::CodexPrompt { text, images } => {
                             if !images.is_empty() {
@@ -1533,7 +1579,7 @@ impl AgentRunner for OpencodeRunner {
                                         message: "OpenCode runner does not support image attachments yet.".to_string(),
                                         is_fatal: false,
                                     }))
-                                    .await;
+                                .await;
                             }
                             OpencodeRunner::send_prompt(
                                 &client,
@@ -1591,15 +1637,12 @@ impl AgentRunner for OpencodeRunner {
             .await;
         }
 
-        tokio::spawn({
-            let client = client.clone();
-            let event_tx = event_tx.clone();
-            let session_id = session_id.as_str().to_string();
-            let shared_state = shared_state.clone();
-            async move {
-                OpencodeRunner::handle_events(client, session_id, event_tx, shared_state).await
-            }
-        });
+        spawn_event_stream(
+            client.clone(),
+            session_id.as_str().to_string(),
+            event_tx.clone(),
+            shared_state.clone(),
+        );
 
         Ok(AgentHandle::new(event_rx, pid, Some(input_tx)))
     }
