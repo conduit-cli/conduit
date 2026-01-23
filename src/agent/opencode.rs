@@ -1458,16 +1458,88 @@ impl AgentRunner for OpencodeRunner {
         });
 
         if let Some(stderr) = stderr {
+            let event_tx_for_stderr = event_tx.clone();
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
+                let mut capturing_model_error = false;
+                let mut provider_id: Option<String> = None;
+                let mut model_id: Option<String> = None;
+                let mut suggestions: Vec<String> = Vec::new();
+                let mut line_count = 0usize;
+
                 loop {
                     line.clear();
                     match reader.read_line(&mut line).await {
                         Ok(0) => break,
                         Ok(_) => {
-                            if !line.trim().is_empty() {
-                                tracing::debug!("OpenCode stderr: {}", line.trim());
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            tracing::debug!("OpenCode stderr: {}", trimmed);
+
+                            if trimmed.contains("ProviderModelNotFoundError")
+                                || trimmed.contains("ModelNotFoundError")
+                            {
+                                capturing_model_error = true;
+                                provider_id = None;
+                                model_id = None;
+                                suggestions.clear();
+                                line_count = 0;
+                                continue;
+                            }
+
+                            if capturing_model_error {
+                                line_count += 1;
+                                if trimmed.contains("providerID:") {
+                                    if let Some(value) = trimmed.split('"').nth(1) {
+                                        provider_id = Some(value.to_string());
+                                    }
+                                }
+                                if trimmed.contains("modelID:") {
+                                    if let Some(value) = trimmed.split('"').nth(1) {
+                                        model_id = Some(value.to_string());
+                                    }
+                                }
+                                if trimmed.contains("suggestions:") {
+                                    if let Some(list) = trimmed.split('[').nth(1) {
+                                        if let Some(list) = list.split(']').next() {
+                                            for suggestion in list.split(',') {
+                                                let suggestion =
+                                                    suggestion.trim().trim_matches('"');
+                                                if !suggestion.is_empty() {
+                                                    suggestions.push(suggestion.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if trimmed == "}" || line_count > 12 {
+                                    let message = match (provider_id.as_ref(), model_id.as_ref()) {
+                                        (Some(provider), Some(model)) => {
+                                            if suggestions.is_empty() {
+                                                format!(
+                                                    "OpenCode model not found: {provider}/{model}"
+                                                )
+                                            } else {
+                                                format!(
+                                                    "OpenCode model not found: {provider}/{model} (suggestions: {})",
+                                                    suggestions.join(", ")
+                                                )
+                                            }
+                                        }
+                                        _ => "OpenCode model not found.".to_string(),
+                                    };
+                                    let _ = event_tx_for_stderr
+                                        .send(AgentEvent::Error(ErrorEvent {
+                                            message,
+                                            is_fatal: true,
+                                        }))
+                                        .await;
+                                    capturing_model_error = false;
+                                }
                             }
                         }
                         Err(_) => break,
