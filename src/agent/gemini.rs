@@ -565,6 +565,8 @@ impl AgentRunner for GeminiCliRunner {
                                             err
                                         ),
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                                 return;
@@ -574,6 +576,8 @@ impl AgentRunner for GeminiCliRunner {
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message: "Timed out initializing Gemini ACP. Ensure gemini CLI is installed and authenticated.".to_string(),
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                                 return;
@@ -601,6 +605,8 @@ impl AgentRunner for GeminiCliRunner {
                                                     method_id, err
                                                 ),
                                                 is_fatal: true,
+                                                code: None,
+                                                details: None,
                                             }))
                                             .await;
                                         return;
@@ -610,6 +616,8 @@ impl AgentRunner for GeminiCliRunner {
                                             .send(AgentEvent::Error(ErrorEvent {
                                                 message: "Gemini CLI authentication timed out. Run `gemini` once to log in or set GEMINI_API_KEY.".to_string(),
                                                 is_fatal: true,
+                                                code: None,
+                                                details: None,
                                             }))
                                             .await;
                                         return;
@@ -633,6 +641,8 @@ impl AgentRunner for GeminiCliRunner {
                                             err
                                         ),
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                                 return;
@@ -642,6 +652,8 @@ impl AgentRunner for GeminiCliRunner {
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message: "Timed out creating Gemini session. Ensure gemini CLI is authenticated.".to_string(),
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                                 return;
@@ -670,6 +682,8 @@ impl AgentRunner for GeminiCliRunner {
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message: format!("Gemini prompt failed: {}", err),
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                                 return;
@@ -726,6 +740,8 @@ impl AgentRunner for GeminiCliRunner {
                         .send(AgentEvent::Error(ErrorEvent {
                             message,
                             is_fatal: true,
+                            code: None,
+                            details: None,
                         }))
                         .await
                     {
@@ -741,6 +757,8 @@ impl AgentRunner for GeminiCliRunner {
                         .send(AgentEvent::Error(ErrorEvent {
                             message,
                             is_fatal: true,
+                            code: None,
+                            details: None,
                         }))
                         .await
                     {

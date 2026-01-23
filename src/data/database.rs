@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS session_tabs (
     agent_mode TEXT DEFAULT 'build',
     agent_session_id TEXT,
     model TEXT,
+    model_invalid INTEGER NOT NULL DEFAULT 0,
     pr_number INTEGER,
     created_at TEXT NOT NULL,
     pending_user_message TEXT,
@@ -175,6 +176,27 @@ impl Database {
         if !has_pr_number {
             conn.execute("ALTER TABLE session_tabs ADD COLUMN pr_number INTEGER", [])?;
         }
+
+        // Migration 2b: Add model_invalid column to session_tabs table
+        let has_model_invalid: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_tabs') WHERE name='model_invalid'",
+                [],
+                |row| row.get::<_, i64>(0).map(|c| c > 0),
+            )
+            .unwrap_or(false);
+
+        if !has_model_invalid {
+            conn.execute(
+                "ALTER TABLE session_tabs ADD COLUMN model_invalid INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+
+        conn.execute(
+            "UPDATE session_tabs SET model_invalid = 0 WHERE model_invalid IS NULL",
+            [],
+        )?;
 
         // Migration 3: Add pending_user_message column to session_tabs table
         let has_pending_user_message: bool = conn

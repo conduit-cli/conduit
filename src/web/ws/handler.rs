@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
-use crate::core::services::SessionService;
+use crate::core::services::{SessionService, UpdateSessionParams};
 use crate::core::ConduitCore;
 use crate::ui::app_prompt;
 use crate::util::{generate_title_and_branch, get_git_username, sanitize_branch_suffix};
@@ -214,6 +214,20 @@ impl SessionManager {
                         );
                     }
                 }
+                if let AgentEvent::Error(err) = &event {
+                    if err.code.as_deref() == Some("model_not_found") {
+                        let core = core_ref.read().await;
+                        if let Err(error) =
+                            SessionService::invalidate_session_model(&core, session_id)
+                        {
+                            tracing::warn!(
+                                %session_id,
+                                error = %error,
+                                "Failed to invalidate session model"
+                            );
+                        }
+                    }
+                }
 
                 if let Err(error) = event_tx.send(event) {
                     tracing::debug!(
@@ -345,6 +359,7 @@ impl SessionManager {
         session_id: Uuid,
         input: String,
         images: Vec<PathBuf>,
+        model: Option<String>,
     ) -> Result<(), String> {
         let (input_tx, agent_type) = {
             let sessions = self.sessions.read().await;
@@ -364,6 +379,7 @@ impl SessionManager {
             AgentType::Codex | AgentType::Gemini | AgentType::Opencode => AgentInput::CodexPrompt {
                 text: input,
                 images,
+                model,
             },
         };
 
@@ -915,6 +931,48 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     }
                     continue;
                 };
+                if session_tab.model_invalid || session_tab.model.is_none() {
+                    if let Some(model_id) = model.clone() {
+                        if let Err(error) = SessionService::update_session(
+                            &core,
+                            session_id,
+                            UpdateSessionParams {
+                                model: Some(model_id),
+                                agent_type: None,
+                                agent_mode: None,
+                            },
+                        ) {
+                            if let Err(send_err) = tx
+                                .send(ServerMessage::session_error(session_id, format!("{error}")))
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
+                            continue;
+                        }
+                    } else {
+                        if let Err(send_err) = tx
+                            .send(ServerMessage::session_error(
+                                session_id,
+                                "Select a model to continue.",
+                            ))
+                            .await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
+                        }
+                        continue;
+                    }
+                }
                 let agent_type = session_tab.agent_type;
                 let should_generate = should_generate_title(hidden, &session_tab);
                 drop(core);
@@ -1168,6 +1226,43 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 images,
             } => {
                 let agent_type = session_manager.get_agent_type(session_id).await;
+                let core = session_manager.core.read().await;
+                let session_tab = match SessionService::get_session(&core, session_id) {
+                    Ok(session) => session,
+                    Err(error) => {
+                        if let Err(send_err) = tx
+                            .send(ServerMessage::session_error(session_id, format!("{error}")))
+                            .await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
+                        }
+                        continue;
+                    }
+                };
+                if session_tab.model_invalid || session_tab.model.is_none() {
+                    if let Err(send_err) = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Select a model to continue.",
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                    continue;
+                }
+                let model = session_tab.model.clone();
+                drop(core);
                 let mut input_payload = input.clone();
                 let image_paths = if images.is_empty() {
                     Vec::new()
@@ -1273,7 +1368,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 }
 
                 if let Err(e) = session_manager
-                    .send_input(session_id, input_payload, image_paths)
+                    .send_input(session_id, input_payload, image_paths, model)
                     .await
                 {
                     if let Err(send_err) =

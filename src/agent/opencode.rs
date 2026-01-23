@@ -26,6 +26,7 @@ use crate::agent::events::{
 };
 use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
+use crate::agent::ModelRegistry;
 
 const OPENCODE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const OPENCODE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -134,6 +135,8 @@ struct QuestionResponseEvent {
 struct MessagePart {
     #[serde(rename = "sessionID")]
     session_id: String,
+    #[serde(rename = "messageID")]
+    message_id: Option<String>,
     #[serde(rename = "type")]
     part_type: String,
     #[serde(rename = "callID")]
@@ -172,6 +175,8 @@ struct MessageInfo {
     parts: Vec<MessagePartInfo>,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    error: Option<Value>,
     #[serde(default)]
     time: Option<MessageTime>,
 }
@@ -221,6 +226,10 @@ impl OpencodeSharedState {
         self.sse_active
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
+    }
+
+    fn is_sse_active(&self) -> bool {
+        self.sse_active.load(Ordering::SeqCst)
     }
 
     fn mark_sse_inactive(&self) {
@@ -655,6 +664,8 @@ impl OpencodeRunner {
                     .send(AgentEvent::Error(ErrorEvent {
                         message: format!("OpenCode prompt failed: {err}"),
                         is_fatal: true,
+                        code: None,
+                        details: None,
                     }))
                     .await
                     .is_err()
@@ -701,6 +712,11 @@ impl OpencodeRunner {
         };
         let mut info_value_for_emit = info_value.clone();
         let mut info_for_emit = info;
+        let has_error = info_for_emit.error.is_some();
+
+        if shared_state.is_sse_active() && !has_error {
+            return Ok(());
+        }
 
         let completed = info_for_emit
             .time
@@ -776,6 +792,14 @@ impl OpencodeRunner {
         let (mut text, mut reasoning) = content_override_ref
             .map(|(text, reasoning)| (text.clone(), reasoning.clone()))
             .unwrap_or_else(|| (String::new(), String::new()));
+        let error_message = info.error.as_ref().and_then(|value| {
+            value
+                .get("data")
+                .and_then(|data| data.get("message"))
+                .and_then(|message| message.as_str())
+                .or_else(|| value.get("message").and_then(|message| message.as_str()))
+                .map(|message| message.to_string())
+        });
         if text.is_empty() && reasoning.is_empty() {
             let (fallback_text, fallback_reasoning) = Self::extract_message_parts(info);
             text = fallback_text;
@@ -791,6 +815,45 @@ impl OpencodeRunner {
                 if reasoning.is_empty() {
                     reasoning = fallback_reasoning;
                 }
+            }
+        }
+
+        if text.is_empty() && reasoning.is_empty() {
+            if let Some(error) = error_message {
+                let lowered = error.to_lowercase();
+                let is_model_error = lowered.contains("model")
+                    && (lowered.contains("not supported")
+                        || lowered.contains("not found")
+                        || lowered.contains("unavailable"));
+                if is_model_error {
+                    invalidate_model_cache();
+                    if let Some(model_id) = extract_model_id_from_error(&error) {
+                        let normalized = if model_id.contains('/') {
+                            model_id
+                        } else {
+                            format!("opencode/{}", model_id)
+                        };
+                        ModelRegistry::drop_opencode_model(&normalized);
+                    }
+                }
+                tracing::warn!(
+                    session_id,
+                    message_id = %info.id,
+                    error = %error,
+                    "OpenCode assistant message error"
+                );
+                let _ = tx
+                    .send(AgentEvent::Error(ErrorEvent {
+                        message: format!("OpenCode error: {}", error),
+                        is_fatal: true,
+                        code: if is_model_error {
+                            Some("model_not_found".to_string())
+                        } else {
+                            None
+                        },
+                        details: None,
+                    }))
+                    .await;
             }
         }
 
@@ -1006,6 +1069,8 @@ impl OpencodeRunner {
                     .send(AgentEvent::Error(ErrorEvent {
                         message: format!("OpenCode SSE setup failed: {err}"),
                         is_fatal: false,
+                        code: None,
+                        details: None,
                     }))
                     .await;
                 return;
@@ -1029,6 +1094,8 @@ impl OpencodeRunner {
                                 .send(AgentEvent::Error(ErrorEvent {
                                     message: format!("OpenCode event parse error: {err}"),
                                     is_fatal: false,
+                                    code: None,
+                                    details: None,
                                 }))
                                 .await;
                             continue;
@@ -1048,6 +1115,15 @@ impl OpencodeRunner {
                                     Ok(info) => info,
                                     Err(_) => continue,
                                 };
+                            if info.role == "assistant" {
+                                let has_streamable_parts = info.parts.iter().any(|part| {
+                                    matches!(part.part_type.as_str(), "text" | "reasoning")
+                                });
+                                let has_error = info.error.is_some();
+                                if has_streamable_parts && !has_error {
+                                    continue;
+                                }
+                            }
                             let mut info_value_for_emit = info_value.clone();
                             let mut content_override: Option<(String, String)> = None;
 
@@ -1117,12 +1193,22 @@ impl OpencodeRunner {
                                             .await;
                                     }
                                     if part.time.as_ref().and_then(|t| t.end).is_some() {
-                                        if let Some(text) = part.text {
+                                        if let Some(message_id) = part.message_id.as_deref() {
+                                            shared_state.mark_completed(message_id).await;
+                                        }
+                                        let _ = event_tx
+                                            .send(AgentEvent::AssistantMessage(
+                                                AssistantMessageEvent {
+                                                    text: String::new(),
+                                                    is_final: true,
+                                                },
+                                            ))
+                                            .await;
+                                        if shared_state.take_turn_in_flight() {
                                             let _ = event_tx
-                                                .send(AgentEvent::AssistantMessage(
-                                                    AssistantMessageEvent {
-                                                        text,
-                                                        is_final: true,
+                                                .send(AgentEvent::TurnCompleted(
+                                                    TurnCompletedEvent {
+                                                        usage: Default::default(),
                                                     },
                                                 ))
                                                 .await;
@@ -1283,6 +1369,8 @@ impl OpencodeRunner {
                                                 "Failed to respond to OpenCode permission: {err}"
                                             ),
                                             is_fatal: false,
+                                            code: None,
+                                            details: None,
                                         }))
                                         .await;
                                 }
@@ -1397,6 +1485,8 @@ impl OpencodeRunner {
                         .send(AgentEvent::Error(ErrorEvent {
                             message: format!("OpenCode SSE error: {err}"),
                             is_fatal: false,
+                            code: None,
+                            details: None,
                         }))
                         .await;
                     break;
@@ -1449,6 +1539,8 @@ impl AgentRunner for OpencodeRunner {
                             .send(AgentEvent::Error(ErrorEvent {
                                 message: format!("OpenCode stdout error: {err}"),
                                 is_fatal: false,
+                                code: None,
+                                details: None,
                             }))
                             .await;
                         break;
@@ -1521,6 +1613,12 @@ impl AgentRunner for OpencodeRunner {
 
                                 if trimmed.contains('}') || line_count > 12 {
                                     invalidate_model_cache();
+                                    if let (Some(provider), Some(model)) =
+                                        (provider_id.as_ref(), model_id.as_ref())
+                                    {
+                                        let model_id = format!("{}/{}", provider, model);
+                                        ModelRegistry::drop_opencode_model(&model_id);
+                                    }
                                     let message = match (provider_id.as_ref(), model_id.as_ref()) {
                                         (Some(provider), Some(model)) => {
                                             if suggestions.is_empty() {
@@ -1536,10 +1634,17 @@ impl AgentRunner for OpencodeRunner {
                                         }
                                         _ => "OpenCode model not found.".to_string(),
                                     };
+                                    let details = serde_json::json!({
+                                        "provider": provider_id,
+                                        "model": model_id,
+                                        "suggestions": suggestions,
+                                    });
                                     let _ = event_tx_for_stderr
                                         .send(AgentEvent::Error(ErrorEvent {
                                             message,
                                             is_fatal: true,
+                                            code: Some("model_not_found".to_string()),
+                                            details: Some(details),
                                         }))
                                         .await;
                                     capturing_model_error = false;
@@ -1568,6 +1673,8 @@ impl AgentRunner for OpencodeRunner {
                                 status.code()
                             ),
                             is_fatal: true,
+                            code: None,
+                            details: None,
                         }))
                         .await;
                 }
@@ -1648,19 +1755,29 @@ impl AgentRunner for OpencodeRunner {
                         shared_state.clone(),
                     );
                     match input {
-                        AgentInput::CodexPrompt { text, images } => {
+                        AgentInput::CodexPrompt {
+                            text,
+                            images,
+                            model,
+                        } => {
                             if !images.is_empty() {
                                 let _ = event_tx
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message: "OpenCode runner does not support image attachments yet.".to_string(),
                                         is_fatal: false,
+                                        code: None,
+                                        details: None,
                                     }))
                                 .await;
                             }
+                            let model_ref_for_input = model
+                                .as_deref()
+                                .and_then(ModelRef::parse)
+                                .or_else(|| model_ref.clone());
                             OpencodeRunner::send_prompt(
                                 &client,
                                 &session_id,
-                                model_ref.as_ref(),
+                                model_ref_for_input.as_ref(),
                                 text,
                                 &event_tx,
                                 &shared_state,
@@ -1673,6 +1790,8 @@ impl AgentRunner for OpencodeRunner {
                                     message: "OpenCode runner does not support Claude JSONL input."
                                         .to_string(),
                                     is_fatal: false,
+                                    code: None,
+                                    details: None,
                                 }))
                                 .await;
                         }
@@ -1691,6 +1810,8 @@ impl AgentRunner for OpencodeRunner {
                                             "OpenCode question response failed: {err}"
                                         ),
                                         is_fatal: false,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await;
                             }
@@ -1834,6 +1955,20 @@ fn invalidate_model_cache() {
             }
         }
     }
+}
+
+fn extract_model_id_from_error(error: &str) -> Option<String> {
+    for prefix in ["Model ", "model "] {
+        if let Some(rest) = error.split(prefix).nth(1) {
+            if let Some(candidate) = rest.split_whitespace().next() {
+                let trimmed = candidate.trim_matches(|c: char| c == '"' || c == '\'');
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn parse_models_output(text: &str) -> Vec<String> {

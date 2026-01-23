@@ -50,7 +50,13 @@ export type AgentEvent =
   | { type: 'CommandOutput'; command: string; output: string; exit_code: number | null; is_streaming: boolean }
   | { type: 'TokenUsage'; usage: TokenUsage; context_window: number | null; usage_percent: number | null }
   | { type: 'ContextCompaction'; reason: string; tokens_before: number; tokens_after: number }
-  | { type: 'Error'; message: string; is_fatal: boolean }
+  | {
+      type: 'Error';
+      message: string;
+      is_fatal: boolean;
+      code?: string | null;
+      details?: unknown | null;
+    }
   | { type: 'Raw'; data: unknown };
 
 export interface ImageAttachment {

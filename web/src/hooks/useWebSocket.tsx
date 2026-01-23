@@ -86,7 +86,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
             next.add(message.session_id);
             return next;
           });
-        } else if (event.type === 'TurnCompleted' || event.type === 'TurnFailed') {
+        } else if (event.type === 'TurnCompleted' || event.type === 'TurnFailed' || event.type === 'Error') {
           setProcessingSessionIds((prev) => {
             const next = new Set(prev);
             next.delete(message.session_id);
@@ -99,6 +99,21 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
               next.add(message.session_id);
               return next;
             });
+          }
+          if (event.type === 'Error' && event.code === 'model_not_found') {
+            queryClient.setQueryData<Session>(queryKeys.session(message.session_id), (prev) =>
+              prev ? { ...prev, model: null, model_display_name: null, model_invalid: true } : prev
+            );
+            queryClient.setQueryData<Session[]>(queryKeys.sessions, (prev) =>
+              prev
+                ? prev.map((session) =>
+                    session.id === message.session_id
+                      ? { ...session, model: null, model_display_name: null, model_invalid: true }
+                      : session
+                  )
+                : prev
+            );
+            queryClient.invalidateQueries({ queryKey: queryKeys.models });
           }
         }
       }

@@ -198,6 +198,8 @@ pub struct SessionTab {
     pub agent_session_id: Option<String>,
     /// Selected model
     pub model: Option<String>,
+    /// Whether the stored model is invalid and needs re-selection
+    pub model_invalid: bool,
     /// PR number if a PR exists for this session's branch
     pub pr_number: Option<i32>,
     /// When the tab was created
@@ -235,6 +237,7 @@ impl SessionTab {
             agent_mode: None,
             agent_session_id,
             model,
+            model_invalid: false,
             pr_number,
             created_at: Utc::now(),
             pending_user_message: None,

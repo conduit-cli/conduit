@@ -343,6 +343,8 @@ impl MockEventBuilder {
         self.events.push(AgentEvent::Error(ErrorEvent {
             message: message.to_string(),
             is_fatal,
+            code: None,
+            details: None,
         }));
         self
     }

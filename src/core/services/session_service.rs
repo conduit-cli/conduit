@@ -119,9 +119,15 @@ impl SessionService {
                 || params.agent_type.is_some()
                 || params.agent_mode.is_some())
         {
-            return Err(ServiceError::InvalidInput(
-                "Cannot change session settings while a run is active".to_string(),
-            ));
+            let allow_model_repair = session.model_invalid
+                && params.model.is_some()
+                && params.agent_type.is_none()
+                && params.agent_mode.is_none();
+            if !allow_model_repair {
+                return Err(ServiceError::InvalidInput(
+                    "Cannot change session settings while a run is active".to_string(),
+                ));
+            }
         }
 
         let mut agent_type_changed = false;
@@ -150,9 +156,33 @@ impl SessionService {
                 )));
             }
             session.model = Some(model_id);
+            session.model_invalid = false;
         } else if agent_type_changed {
             session.model = Some(core.config().default_model_for(session.agent_type));
+            session.model_invalid = false;
         }
+
+        store
+            .update(&session)
+            .map_err(|e| ServiceError::Internal(format!("Failed to update session: {}", e)))?;
+
+        Ok(session)
+    }
+
+    pub fn invalidate_session_model(
+        core: &ConduitCore,
+        id: Uuid,
+    ) -> Result<SessionTab, ServiceError> {
+        let store = core
+            .session_tab_store()
+            .ok_or_else(|| ServiceError::Internal("Database not available".to_string()))?;
+        let mut session = store
+            .get_by_id(id)
+            .map_err(|e| ServiceError::Internal(format!("Failed to get session: {}", e)))?
+            .ok_or_else(|| ServiceError::NotFound(format!("Session {} not found", id)))?;
+
+        session.model = None;
+        session.model_invalid = true;
 
         store
             .update(&session)
@@ -322,7 +352,7 @@ impl SessionService {
         store: &crate::data::SessionTabStore,
         mut session: SessionTab,
     ) -> Result<SessionTab, ServiceError> {
-        if session.model.is_some() {
+        if session.model.is_some() || session.model_invalid {
             return Ok(session);
         }
 
@@ -338,7 +368,7 @@ impl SessionService {
         conn: &rusqlite::Connection,
         mut session: SessionTab,
     ) -> SqliteResult<SessionTab> {
-        if session.model.is_some() {
+        if session.model.is_some() || session.model_invalid {
             return Ok(session);
         }
 

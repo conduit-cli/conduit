@@ -195,8 +195,12 @@ impl AgentStartConfig {
 pub enum AgentInput {
     /// Raw JSONL payload for Claude streaming input.
     ClaudeJsonl(String),
-    /// Codex prompt with optional local images.
-    CodexPrompt { text: String, images: Vec<PathBuf> },
+    /// Codex prompt with optional local images and model override.
+    CodexPrompt {
+        text: String,
+        images: Vec<PathBuf>,
+        model: Option<String>,
+    },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {
         request_id: String,

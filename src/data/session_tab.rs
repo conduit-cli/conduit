@@ -40,8 +40,8 @@ impl SessionTabStore {
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
         let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
-            "INSERT INTO session_tabs (id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            "INSERT INTO session_tabs (id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, model_invalid, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(id) DO UPDATE SET
                tab_index = excluded.tab_index,
                is_open = excluded.is_open,
@@ -50,6 +50,7 @@ impl SessionTabStore {
                agent_mode = excluded.agent_mode,
                agent_session_id = excluded.agent_session_id,
                model = excluded.model,
+               model_invalid = excluded.model_invalid,
                pr_number = excluded.pr_number,
                pending_user_message = excluded.pending_user_message,
                queued_messages = excluded.queued_messages,
@@ -66,6 +67,7 @@ impl SessionTabStore {
                 tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
+                if tab.model_invalid { 1 } else { 0 },
                 tab.pr_number,
                 tab.created_at.to_rfc3339(),
                 tab.pending_user_message,
@@ -83,8 +85,8 @@ impl SessionTabStore {
         let queued_messages = serialize_queued_messages(&tab.queued_messages);
         let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
-            "INSERT INTO session_tabs (id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO session_tabs (id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, model_invalid, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -94,6 +96,7 @@ impl SessionTabStore {
                 tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
+                if tab.model_invalid { 1 } else { 0 },
                 tab.pr_number,
                 tab.created_at.to_rfc3339(),
                 tab.pending_user_message,
@@ -112,7 +115,7 @@ impl SessionTabStore {
         let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
             "UPDATE session_tabs SET tab_index = ?2, is_open = ?3, workspace_id = ?4, agent_type = ?5, agent_mode = ?6,
-             agent_session_id = ?7, model = ?8, pr_number = ?9, pending_user_message = ?10, queued_messages = ?11, input_history = ?12, fork_seed_id = ?13, title = ?14 WHERE id = ?1",
+             agent_session_id = ?7, model = ?8, model_invalid = ?9, pr_number = ?10, pending_user_message = ?11, queued_messages = ?12, input_history = ?13, fork_seed_id = ?14, title = ?15 WHERE id = ?1",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -122,6 +125,7 @@ impl SessionTabStore {
                 tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
+                if tab.model_invalid { 1 } else { 0 },
                 tab.pr_number,
                 tab.pending_user_message,
                 queued_messages,
@@ -140,7 +144,7 @@ impl SessionTabStore {
         // sessions closed, but older DBs may still contain "open" sessions pointing at archived
         // workspaces.)
         let mut stmt = conn.prepare(
-            "SELECT st.id, st.tab_index, st.is_open, st.workspace_id, st.agent_type, st.agent_mode, st.agent_session_id, st.model, st.pr_number, st.created_at, st.pending_user_message, st.queued_messages, st.input_history, st.fork_seed_id, st.title, st.title_generated
+            "SELECT st.id, st.tab_index, st.is_open, st.workspace_id, st.agent_type, st.agent_mode, st.agent_session_id, st.model, st.model_invalid, st.pr_number, st.created_at, st.pending_user_message, st.queued_messages, st.input_history, st.fork_seed_id, st.title, st.title_generated
              FROM session_tabs st
              LEFT JOIN workspaces w ON st.workspace_id = w.id
              WHERE st.is_open = 1
@@ -163,7 +167,7 @@ impl SessionTabStore {
     pub fn get_by_id(&self, id: Uuid) -> SqliteResult<Option<SessionTab>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated
+            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, model_invalid, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated
              FROM session_tabs WHERE id = ?1",
         )?;
 
@@ -182,7 +186,7 @@ impl SessionTabStore {
         let input_history = serialize_input_history(&tab.input_history);
         conn.execute(
             "UPDATE session_tabs SET tab_index = ?2, is_open = ?3, workspace_id = ?4, agent_type = ?5, agent_mode = ?6,
-             agent_session_id = ?7, model = ?8, pr_number = ?9, pending_user_message = ?10, queued_messages = ?11, input_history = ?12, fork_seed_id = ?13, title = ?14, title_generated = ?15 WHERE id = ?1",
+             agent_session_id = ?7, model = ?8, model_invalid = ?9, pr_number = ?10, pending_user_message = ?11, queued_messages = ?12, input_history = ?13, fork_seed_id = ?14, title = ?15, title_generated = ?16 WHERE id = ?1",
             params![
                 tab.id.to_string(),
                 tab.tab_index,
@@ -192,6 +196,7 @@ impl SessionTabStore {
                 tab.agent_mode,
                 tab.agent_session_id,
                 tab.model,
+                if tab.model_invalid { 1 } else { 0 },
                 tab.pr_number,
                 tab.pending_user_message,
                 queued_messages,
@@ -240,7 +245,7 @@ impl SessionTabStore {
         workspace_id: Uuid,
     ) -> SqliteResult<Option<SessionTab>> {
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated
+            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, model_invalid, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated
              FROM session_tabs WHERE workspace_id = ?1 ORDER BY is_open DESC, created_at DESC LIMIT 1",
         )?;
 
@@ -262,7 +267,7 @@ impl SessionTabStore {
         workspace_id: Uuid,
     ) -> SqliteResult<Option<SessionTab>> {
         let mut stmt = conn.prepare(
-            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title
+            "SELECT id, tab_index, is_open, workspace_id, agent_type, agent_mode, agent_session_id, model, model_invalid, pr_number, created_at, pending_user_message, queued_messages, input_history, fork_seed_id, title, title_generated
              FROM session_tabs WHERE workspace_id = ?1 AND is_open = 1 ORDER BY created_at DESC LIMIT 1",
         )?;
 
@@ -352,6 +357,7 @@ impl SessionTabStore {
         let input_history = deserialize_input_history(input_history_json.as_deref());
         let fork_seed_id_str: Option<String> = row.get("fork_seed_id")?;
         let title_generated: i64 = row.get("title_generated")?;
+        let model_invalid: i64 = row.get("model_invalid")?;
 
         Ok(SessionTab {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
@@ -362,6 +368,7 @@ impl SessionTabStore {
             agent_mode: row.get("agent_mode")?,
             agent_session_id: row.get("agent_session_id")?,
             model: row.get("model")?,
+            model_invalid: model_invalid != 0,
             pr_number: row.get("pr_number")?,
             created_at: DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))

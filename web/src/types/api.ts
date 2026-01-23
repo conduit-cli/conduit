@@ -62,6 +62,7 @@ export interface Session {
   agent_session_id: string | null;
   model: string | null;
   model_display_name: string | null;
+  model_invalid: boolean;
   pr_number: number | null;
   created_at: string;
   title: string | null;

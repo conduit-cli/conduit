@@ -173,6 +173,10 @@ pub struct ContextCompactionEvent {
 pub struct ErrorEvent {
     pub message: String,
     pub is_fatal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 // ============================================================================

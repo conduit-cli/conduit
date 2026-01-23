@@ -128,6 +128,16 @@ impl ModelRegistry {
         store.clear();
     }
 
+    pub fn drop_opencode_model(model_id: &str) {
+        if model_id == Self::OPENCODE_DEFAULT_MODEL_ID {
+            return;
+        }
+        let mut store = Self::opencode_store()
+            .write()
+            .unwrap_or_else(|err| err.into_inner());
+        store.retain(|model| model.id != model_id);
+    }
+
     pub fn refresh_opencode_models() {
         let models = load_opencode_models(None);
         if models.is_empty() {

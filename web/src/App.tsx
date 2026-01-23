@@ -759,6 +759,10 @@ function AppContent() {
     updateSession.mutate({ id: activeSession.id, data: { agent_mode: nextMode } });
   };
 
+  const handleOpenModelPicker = () => {
+    window.dispatchEvent(new Event('conduit:open-model-picker'));
+  };
+
   const commands = useMemo<CommandPaletteItem[]>(
     () => [
       {
@@ -810,6 +814,13 @@ function AppContent() {
           }
         },
         onSelect: handleTogglePlanMode,
+      },
+      {
+        id: 'open-model-picker',
+        label: 'Change Model...',
+        shortcut: 'Ctrl+Shift+M',
+        keywords: 'model picker agent',
+        onSelect: handleOpenModelPicker,
       },
       {
         id: 'new-session',
@@ -891,6 +902,7 @@ function AppContent() {
       handleNewSession,
       handleNewWorkspace,
       handleNextTab,
+      handleOpenModelPicker,
       handleOpenImport,
       handleOpenPr,
       handlePrevTab,
@@ -911,6 +923,10 @@ function AppContent() {
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && (key === 'k' || key === 'p')) {
         event.preventDefault();
         setIsCommandPaletteOpen((prev) => !prev);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === 'm') {
+        event.preventDefault();
+        handleOpenModelPicker();
       }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && key === 'c') {
         event.preventDefault();

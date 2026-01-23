@@ -30,6 +30,8 @@ pub struct AgentSession {
     pub last_mode_prompt: Option<AgentMode>,
     /// Selected model for this session
     pub model: Option<String>,
+    /// Whether the selected model is invalid and needs re-selection
+    pub model_invalid: bool,
     /// Associated workspace ID (for project context)
     pub workspace_id: Option<Uuid>,
     /// Working directory for the agent (workspace path)
@@ -124,6 +126,7 @@ impl AgentSession {
             agent_mode: AgentMode::default(),
             last_mode_prompt: None,
             model: None,
+            model_invalid: false,
             workspace_id: None,
             working_dir: None,
             project_name: None,
@@ -245,6 +248,9 @@ impl AgentSession {
         self.agent_type = agent_type;
         self.capabilities = AgentCapabilities::for_agent(agent_type);
         self.model = model;
+        if self.model.is_some() {
+            self.model_invalid = false;
+        }
         self.last_mode_prompt = None;
 
         if !self.capabilities.supports_plan_mode {

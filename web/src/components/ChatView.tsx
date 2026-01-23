@@ -224,6 +224,7 @@ export function ChatView({
   const [attachmentsBySession, setAttachmentsBySession] = useState<Record<string, ImageDraft[]>>(
     {}
   );
+  const [wsEventCutoff, setWsEventCutoff] = useState(0);
   const lastHistoryUserCount = useRef<Record<string, number>>({});
   const lastHistoryEventCount = useRef<Record<string, number>>({});
   const [historyRawEvents, setHistoryRawEvents] = useState<AgentEvent[]>([]);
@@ -233,6 +234,23 @@ export function ChatView({
 
   const historyLimit = 200;
   const hasMoreHistory = historyOffset > 0;
+  const refreshHistoryTail = useCallback(async () => {
+    if (!session?.id) return;
+    try {
+      const response = await getSessionEventsPage(session.id, { tail: true, limit: historyLimit });
+      setHistoryEvents(response.events);
+      setHistoryOffset(response.offset);
+      setHistoryRawEvents(
+        buildHistoryRawEvents(
+          response.debug_entries,
+          response.debug_file,
+          response.events.length
+        )
+      );
+    } catch {
+      // Ignore refresh errors for now.
+    }
+  }, [session?.id, historyLimit]);
 
   useEffect(() => {
     let isActive = true;
@@ -463,6 +481,7 @@ export function ChatView({
   useEffect(() => {
     setHasInitiallyScrolled(false);
     scrollSessionId.current = null;
+    setWsEventCutoff(0);
   }, [session?.id]);
 
   useEffect(() => {
@@ -508,6 +527,21 @@ export function ChatView({
       setIsAwaitingResponse(false);
     }
   }, [historyEvents, session, isProcessing, isAwaitingResponse]);
+
+  useEffect(() => {
+    if (!session || session.agent_type !== 'opencode') return;
+    if (wsEvents.length <= wsEventCutoff) return;
+    const lastEvent = wsEvents[wsEvents.length - 1];
+    if (lastEvent.type !== 'TurnCompleted') return;
+    let isActive = true;
+    refreshHistoryTail().then(() => {
+      if (!isActive) return;
+      setWsEventCutoff(wsEvents.length);
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [refreshHistoryTail, session, wsEvents, wsEventCutoff]);
 
   const draftValue = session ? drafts[session.id] ?? '' : '';
   const optimisticUserMessages = session ? optimisticMessages[session.id] ?? [] : [];
@@ -604,6 +638,11 @@ export function ChatView({
 
   const handleSend = (message: string) => {
     if (!session || !workspace) return;
+    if (session.model_invalid || !session.model) {
+      onNotify?.('Select a model to continue.', 'error');
+      setShowModelSelector(true);
+      return;
+    }
     void sendWithAttachments(message);
   };
 
@@ -717,6 +756,11 @@ export function ChatView({
 
   const handleSendQueued = async (queued: QueuedMessage) => {
     if (!session || !workspace) return;
+    if (session.model_invalid || !session.model) {
+      onNotify?.('Select a model to continue.', 'error');
+      setShowModelSelector(true);
+      return;
+    }
     setOptimisticMessages((prev) => ({
       ...prev,
       [session.id]: [...(prev[session.id] ?? []), queued.text],
@@ -820,9 +864,27 @@ export function ChatView({
 
   type RenderableEvent = typeof wsEvents[number] | ToolRunEvent;
 
+  const visibleWsEvents = useMemo(() => {
+    if (session?.agent_type !== 'opencode' || wsEventCutoff === 0) {
+      return wsEvents;
+    }
+    return wsEvents.filter((event, index) => {
+      if (index >= wsEventCutoff) {
+        return true;
+      }
+      if (event.type === 'AssistantMessage' || event.type === 'AssistantReasoning') {
+        return false;
+      }
+      if (event.type === 'TurnStarted' || event.type === 'TurnCompleted' || event.type === 'TurnFailed') {
+        return false;
+      }
+      return true;
+    });
+  }, [session?.agent_type, wsEventCutoff, wsEvents]);
+
   const renderableWsEvents = useMemo(() => {
     const toolIdToName = new Map<string, string>();
-    wsEvents.forEach((event) => {
+    visibleWsEvents.forEach((event) => {
       if (event.type === 'ToolStarted') {
         toolIdToName.set(event.tool_id, event.tool_name);
       }
@@ -856,7 +918,7 @@ export function ChatView({
       return false;
     };
 
-    for (const event of wsEvents) {
+    for (const event of visibleWsEvents) {
       if (shouldSkip(event)) {
         continue;
       }
@@ -904,7 +966,7 @@ export function ChatView({
     }
 
     return merged;
-  }, [inlinePrompt, wsEvents]);
+  }, [inlinePrompt, visibleWsEvents]);
 
   // Check if we have content to display
   const hasHistory = historyEvents.length > 0;
@@ -927,9 +989,35 @@ export function ChatView({
   }, [historyEvents, optimisticUserMessages, session, inputHistory]);
 
   // Can only change model if session hasn't started (no agent_session_id) and not processing
-  const canChangeModel = !session?.agent_session_id && !isProcessing;
+  const canChangeModel =
+    !!session &&
+    !isProcessing &&
+    (!session.agent_session_id || session.model_invalid || !session.model);
   const canChangeMode =
     supportsPlanMode(session?.agent_type) && !session?.agent_session_id && !isProcessing;
+
+  useEffect(() => {
+    const handleOpenModelPicker = () => {
+      if (!session) {
+        onNotify?.('No active session.', 'error');
+        return;
+      }
+      if (!canChangeModel) {
+        onNotify?.('Wait for the current response to finish before changing the model.', 'error');
+        return;
+      }
+      setShowModelSelector(true);
+    };
+
+    window.addEventListener('conduit:open-model-picker', handleOpenModelPicker as EventListener);
+    return () => {
+      window.removeEventListener(
+        'conduit:open-model-picker',
+        handleOpenModelPicker as EventListener
+      );
+    };
+  }, [canChangeModel, onNotify, session]);
+
   const planToggleBlockReason = !session
     ? 'No active session.'
     : !supportsPlanMode(session.agent_type)

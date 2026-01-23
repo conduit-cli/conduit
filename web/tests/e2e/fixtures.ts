@@ -12,6 +12,7 @@ export const session = {
   agent_session_id: 'agent-1',
   model: null,
   model_display_name: null,
+  model_invalid: false,
   pr_number: null,
   created_at: '2026-01-22T14:27:46.876Z',
   title: 'Codex session',

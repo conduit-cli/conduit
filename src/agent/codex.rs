@@ -554,6 +554,8 @@ impl CodexCliRunner {
                 AgentEvent::Error(ErrorEvent {
                     message: err.message.clone(),
                     is_fatal: true,
+                    code: None,
+                    details: None,
                 }),
                 AgentEvent::TurnFailed(TurnFailedEvent {
                     error: err.message.clone(),
@@ -562,10 +564,14 @@ impl CodexCliRunner {
             EventMsg::Warning(warn) => vec![AgentEvent::Error(ErrorEvent {
                 message: format!("Warning: {}", warn.message),
                 is_fatal: false,
+                code: None,
+                details: None,
             })],
             EventMsg::StreamError(err) => vec![AgentEvent::Error(ErrorEvent {
                 message: format!("Stream error: {}", err.message),
                 is_fatal: false,
+                code: None,
+                details: None,
             })],
             _ => serde_json::to_value(event)
                 .ok()
@@ -737,6 +743,8 @@ impl AgentRunner for CodexCliRunner {
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message,
                                         is_fatal: true,
+                                        code: None,
+                                        details: None,
                                     }))
                                     .await
                                 {
@@ -859,7 +867,7 @@ impl AgentRunner for CodexCliRunner {
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
                 match input {
-                    AgentInput::CodexPrompt { text, images } => {
+                    AgentInput::CodexPrompt { text, images, .. } => {
                         if let Err(err) = Self::send_user_message(
                             &input_peer,
                             input_conversation_id,
@@ -919,6 +927,8 @@ impl AgentRunner for CodexCliRunner {
                         .send(AgentEvent::Error(ErrorEvent {
                             message: error_msg,
                             is_fatal: true,
+                            code: None,
+                            details: None,
                         }))
                         .await
                     {
@@ -933,6 +943,8 @@ impl AgentRunner for CodexCliRunner {
                         .send(AgentEvent::Error(ErrorEvent {
                             message: format!("Failed to wait for Codex process: {}", err),
                             is_fatal: true,
+                            code: None,
+                            details: None,
                         }))
                         .await
                     {
