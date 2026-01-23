@@ -28,9 +28,10 @@ use uuid::Uuid;
 
 use crate::agent::events::UserQuestion;
 use crate::agent::{
-    load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentInput,
-    AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner,
-    GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, SessionId,
+    load_claude_history_with_debug, load_codex_history_with_debug,
+    load_opencode_history_with_debug, AgentEvent, AgentInput, AgentMode, AgentRunner,
+    AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
+    HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::core::resolve_repo_workspace_settings;
@@ -508,12 +509,18 @@ impl App {
                         );
                     }
                     AgentType::Opencode => {
-                        session.chat_view.push(
-                            MessageDisplay::System {
-                                content: "OpenCode history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                        if let Ok((msgs, debug_entries, file_path)) =
+                            load_opencode_history_with_debug(session_id_str)
+                        {
+                            Self::populate_debug_from_history(
+                                &mut session.raw_events_view,
+                                &debug_entries,
+                                &file_path,
+                            );
+                            for msg in msgs {
+                                session.chat_view.push(msg);
                             }
-                            .to_chat_message(),
-                        );
+                        }
                     }
                 }
             }
@@ -3316,12 +3323,18 @@ impl App {
                             );
                         }
                         AgentType::Opencode => {
-                            session.chat_view.push(
-                                MessageDisplay::System {
-                                    content: "OpenCode history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                            if let Ok((msgs, debug_entries, file_path)) =
+                                load_opencode_history_with_debug(session_id_str)
+                            {
+                                Self::populate_debug_from_history(
+                                    &mut session.raw_events_view,
+                                    &debug_entries,
+                                    &file_path,
+                                );
+                                for msg in msgs {
+                                    session.chat_view.push(msg);
                                 }
-                                .to_chat_message(),
-                            );
+                            }
                         }
                     }
                 }
@@ -4223,14 +4236,18 @@ impl App {
                 );
             }
             AgentType::Opencode => {
-                session.resume_session_id = None;
-                session.agent_session_id = None;
-                session.chat_view.push(
-                    MessageDisplay::System {
-                        content: "OpenCode session import isn't supported yet.".to_string(),
+                if let Ok((msgs, debug_entries, file_path)) =
+                    load_opencode_history_with_debug(&session_id_str)
+                {
+                    Self::populate_debug_from_history(
+                        &mut session.raw_events_view,
+                        &debug_entries,
+                        &file_path,
+                    );
+                    for msg in msgs {
+                        session.chat_view.push(msg);
                     }
-                    .to_chat_message(),
-                );
+                }
             }
         }
 

@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::display::MessageDisplay;
@@ -324,6 +325,7 @@ pub struct HistoryDebugEntry {
 #[derive(Debug)]
 pub enum HistoryError {
     HomeNotFound,
+    StorageNotFound,
     SessionNotFound(String),
     IoError(std::io::Error),
     ParseError(String),
@@ -339,6 +341,7 @@ impl std::fmt::Display for HistoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HistoryError::HomeNotFound => write!(f, "Home directory not found"),
+            HistoryError::StorageNotFound => write!(f, "OpenCode storage directory not found"),
             HistoryError::SessionNotFound(id) => write!(f, "Session not found: {}", id),
             HistoryError::IoError(e) => write!(f, "IO error: {}", e),
             HistoryError::ParseError(e) => write!(f, "Parse error: {}", e),
@@ -347,6 +350,102 @@ impl std::fmt::Display for HistoryError {
 }
 
 impl std::error::Error for HistoryError {}
+
+#[derive(Debug, Deserialize)]
+struct OpencodeMessageInfo {
+    id: String,
+    role: String,
+    #[serde(default)]
+    time: Option<Value>,
+}
+
+fn opencode_storage_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("opencode").join("storage"))
+}
+
+fn find_opencode_session_file(storage_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let sessions_dir = storage_dir.join("session");
+    let entries = fs::read_dir(&sessions_dir).ok()?;
+    for project_entry in entries.flatten() {
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        let candidate = project_path.join(format!("{session_id}.json"));
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn list_sorted_json(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort_by(|a, b| {
+        let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        a_name.cmp(b_name)
+    });
+    files
+}
+
+fn opencode_parts_for_message(storage_dir: &Path, message_id: &str) -> Vec<Value> {
+    let parts_dir = storage_dir.join("part").join(message_id);
+    let mut parts = Vec::new();
+    for path in list_sorted_json(&parts_dir) {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                parts.push(value);
+            }
+        }
+    }
+    parts
+}
+
+fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String, String) {
+    let mut text = String::new();
+    let mut reasoning = String::new();
+
+    for part in parts {
+        let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if part_type == "reasoning" && !include_reasoning {
+            continue;
+        }
+        if part_type != "text" && part_type != "reasoning" {
+            continue;
+        }
+        if part.get("ignored").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+        if part.get("synthetic").and_then(|v| v.as_bool()) == Some(true) {
+            continue;
+        }
+        let chunk = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if chunk.is_empty() {
+            continue;
+        }
+        if part_type == "reasoning" {
+            reasoning.push_str(chunk);
+        } else {
+            text.push_str(chunk);
+        }
+        text.push('\n');
+    }
+
+    if text.ends_with('\n') {
+        text.pop();
+    }
+
+    (text, reasoning)
+}
 
 /// Load Claude Code history for a session
 ///
@@ -1295,6 +1394,138 @@ pub fn load_codex_history_with_debug(
 
     let session_file = find_codex_session_file(&sessions_dir, session_id)?;
     let (messages, debug_entries) = parse_codex_history_file_with_debug(&session_file)?;
+    Ok((messages, debug_entries, session_file))
+}
+
+/// Load OpenCode history with debug information from storage.
+pub fn load_opencode_history_with_debug(
+    session_id: &str,
+) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
+    let storage_dir = opencode_storage_dir().ok_or(HistoryError::StorageNotFound)?;
+    if !storage_dir.exists() {
+        return Err(HistoryError::StorageNotFound);
+    }
+
+    let session_file = find_opencode_session_file(&storage_dir, session_id)
+        .ok_or_else(|| HistoryError::SessionNotFound(session_id.to_string()))?;
+
+    let message_dir = storage_dir.join("message").join(session_id);
+    if !message_dir.exists() {
+        return Err(HistoryError::SessionNotFound(session_id.to_string()));
+    }
+
+    let mut records = Vec::new();
+    for message_path in list_sorted_json(&message_dir) {
+        let raw = fs::read_to_string(&message_path)?;
+        let raw_value: Value =
+            serde_json::from_str(&raw).map_err(|e| HistoryError::ParseError(e.to_string()))?;
+        let info: OpencodeMessageInfo = serde_json::from_value(raw_value.clone())
+            .map_err(|e| HistoryError::ParseError(e.to_string()))?;
+        let parts = opencode_parts_for_message(&storage_dir, &info.id);
+        let created = info
+            .time
+            .as_ref()
+            .and_then(|t| t.get("created"))
+            .and_then(|v| v.as_i64());
+        records.push((created, info, parts, raw_value));
+    }
+
+    records.sort_by(|a, b| {
+        let a_time = a.0.unwrap_or(0);
+        let b_time = b.0.unwrap_or(0);
+        if a_time == b_time {
+            a.1.id.cmp(&b.1.id)
+        } else {
+            a_time.cmp(&b_time)
+        }
+    });
+
+    let mut messages = Vec::new();
+    let mut debug_entries = Vec::new();
+
+    for (idx, (_created, info, parts, raw_info)) in records.into_iter().enumerate() {
+        let mut status = "INCLUDE".to_string();
+        let mut reason = format!("role={}", info.role);
+        let raw_json = serde_json::json!({ "info": raw_info, "parts": parts });
+
+        match raw_json
+            .get("info")
+            .and_then(|v| v.get("role"))
+            .and_then(|v| v.as_str())
+        {
+            Some("user") => {
+                let parts_val = raw_json
+                    .get("parts")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let (text, _) = opencode_text_from_parts(&parts_val, false);
+                if text.trim().is_empty() {
+                    status = "SKIP".to_string();
+                    reason = "user message empty".to_string();
+                } else {
+                    messages.push(MessageDisplay::User { content: text }.to_chat_message());
+                }
+            }
+            Some("assistant") => {
+                let info_val = raw_json.get("info");
+                let summary = info_val
+                    .and_then(|v| v.get("summary"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if summary {
+                    status = "SKIP".to_string();
+                    reason = "assistant summary".to_string();
+                } else {
+                    let parts_val = raw_json
+                        .get("parts")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let (text, _reasoning) = opencode_text_from_parts(&parts_val, false);
+                    if text.trim().is_empty() {
+                        let error_message = info_val
+                            .and_then(|v| v.get("error"))
+                            .and_then(|v| v.get("message"))
+                            .and_then(|v| v.as_str());
+                        if let Some(error_message) = error_message {
+                            messages.push(
+                                MessageDisplay::Error {
+                                    content: error_message.to_string(),
+                                }
+                                .to_chat_message(),
+                            );
+                            reason = "assistant error".to_string();
+                        } else {
+                            status = "SKIP".to_string();
+                            reason = "assistant message empty".to_string();
+                        }
+                    } else {
+                        messages.push(
+                            MessageDisplay::Assistant {
+                                content: text,
+                                is_streaming: false,
+                            }
+                            .to_chat_message(),
+                        );
+                    }
+                }
+            }
+            _ => {
+                status = "SKIP".to_string();
+                reason = "unsupported role".to_string();
+            }
+        }
+
+        debug_entries.push(HistoryDebugEntry {
+            line_number: idx,
+            entry_type: "opencode_message".to_string(),
+            status,
+            reason,
+            raw_json,
+        });
+    }
+
     Ok((messages, debug_entries, session_file))
 }
 
