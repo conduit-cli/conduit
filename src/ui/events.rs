@@ -138,6 +138,12 @@ pub enum AppEvent {
         message_index: usize,
         result: Result<ShellCommandResult, String>,
     },
+
+    /// OpenCode question response sent (success or error)
+    OpencodeQuestionResponseCompleted {
+        session_id: Uuid,
+        result: Result<(), String>,
+    },
 }
 
 /// Result of successful title/branch generation

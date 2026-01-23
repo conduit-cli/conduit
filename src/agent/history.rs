@@ -396,20 +396,44 @@ fn opencode_storage_dir_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn find_opencode_session_file(storage_dir: &Path, session_id: &str) -> Option<PathBuf> {
+fn io_error_with_context(error: std::io::Error, context: String) -> std::io::Error {
+    std::io::Error::new(error.kind(), format!("{context}: {error}"))
+}
+
+fn find_opencode_session_file(
+    storage_dir: &Path,
+    session_id: &str,
+) -> Result<Option<PathBuf>, HistoryError> {
     let sessions_dir = storage_dir.join("session");
-    let entries = fs::read_dir(&sessions_dir).ok()?;
-    for project_entry in entries.flatten() {
+    let entries = fs::read_dir(&sessions_dir).map_err(|error| {
+        HistoryError::IoError(io_error_with_context(
+            error,
+            format!(
+                "Failed to read OpenCode sessions directory {}",
+                sessions_dir.display()
+            ),
+        ))
+    })?;
+    for project_entry in entries {
+        let project_entry = project_entry.map_err(|error| {
+            HistoryError::IoError(io_error_with_context(
+                error,
+                format!(
+                    "Failed to read OpenCode project entry in {}",
+                    sessions_dir.display()
+                ),
+            ))
+        })?;
         let project_path = project_entry.path();
         if !project_path.is_dir() {
             continue;
         }
         let candidate = project_path.join(format!("{session_id}.json"));
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(Some(candidate));
         }
     }
-    None
+    Ok(None)
 }
 
 fn find_opencode_storage_for_session(session_id: &str) -> Result<(PathBuf, PathBuf), HistoryError> {
@@ -419,7 +443,7 @@ fn find_opencode_storage_for_session(session_id: &str) -> Result<(PathBuf, PathB
             continue;
         }
         has_storage = true;
-        if let Some(session_file) = find_opencode_session_file(&storage_dir, session_id) {
+        if let Some(session_file) = find_opencode_session_file(&storage_dir, session_id)? {
             return Ok((storage_dir, session_file));
         }
     }
@@ -431,7 +455,17 @@ fn find_opencode_storage_for_session(session_id: &str) -> Result<(PathBuf, PathB
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    match path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::debug!(
+                path = %path.display(),
+                error = %error,
+                "Failed to canonicalize OpenCode history path"
+            );
+            path.to_path_buf()
+        }
+    }
 }
 
 fn opencode_paths_match(session_dir: &str, working_dir: &Path) -> bool {
@@ -444,25 +478,50 @@ fn opencode_paths_match(session_dir: &str, working_dir: &Path) -> bool {
 fn find_opencode_session_for_dir(
     storage_dir: &Path,
     working_dir: &Path,
-) -> Option<(String, PathBuf, i64)> {
+) -> Result<Option<(String, PathBuf, i64)>, HistoryError> {
     let sessions_dir = storage_dir.join("session");
-    let entries = fs::read_dir(&sessions_dir).ok()?;
+    let entries = fs::read_dir(&sessions_dir).map_err(|error| {
+        HistoryError::IoError(io_error_with_context(
+            error,
+            format!(
+                "Failed to read OpenCode sessions directory {}",
+                sessions_dir.display()
+            ),
+        ))
+    })?;
     let mut best: Option<(String, PathBuf, i64)> = None;
 
-    for project_entry in entries.flatten() {
+    for project_entry in entries {
+        let project_entry = project_entry.map_err(|error| {
+            HistoryError::IoError(io_error_with_context(
+                error,
+                format!(
+                    "Failed to read OpenCode project entry in {}",
+                    sessions_dir.display()
+                ),
+            ))
+        })?;
         let project_path = project_entry.path();
         if !project_path.is_dir() {
             continue;
         }
-        for session_path in list_sorted_json(&project_path) {
-            let raw = match fs::read_to_string(&session_path) {
-                Ok(raw) => raw,
-                Err(_) => continue,
-            };
-            let info: OpencodeSessionInfo = match serde_json::from_str(&raw) {
-                Ok(info) => info,
-                Err(_) => continue,
-            };
+        for session_path in list_sorted_json(&project_path)? {
+            let raw = fs::read_to_string(&session_path).map_err(|error| {
+                HistoryError::IoError(io_error_with_context(
+                    error,
+                    format!(
+                        "Failed to read OpenCode session file {}",
+                        session_path.display()
+                    ),
+                ))
+            })?;
+            let info: OpencodeSessionInfo = serde_json::from_str(&raw).map_err(|error| {
+                HistoryError::ParseError(format!(
+                    "Failed to parse OpenCode session file {}: {}",
+                    session_path.display(),
+                    error
+                ))
+            })?;
             let directory = match info.directory.as_deref() {
                 Some(directory) => directory,
                 None => continue,
@@ -486,17 +545,27 @@ fn find_opencode_session_for_dir(
         }
     }
 
-    best
+    Ok(best)
 }
 
-fn list_sorted_json(dir: &Path) -> Vec<PathBuf> {
+fn list_sorted_json(dir: &Path) -> Result<Vec<PathBuf>, HistoryError> {
     let mut files = Vec::new();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                files.push(path);
-            }
+    let entries = fs::read_dir(dir).map_err(|error| {
+        HistoryError::IoError(io_error_with_context(
+            error,
+            format!("Failed to read directory {}", dir.display()),
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            HistoryError::IoError(io_error_with_context(
+                error,
+                format!("Failed to read directory entry in {}", dir.display()),
+            ))
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            files.push(path);
         }
     }
     files.sort_by(|a, b| {
@@ -504,20 +573,32 @@ fn list_sorted_json(dir: &Path) -> Vec<PathBuf> {
         let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
         a_name.cmp(b_name)
     });
-    files
+    Ok(files)
 }
 
-fn opencode_parts_for_message(storage_dir: &Path, message_id: &str) -> Vec<Value> {
+fn opencode_parts_for_message(
+    storage_dir: &Path,
+    message_id: &str,
+) -> Result<Vec<Value>, HistoryError> {
     let parts_dir = storage_dir.join("part").join(message_id);
     let mut parts = Vec::new();
-    for path in list_sorted_json(&parts_dir) {
-        if let Ok(raw) = fs::read_to_string(&path) {
-            if let Ok(value) = serde_json::from_str::<Value>(&raw) {
-                parts.push(value);
-            }
-        }
+    for path in list_sorted_json(&parts_dir)? {
+        let raw = fs::read_to_string(&path).map_err(|error| {
+            HistoryError::IoError(io_error_with_context(
+                error,
+                format!("Failed to read OpenCode part file {}", path.display()),
+            ))
+        })?;
+        let value: Value = serde_json::from_str(&raw).map_err(|error| {
+            HistoryError::ParseError(format!(
+                "Failed to parse OpenCode part file {}: {}",
+                path.display(),
+                error
+            ))
+        })?;
+        parts.push(value);
     }
-    parts
+    Ok(parts)
 }
 
 fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String, String) {
@@ -546,8 +627,8 @@ fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String
             reasoning.push_str(chunk);
         } else {
             text.push_str(chunk);
+            text.push('\n');
         }
-        text.push('\n');
     }
 
     if text.ends_with('\n') {
@@ -1623,7 +1704,7 @@ fn load_opencode_history_from_storage(
     storage_dir: &Path,
     session_id: &str,
 ) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
-    let session_file = find_opencode_session_file(storage_dir, session_id)
+    let session_file = find_opencode_session_file(storage_dir, session_id)?
         .ok_or_else(|| HistoryError::SessionNotFound(session_id.to_string()))?;
 
     let message_dir = storage_dir.join("message").join(session_id);
@@ -1632,13 +1713,26 @@ fn load_opencode_history_from_storage(
     }
 
     let mut records = Vec::new();
-    for message_path in list_sorted_json(&message_dir) {
-        let raw = fs::read_to_string(&message_path)?;
-        let raw_value: Value =
-            serde_json::from_str(&raw).map_err(|e| HistoryError::ParseError(e.to_string()))?;
+    for message_path in list_sorted_json(&message_dir)? {
+        let raw = fs::read_to_string(&message_path).map_err(|error| {
+            HistoryError::IoError(io_error_with_context(
+                error,
+                format!(
+                    "Failed to read OpenCode message file {}",
+                    message_path.display()
+                ),
+            ))
+        })?;
+        let raw_value: Value = serde_json::from_str(&raw).map_err(|error| {
+            HistoryError::ParseError(format!(
+                "Failed to parse OpenCode message file {}: {}",
+                message_path.display(),
+                error
+            ))
+        })?;
         let info: OpencodeMessageInfo = serde_json::from_value(raw_value.clone())
             .map_err(|e| HistoryError::ParseError(e.to_string()))?;
-        let parts = opencode_parts_for_message(storage_dir, &info.id);
+        let parts = opencode_parts_for_message(storage_dir, &info.id)?;
         let created = info
             .time
             .as_ref()
@@ -1787,7 +1881,7 @@ pub fn load_opencode_history_for_dir_with_debug(
         }
         has_storage = true;
         if let Some((session_id, session_file, updated)) =
-            find_opencode_session_for_dir(&storage_dir, working_dir)
+            find_opencode_session_for_dir(&storage_dir, working_dir)?
         {
             let should_replace = match best.as_ref() {
                 Some((_, _, _, best_updated)) => updated > *best_updated,

@@ -29,6 +29,7 @@ use crate::agent::session::SessionId;
 
 const OPENCODE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const OPENCODE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
+const OPENCODE_PROMPT_TIMEOUT: Duration = Duration::from_secs(60);
 const OPENCODE_MODEL_CACHE_TTL_SECS: u64 = 60 * 60 * 24;
 const OPENCODE_LOG_PREVIEW_CHARS: usize = 200;
 
@@ -288,15 +289,40 @@ impl OpenCodeClient {
             model,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
+        let response = match timeout(
+            OPENCODE_PROMPT_TIMEOUT,
+            self.client.post(&url).json(&request).send(),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    session_id,
+                    error = %err,
+                    url = %url,
+                    "OpenCode prompt request failed"
+                );
+                return Err(io::Error::other(err.to_string()));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    session_id,
+                    url = %url,
+                    timeout_secs = OPENCODE_PROMPT_TIMEOUT.as_secs(),
+                    "OpenCode prompt request timed out"
+                );
+                return Err(io::Error::other(format!(
+                    "Prompt request timed out after {}s",
+                    OPENCODE_PROMPT_TIMEOUT.as_secs()
+                )));
+            }
+        };
+        let status = response.status();
+        let text = response
+            .text()
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
             tracing::debug!(
@@ -593,6 +619,11 @@ impl OpencodeRunner {
             Ok(body) => body,
             Err(err) => {
                 shared_state.set_turn_in_flight(false);
+                tracing::warn!(
+                    session_id,
+                    error = %err,
+                    "OpenCode prompt failed"
+                );
                 if tx
                     .send(AgentEvent::Error(ErrorEvent {
                         message: format!("OpenCode prompt failed: {err}"),
@@ -1426,6 +1457,11 @@ impl AgentRunner for OpencodeRunner {
         tokio::spawn(async move {
             if let Ok(status) = child.wait().await {
                 if !status.success() {
+                    tracing::warn!(
+                        status = ?status,
+                        code = ?status.code(),
+                        "OpenCode server exited"
+                    );
                     let _ = event_tx_for_wait
                         .send(AgentEvent::Error(ErrorEvent {
                             message: format!(

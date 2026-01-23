@@ -5387,6 +5387,48 @@ impl App {
                     );
                 }
             }
+            AppEvent::OpencodeQuestionResponseCompleted { session_id, result } => {
+                let is_active_tab = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .map(|active| active.id == session_id)
+                    .unwrap_or(false);
+                let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) else {
+                    tracing::debug!(
+                        %session_id,
+                        "OpencodeQuestionResponseCompleted for unknown session; ignoring"
+                    );
+                    return Ok(effects);
+                };
+
+                let mut should_stop_footer_spinner = false;
+                session.tools_in_flight = match session.tools_in_flight.checked_sub(1) {
+                    Some(value) => value,
+                    None => {
+                        tracing::warn!("tools_in_flight underflow on OpencodeQuestionResponse");
+                        0
+                    }
+                };
+                session.set_processing_state(ProcessingState::Thinking);
+
+                if session.tools_in_flight == 0 {
+                    session.stop_processing();
+                    should_stop_footer_spinner = is_active_tab;
+                }
+
+                if let Err(err) = result {
+                    session.chat_view.push(
+                        MessageDisplay::Error {
+                            content: format!("OpenCode question response failed: {}", err),
+                        }
+                        .to_chat_message(),
+                    );
+                }
+                if should_stop_footer_spinner {
+                    self.state.stop_footer_spinner();
+                }
+            }
             AppEvent::TitleGenerated { session_id, result } => {
                 // Single lookup - session must exist to proceed
                 let Some(session) = self.state.tab_manager.session_by_id_mut(session_id) else {
@@ -6112,40 +6154,80 @@ impl App {
         request_id: &str,
         answers: Option<Vec<Vec<String>>>,
     ) -> Vec<Effect> {
-        let Some(session) = self.state.tab_manager.active_session_mut() else {
-            return Vec::new();
-        };
-        if session.agent_type != AgentType::Opencode {
-            return Vec::new();
-        }
-        let Some(ref input_tx) = session.agent_input_tx else {
-            session.chat_view.push(
-                MessageDisplay::Error {
-                    content: "OpenCode question response failed: session not ready.".to_string(),
-                }
-                .to_chat_message(),
-            );
-            return Vec::new();
+        let (input_tx, session_id, should_start_footer_spinner, should_stop_footer_spinner, abort) = {
+            let Some(session) = self.state.tab_manager.active_session_mut() else {
+                return Vec::new();
+            };
+            if session.agent_type != AgentType::Opencode {
+                return Vec::new();
+            }
+            let pending_tools = session.tools_in_flight;
+            session.start_processing();
+            session.tools_in_flight = pending_tools.saturating_add(1);
+            session.set_processing_state(ProcessingState::Thinking);
+            let mut should_start_footer_spinner = true;
+            let mut should_stop_footer_spinner = false;
+            let mut abort = false;
+
+            if session.agent_input_tx.is_none() {
+                session.chat_view.push(
+                    MessageDisplay::Error {
+                        content: "OpenCode question response failed: session not ready."
+                            .to_string(),
+                    }
+                    .to_chat_message(),
+                );
+                session.tools_in_flight = session.tools_in_flight.saturating_sub(1);
+                session.stop_processing();
+                session.set_processing_state(ProcessingState::Thinking);
+                should_start_footer_spinner = false;
+                should_stop_footer_spinner = true;
+                abort = true;
+            }
+
+            (
+                session.agent_input_tx.clone(),
+                Some(session.id),
+                should_start_footer_spinner,
+                should_stop_footer_spinner,
+                abort,
+            )
         };
 
-        let input_tx = input_tx.clone();
+        if should_start_footer_spinner {
+            self.state.start_footer_spinner(None);
+        }
+        if should_stop_footer_spinner {
+            self.state.stop_footer_spinner();
+        }
+        if abort {
+            return Vec::new();
+        }
+
+        let Some(input_tx) = input_tx else {
+            return Vec::new();
+        };
+        let session_id = match session_id {
+            Some(session_id) => session_id,
+            None => return Vec::new(),
+        };
+
         let request_id = request_id.to_string();
+        let event_tx = self.event_tx.clone();
         tokio::spawn(async move {
-            if let Err(err) = input_tx
+            let result = input_tx
                 .send(AgentInput::OpencodeQuestion {
                     request_id,
                     answers,
                 })
                 .await
-            {
-                tracing::warn!("Failed to send OpenCode question response: {}", err);
-            }
+                .map_err(|err| err.to_string());
+            let _ = send_app_event(
+                &event_tx,
+                AppEvent::OpencodeQuestionResponseCompleted { session_id, result },
+                "opencode_question_response",
+            );
         });
-
-        session.start_processing();
-        session.set_processing_state(ProcessingState::Thinking);
-        self.state.start_footer_spinner(None);
-
         Vec::new()
     }
 
