@@ -28,6 +28,16 @@ use crate::agent::session::SessionId;
 const OPENCODE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const OPENCODE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 const OPENCODE_MODEL_CACHE_TTL_SECS: u64 = 60 * 60 * 24;
+const OPENCODE_LOG_PREVIEW_CHARS: usize = 200;
+
+fn truncate_for_log(text: &str, max_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max_chars).collect();
+    format!("{truncated}...(truncated, {char_count} chars)")
+}
 
 #[derive(Debug, Serialize)]
 struct CreateSessionRequest {
@@ -171,6 +181,7 @@ impl OpenCodeClient {
 
     async fn create_session(&self, title: Option<String>) -> io::Result<String> {
         let url = format!("{}/session", self.base_url);
+        tracing::debug!(url = %url, title = ?title, "OpenCode create session request");
         let response = self
             .client
             .post(&url)
@@ -184,6 +195,11 @@ impl OpenCodeClient {
             .text()
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
+        tracing::debug!(
+            status = %status,
+            body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+            "OpenCode create session response"
+        );
 
         if !status.is_success() {
             return Err(io::Error::other(format!(
@@ -204,6 +220,17 @@ impl OpenCodeClient {
         model: Option<ModelRef>,
     ) -> io::Result<()> {
         let url = format!("{}/session/{}/message", self.base_url, session_id);
+        let model_label = model
+            .as_ref()
+            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+            .unwrap_or_else(|| "default".to_string());
+        tracing::debug!(
+            session_id,
+            model = %model_label,
+            text_len = text.len(),
+            text_preview = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+            "OpenCode prompt request"
+        );
         let request = PromptRequest {
             session_id: session_id.to_string(),
             parts: vec![PromptPart::Text { text }],
@@ -217,12 +244,24 @@ impl OpenCodeClient {
             .send()
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
+        let status = response.status();
 
-        if !response.status().is_success() {
+        if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
+            tracing::debug!(
+                session_id,
+                status = %status,
+                body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+                "OpenCode prompt response error"
+            );
             return Err(io::Error::other(format!("Prompt failed: {text}")));
         }
 
+        tracing::debug!(
+            session_id,
+            status = %status,
+            "OpenCode prompt response"
+        );
         Ok(())
     }
 
@@ -238,22 +277,12 @@ impl OpenCodeClient {
             "permissionID": permission_id,
             "response": response,
         });
-
-        self.client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|err| io::Error::other(err.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn reply_question(&self, request_id: &str, answers: Vec<Vec<String>>) -> io::Result<()> {
-        let url = format!("{}/question/{}/reply", self.base_url, request_id);
-        let request = serde_json::json!({
-            "answers": answers,
-        });
+        tracing::debug!(
+            session_id,
+            permission_id,
+            response = %response,
+            "OpenCode permission response request"
+        );
 
         let response = self
             .client
@@ -263,36 +292,97 @@ impl OpenCodeClient {
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
 
-        if !response.status().is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(io::Error::other(format!("Question reply failed: {}", text)));
-        }
-
-        Ok(())
-    }
-
-    async fn reject_question(&self, request_id: &str) -> io::Result<()> {
-        let url = format!("{}/question/{}/reject", self.base_url, request_id);
-        let response = self
-            .client
-            .post(&url)
-            .send()
-            .await
-            .map_err(|err| io::Error::other(err.to_string()))?;
-
-        if !response.status().is_success() {
-            let text = response.text().await.unwrap_or_default();
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        tracing::debug!(
+            session_id,
+            permission_id,
+            status = %status,
+            body = %truncate_for_log(&body, OPENCODE_LOG_PREVIEW_CHARS),
+            "OpenCode permission response"
+        );
+        if !status.is_success() {
             return Err(io::Error::other(format!(
-                "Question reject failed: {}",
-                text
+                "Permission response failed: {}",
+                body
             )));
         }
 
         Ok(())
     }
 
+    async fn reply_question(&self, request_id: &str, answers: Vec<Vec<String>>) -> io::Result<()> {
+        let url = format!("{}/question/{}/reply", self.base_url, request_id);
+        let answer_count = answers.len();
+        let request = serde_json::json!({
+            "answers": answers,
+        });
+        tracing::debug!(request_id, answer_count, "OpenCode question reply request");
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            tracing::debug!(
+                request_id,
+                status = %status,
+                body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+                "OpenCode question reply error"
+            );
+            return Err(io::Error::other(format!("Question reply failed: {}", text)));
+        }
+
+        tracing::debug!(
+            request_id,
+            status = %status,
+            "OpenCode question reply response"
+        );
+        Ok(())
+    }
+
+    async fn reject_question(&self, request_id: &str) -> io::Result<()> {
+        let url = format!("{}/question/{}/reject", self.base_url, request_id);
+        tracing::debug!(request_id, "OpenCode question reject request");
+        let response = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        let status = response.status();
+
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            tracing::debug!(
+                request_id,
+                status = %status,
+                body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+                "OpenCode question reject error"
+            );
+            return Err(io::Error::other(format!(
+                "Question reject failed: {}",
+                text
+            )));
+        }
+
+        tracing::debug!(
+            request_id,
+            status = %status,
+            "OpenCode question reject response"
+        );
+        Ok(())
+    }
+
     fn subscribe_events(&self) -> io::Result<EventSource> {
         let url = format!("{}/event", self.base_url);
+        tracing::debug!(url = %url, "OpenCode SSE subscribe");
         self.client
             .get(url)
             .eventsource()
@@ -382,6 +472,15 @@ impl OpencodeRunner {
         text: String,
         tx: &mpsc::Sender<AgentEvent>,
     ) {
+        let model_label = model
+            .map(|m| format!("{}/{}", m.provider_id, m.model_id))
+            .unwrap_or_else(|| "default".to_string());
+        tracing::debug!(
+            session_id,
+            model = %model_label,
+            text_len = text.len(),
+            "OpenCode send prompt"
+        );
         if tx.send(AgentEvent::TurnStarted).await.is_err() {
             return;
         }
@@ -579,6 +678,7 @@ impl OpencodeRunner {
                                 .map(|sid| sid == session_id)
                                 .unwrap_or(false);
                             if matches_session {
+                                tracing::debug!(session_id, "OpenCode session idle");
                                 let _ = event_tx
                                     .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
                                         usage: Default::default(),
@@ -602,6 +702,11 @@ impl OpencodeRunner {
                                     .get("error")
                                     .map(|e| e.to_string())
                                     .unwrap_or_else(|| "OpenCode session error".to_string());
+                                tracing::debug!(
+                                    session_id,
+                                    error = %message,
+                                    "OpenCode session error event"
+                                );
                                 let _ = event_tx
                                     .send(AgentEvent::TurnFailed(TurnFailedEvent {
                                         error: message,
@@ -616,6 +721,11 @@ impl OpencodeRunner {
                                     Err(_) => continue,
                                 };
                             if permission.session_id == session_id {
+                                tracing::debug!(
+                                    session_id,
+                                    permission_id = %permission.id,
+                                    "OpenCode permission asked"
+                                );
                                 if let Err(err) = client
                                     .respond_permission(&session_id, &permission.id, "once")
                                     .await
@@ -640,6 +750,12 @@ impl OpencodeRunner {
                             if request.session_id != session_id {
                                 continue;
                             }
+                            tracing::debug!(
+                                session_id,
+                                request_id = %request.id,
+                                question_count = request.questions.len(),
+                                "OpenCode question asked"
+                            );
 
                             let questions: Vec<UserQuestion> = request
                                 .questions
@@ -677,6 +793,11 @@ impl OpencodeRunner {
                             if reply.session_id != session_id {
                                 continue;
                             }
+                            tracing::debug!(
+                                session_id,
+                                request_id = %reply.request_id,
+                                "OpenCode question replied"
+                            );
                             let _ = event_tx
                                 .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
                                     tool_id: reply.request_id,
@@ -695,6 +816,11 @@ impl OpencodeRunner {
                             if reply.session_id != session_id {
                                 continue;
                             }
+                            tracing::debug!(
+                                session_id,
+                                request_id = %reply.request_id,
+                                "OpenCode question rejected"
+                            );
                             let _ = event_tx
                                 .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
                                     tool_id: reply.request_id,
@@ -716,7 +842,9 @@ impl OpencodeRunner {
                         }
                     }
                 }
-                Ok(Event::Open) => {}
+                Ok(Event::Open) => {
+                    tracing::debug!("OpenCode SSE connected");
+                }
                 Err(err) => {
                     let _ = event_tx
                         .send(AgentEvent::Error(ErrorEvent {
@@ -833,6 +961,7 @@ impl AgentRunner for OpencodeRunner {
             }
         };
 
+        tracing::debug!(base_url = %base_url, "OpenCode server ready");
         let client = OpenCodeClient::new(base_url);
 
         let session_id = if let Some(resume) = &config.resume_session {
@@ -847,6 +976,7 @@ impl AgentRunner for OpencodeRunner {
             .map_err(AgentError::Io)?
         };
 
+        tracing::debug!(session_id = %session_id, "OpenCode session ready");
         let session_id = SessionId::from_string(session_id.clone());
         event_tx
             .send(AgentEvent::SessionInit(SessionInitEvent {
