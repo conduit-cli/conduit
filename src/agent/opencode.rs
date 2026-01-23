@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -13,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
 
 use crate::agent::error::AgentError;
@@ -146,6 +148,34 @@ struct MessagePart {
 }
 
 #[derive(Debug, Deserialize)]
+struct MessagePartInfo {
+    #[serde(rename = "type")]
+    part_type: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageTime {
+    #[serde(default)]
+    completed: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageInfo {
+    id: String,
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    role: String,
+    #[serde(default)]
+    parts: Vec<MessagePartInfo>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    time: Option<MessageTime>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ToolState {
     #[serde(default)]
     status: Option<String>,
@@ -163,6 +193,27 @@ struct ToolState {
 struct TimeInfo {
     #[serde(default)]
     end: Option<u64>,
+}
+
+#[derive(Default)]
+struct OpencodeSharedState {
+    completed_messages: Mutex<HashSet<String>>,
+    turn_in_flight: AtomicBool,
+}
+
+impl OpencodeSharedState {
+    async fn mark_completed(&self, message_id: &str) -> bool {
+        let mut guard = self.completed_messages.lock().await;
+        guard.insert(message_id.to_string())
+    }
+
+    fn set_turn_in_flight(&self, in_flight: bool) {
+        self.turn_in_flight.store(in_flight, Ordering::SeqCst);
+    }
+
+    fn take_turn_in_flight(&self) -> bool {
+        self.turn_in_flight.swap(false, Ordering::SeqCst)
+    }
 }
 
 #[derive(Clone)]
@@ -218,7 +269,7 @@ impl OpenCodeClient {
         session_id: &str,
         text: String,
         model: Option<ModelRef>,
-    ) -> io::Result<()> {
+    ) -> io::Result<String> {
         let url = format!("{}/session/{}/message", self.base_url, session_id);
         let model_label = model
             .as_ref()
@@ -245,9 +296,9 @@ impl OpenCodeClient {
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
         let status = response.status();
+        let text = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
             tracing::debug!(
                 session_id,
                 status = %status,
@@ -260,9 +311,10 @@ impl OpenCodeClient {
         tracing::debug!(
             session_id,
             status = %status,
+            body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
             "OpenCode prompt response"
         );
-        Ok(())
+        Ok(text)
     }
 
     async fn respond_permission(
@@ -380,6 +432,56 @@ impl OpenCodeClient {
         Ok(())
     }
 
+    async fn get_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> io::Result<(MessageInfo, Vec<Value>, Value)> {
+        let url = format!(
+            "{}/session/{}/message/{}",
+            self.base_url, session_id, message_id
+        );
+        tracing::debug!(
+            session_id,
+            message_id,
+            url = %url,
+            "OpenCode get message request"
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            tracing::debug!(
+                session_id,
+                message_id,
+                status = %status,
+                body = %truncate_for_log(&text, OPENCODE_LOG_PREVIEW_CHARS),
+                "OpenCode get message error"
+            );
+            return Err(io::Error::other(format!(
+                "Get message failed: {status} - {text}"
+            )));
+        }
+
+        let value: Value =
+            serde_json::from_str(&text).map_err(|err| io::Error::other(err.to_string()))?;
+        let info_value = value.get("info").cloned().unwrap_or(Value::Null);
+        let info: MessageInfo = serde_json::from_value(info_value.clone())
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        let parts = value
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok((info, parts, info_value))
+    }
+
     fn subscribe_events(&self) -> io::Result<EventSource> {
         let url = format!("{}/event", self.base_url);
         tracing::debug!(url = %url, "OpenCode SSE subscribe");
@@ -471,7 +573,9 @@ impl OpencodeRunner {
         model: Option<&ModelRef>,
         text: String,
         tx: &mpsc::Sender<AgentEvent>,
+        shared_state: &OpencodeSharedState,
     ) {
+        shared_state.set_turn_in_flight(true);
         let model_label = model
             .map(|m| format!("{}/{}", m.provider_id, m.model_id))
             .unwrap_or_else(|| "default".to_string());
@@ -482,20 +586,351 @@ impl OpencodeRunner {
             "OpenCode send prompt"
         );
         if tx.send(AgentEvent::TurnStarted).await.is_err() {
+            shared_state.set_turn_in_flight(false);
             return;
         }
-        let result = client
-            .prompt(session_id, text, model.cloned())
-            .await
-            .map_err(|err| err.to_string());
-        if let Err(err) = result {
-            let _ = tx
-                .send(AgentEvent::Error(ErrorEvent {
-                    message: format!("OpenCode prompt failed: {err}"),
-                    is_fatal: true,
-                }))
-                .await;
+        let response_body = match client.prompt(session_id, text, model.cloned()).await {
+            Ok(body) => body,
+            Err(err) => {
+                shared_state.set_turn_in_flight(false);
+                if tx
+                    .send(AgentEvent::Error(ErrorEvent {
+                        message: format!("OpenCode prompt failed: {err}"),
+                        is_fatal: true,
+                    }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                return;
+            }
+        };
+
+        if let Err(err) =
+            Self::maybe_emit_prompt_response(client, session_id, &response_body, tx, shared_state)
+                .await
+        {
+            tracing::debug!(
+                session_id,
+                error = %err,
+                "OpenCode prompt response parse failed"
+            );
         }
+    }
+
+    async fn maybe_emit_prompt_response(
+        client: &OpenCodeClient,
+        session_id: &str,
+        response_body: &str,
+        tx: &mpsc::Sender<AgentEvent>,
+        shared_state: &OpencodeSharedState,
+    ) -> io::Result<()> {
+        let value: Value =
+            serde_json::from_str(response_body).map_err(|err| io::Error::other(err.to_string()))?;
+        let info_value = value.get("info").cloned().unwrap_or(Value::Null);
+        let info: MessageInfo = serde_json::from_value(info_value.clone())
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        let parts = value
+            .get("parts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut content_override = if parts.is_empty() {
+            None
+        } else {
+            Some(Self::extract_message_parts_from_parts(&parts))
+        };
+        let mut info_value_for_emit = info_value.clone();
+        let mut info_for_emit = info;
+
+        let completed = info_for_emit
+            .time
+            .as_ref()
+            .and_then(|t| t.completed)
+            .is_some();
+        let missing_content = info_for_emit
+            .text
+            .as_ref()
+            .map(|t| t.is_empty())
+            .unwrap_or(true)
+            && info_for_emit.parts.is_empty()
+            && content_override
+                .as_ref()
+                .map(|(text, reasoning)| text.is_empty() && reasoning.is_empty())
+                .unwrap_or(true);
+        let message_id = info_for_emit.id.clone();
+
+        if completed && missing_content {
+            match client.get_message(session_id, &message_id).await {
+                Ok((full_info, fetched_parts, raw_info)) => {
+                    info_for_emit = full_info;
+                    info_value_for_emit = raw_info;
+                    if !fetched_parts.is_empty() {
+                        content_override =
+                            Some(Self::extract_message_parts_from_parts(&fetched_parts));
+                    }
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        session_id,
+                        message_id = %message_id,
+                        error = %err,
+                        "OpenCode get message failed"
+                    );
+                }
+            }
+        }
+        Self::emit_message_from_info(
+            session_id,
+            &info_for_emit,
+            Some(&info_value_for_emit),
+            content_override,
+            tx,
+            shared_state,
+        )
+        .await;
+        Ok(())
+    }
+
+    async fn emit_message_from_info(
+        session_id: &str,
+        info: &MessageInfo,
+        info_value: Option<&Value>,
+        content_override: Option<(String, String)>,
+        tx: &mpsc::Sender<AgentEvent>,
+        shared_state: &OpencodeSharedState,
+    ) {
+        if info.session_id != session_id || info.role != "assistant" {
+            return;
+        }
+
+        let completed = info.time.as_ref().and_then(|t| t.completed).is_some();
+        if !completed {
+            return;
+        }
+
+        if !shared_state.mark_completed(&info.id).await {
+            return;
+        }
+
+        let content_override_ref = content_override.as_ref();
+        let (mut text, mut reasoning) = content_override_ref
+            .map(|(text, reasoning)| (text.clone(), reasoning.clone()))
+            .unwrap_or_else(|| (String::new(), String::new()));
+        if text.is_empty() && reasoning.is_empty() {
+            let (fallback_text, fallback_reasoning) = Self::extract_message_parts(info);
+            text = fallback_text;
+            reasoning = fallback_reasoning;
+        }
+        if text.is_empty() && reasoning.is_empty() {
+            if let Some(info_value) = info_value {
+                let (fallback_text, fallback_reasoning) =
+                    Self::extract_message_parts_value(info_value);
+                if text.is_empty() {
+                    text = fallback_text;
+                }
+                if reasoning.is_empty() {
+                    reasoning = fallback_reasoning;
+                }
+            }
+        }
+
+        tracing::debug!(
+            session_id,
+            message_id = %info.id,
+            role = %info.role,
+            completed,
+            part_count = content_override_ref.map(|_| 1).unwrap_or(0),
+            text_len = text.len(),
+            reasoning_len = reasoning.len(),
+            "OpenCode assistant message parsed"
+        );
+        if text.is_empty() && reasoning.is_empty() {
+            tracing::debug!(
+                session_id,
+                message_id = %info.id,
+                "OpenCode assistant message has no text content"
+            );
+            if let Some(info_value) = info_value {
+                tracing::debug!(
+                    session_id,
+                    message_id = %info.id,
+                    info = %truncate_for_log(
+                        &info_value.to_string(),
+                        OPENCODE_LOG_PREVIEW_CHARS
+                    ),
+                    "OpenCode assistant info payload"
+                );
+            }
+        }
+        if !reasoning.is_empty()
+            && tx
+                .send(AgentEvent::AssistantReasoning(ReasoningEvent {
+                    text: reasoning,
+                }))
+                .await
+                .is_err()
+        {
+            return;
+        }
+
+        if !text.is_empty()
+            && tx
+                .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                    text,
+                    is_final: true,
+                }))
+                .await
+                .is_err()
+        {
+            return;
+        }
+
+        if shared_state.take_turn_in_flight()
+            && tx
+                .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
+                    usage: Default::default(),
+                }))
+                .await
+                .is_err()
+        {
+            tracing::debug!("OpenCode turn completion dropped; channel closed");
+        }
+    }
+
+    fn extract_message_parts(info: &MessageInfo) -> (String, String) {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+
+        for part in &info.parts {
+            match part.part_type.as_str() {
+                "text" => {
+                    if let Some(chunk) = &part.text {
+                        text.push_str(chunk);
+                    }
+                }
+                "reasoning" => {
+                    if let Some(chunk) = &part.text {
+                        reasoning.push_str(chunk);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(fallback) = &info.text {
+                text.push_str(fallback);
+            }
+        }
+
+        (text, reasoning)
+    }
+
+    fn extract_message_parts_value(info: &Value) -> (String, String) {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+
+        if let Some(parts) = info.get("parts").and_then(|v| v.as_array()) {
+            for part in parts {
+                let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let chunk = part
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| part.get("content").and_then(|v| v.as_str()))
+                    .or_else(|| part.get("output").and_then(|v| v.as_str()));
+
+                if let Some(chunk) = chunk {
+                    match part_type {
+                        "reasoning" => reasoning.push_str(chunk),
+                        "text" | "markdown" | "output" => text.push_str(chunk),
+                        _ => text.push_str(chunk),
+                    }
+                }
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(fallback) = info.get("text").and_then(|v| v.as_str()) {
+                text.push_str(fallback);
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(fallback) = info.get("content").and_then(|v| v.as_str()) {
+                text.push_str(fallback);
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(fallback) = info.get("output").and_then(|v| v.as_str()) {
+                text.push_str(fallback);
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(fallback) = info.get("message").and_then(|v| v.as_str()) {
+                text.push_str(fallback);
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(result) = info.get("result") {
+                if let Some(fallback) = result.as_str() {
+                    text.push_str(fallback);
+                } else if let Some(obj) = result.as_object() {
+                    if let Some(fallback) = obj
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| obj.get("content").and_then(|v| v.as_str()))
+                        .or_else(|| obj.get("output").and_then(|v| v.as_str()))
+                        .or_else(|| obj.get("message").and_then(|v| v.as_str()))
+                    {
+                        text.push_str(fallback);
+                    }
+                }
+            }
+        }
+
+        if text.is_empty() {
+            if let Some(summary) = info.get("summary") {
+                if let Some(fallback) = summary
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| summary.get("title").and_then(|v| v.as_str()))
+                {
+                    text.push_str(fallback);
+                }
+            }
+        }
+
+        (text, reasoning)
+    }
+
+    fn extract_message_parts_from_parts(parts: &[Value]) -> (String, String) {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+
+        for part in parts {
+            let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let chunk = part
+                .get("text")
+                .and_then(|v| v.as_str())
+                .or_else(|| part.get("content").and_then(|v| v.as_str()))
+                .or_else(|| part.get("output").and_then(|v| v.as_str()))
+                .or_else(|| part.get("message").and_then(|v| v.as_str()));
+
+            if let Some(chunk) = chunk {
+                match part_type {
+                    "reasoning" => reasoning.push_str(chunk),
+                    "text" | "markdown" | "output" => text.push_str(chunk),
+                    _ => text.push_str(chunk),
+                }
+            }
+        }
+
+        (text, reasoning)
     }
 
     async fn handle_events(
@@ -503,6 +938,7 @@ impl OpencodeRunner {
         session_id: String,
         event_tx: mpsc::Sender<AgentEvent>,
         pid: u32,
+        shared_state: Arc<OpencodeSharedState>,
     ) {
         let mut state = OpencodeEventState::default();
         let mut events = match client.subscribe_events() {
@@ -521,6 +957,13 @@ impl OpencodeRunner {
         while let Some(event) = events.next().await {
             match event {
                 Ok(Event::Message(msg)) => {
+                    tracing::debug!(
+                        event = %msg.event,
+                        id = ?msg.id,
+                        data_len = msg.data.len(),
+                        data_preview = %truncate_for_log(&msg.data, OPENCODE_LOG_PREVIEW_CHARS),
+                        "OpenCode SSE message"
+                    );
                     let value: Value = match serde_json::from_str(&msg.data) {
                         Ok(value) => value,
                         Err(err) => {
@@ -540,6 +983,54 @@ impl OpencodeRunner {
                     };
 
                     match event_type.as_str() {
+                        "message.updated" => {
+                            let info_value = properties.get("info").cloned().unwrap_or(Value::Null);
+                            let mut info: MessageInfo =
+                                match serde_json::from_value(info_value.clone()) {
+                                    Ok(info) => info,
+                                    Err(_) => continue,
+                                };
+                            let mut info_value_for_emit = info_value.clone();
+                            let mut content_override: Option<(String, String)> = None;
+
+                            let completed = info.time.as_ref().and_then(|t| t.completed).is_some();
+                            if info.role == "assistant" && completed {
+                                let missing_content =
+                                    info.text.as_ref().map(|t| t.is_empty()).unwrap_or(true)
+                                        && info.parts.is_empty();
+                                if missing_content {
+                                    match client.get_message(&session_id, &info.id).await {
+                                        Ok((full_info, parts, raw_info)) => {
+                                            info = full_info;
+                                            info_value_for_emit = raw_info;
+                                            if !parts.is_empty() {
+                                                content_override = Some(
+                                                    Self::extract_message_parts_from_parts(&parts),
+                                                );
+                                            }
+                                        }
+                                        Err(err) => {
+                                            tracing::debug!(
+                                                session_id,
+                                                message_id = %info.id,
+                                                error = %err,
+                                                "OpenCode get message failed"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            Self::emit_message_from_info(
+                                &session_id,
+                                &info,
+                                Some(&info_value_for_emit),
+                                content_override,
+                                &event_tx,
+                                &shared_state,
+                            )
+                            .await;
+                        }
                         "message.part.updated" => {
                             let part_value = properties.get("part").cloned().unwrap_or(Value::Null);
                             let delta = properties
@@ -679,11 +1170,13 @@ impl OpencodeRunner {
                                 .unwrap_or(false);
                             if matches_session {
                                 tracing::debug!(session_id, "OpenCode session idle");
-                                let _ = event_tx
-                                    .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
-                                        usage: Default::default(),
-                                    }))
-                                    .await;
+                                if shared_state.take_turn_in_flight() {
+                                    let _ = event_tx
+                                        .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
+                                            usage: Default::default(),
+                                        }))
+                                        .await;
+                                }
                                 #[cfg(unix)]
                                 unsafe {
                                     let _ = libc::kill(pid as i32, libc::SIGTERM);
@@ -889,8 +1382,12 @@ impl AgentRunner for OpencodeRunner {
                     Ok(_) => {
                         if let Some(url) = OpencodeRunner::parse_server_url(&line) {
                             if let Some(sender) = url_tx.take() {
-                                let _ = sender.send(url);
+                                if sender.send(url).is_err() {
+                                    tracing::debug!("OpenCode server url receiver dropped");
+                                }
                             }
+                        } else if !line.trim().is_empty() {
+                            tracing::debug!("OpenCode stdout: {}", line.trim());
                         }
                     }
                     Err(err) => {
@@ -987,12 +1484,14 @@ impl AgentRunner for OpencodeRunner {
             .map_err(|_| AgentError::ChannelClosed)?;
 
         let model_ref = config.model.as_deref().and_then(ModelRef::parse);
+        let shared_state = Arc::new(OpencodeSharedState::default());
         let input_tx = {
             let (input_tx, mut input_rx) = mpsc::channel::<AgentInput>(16);
             let client = client.clone();
             let event_tx = event_tx.clone();
             let session_id = session_id.as_str().to_string();
             let model_ref = model_ref.clone();
+            let shared_state = shared_state.clone();
             tokio::spawn(async move {
                 while let Some(input) = input_rx.recv().await {
                     match input {
@@ -1011,6 +1510,7 @@ impl AgentRunner for OpencodeRunner {
                                 model_ref.as_ref(),
                                 text,
                                 &event_tx,
+                                &shared_state,
                             )
                             .await;
                         }
@@ -1055,6 +1555,7 @@ impl AgentRunner for OpencodeRunner {
                 model_ref.as_ref(),
                 config.prompt.clone(),
                 &event_tx,
+                &shared_state,
             )
             .await;
         }
@@ -1063,7 +1564,10 @@ impl AgentRunner for OpencodeRunner {
             let client = client.clone();
             let event_tx = event_tx.clone();
             let session_id = session_id.as_str().to_string();
-            async move { OpencodeRunner::handle_events(client, session_id, event_tx, pid).await }
+            let shared_state = shared_state.clone();
+            async move {
+                OpencodeRunner::handle_events(client, session_id, event_tx, pid, shared_state).await
+            }
         });
 
         Ok(AgentHandle::new(event_rx, pid, Some(input_tx)))
