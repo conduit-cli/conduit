@@ -1487,6 +1487,9 @@ impl AgentRunner for OpencodeRunner {
                                 model_id = None;
                                 suggestions.clear();
                                 line_count = 0;
+                                tracing::warn!(
+                                    "OpenCode model lookup failed; collecting error details"
+                                );
                                 continue;
                             }
 
@@ -1516,7 +1519,8 @@ impl AgentRunner for OpencodeRunner {
                                     }
                                 }
 
-                                if trimmed == "}" || line_count > 12 {
+                                if trimmed.contains('}') || line_count > 12 {
+                                    invalidate_model_cache();
                                     let message = match (provider_id.as_ref(), model_id.as_ref()) {
                                         (Some(provider), Some(model)) => {
                                             if suggestions.is_empty() {
@@ -1816,6 +1820,20 @@ fn save_cache(path: &PathBuf, models: &[String]) -> std::io::Result<()> {
     };
     let payload = serde_json::to_string_pretty(&cache).unwrap_or_else(|_| "{}".to_string());
     fs::write(path, payload)
+}
+
+fn invalidate_model_cache() {
+    if let Some(path) = cache_path() {
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                tracing::info!("OpenCode model cache invalidated");
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                tracing::debug!(error = %err, "Failed to remove OpenCode model cache");
+            }
+        }
+    }
 }
 
 fn parse_models_output(text: &str) -> Vec<String> {
