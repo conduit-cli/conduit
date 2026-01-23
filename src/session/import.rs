@@ -235,7 +235,17 @@ fn scan_session_files() -> Vec<(PathBuf, u64)> {
 }
 
 fn opencode_storage_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("opencode").join("storage"))
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        candidates.push(dir.join("opencode").join("storage"));
+    }
+    if let Some(dir) = dirs::data_dir() {
+        candidates.push(dir.join("opencode").join("storage"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local/share/opencode/storage"));
+    }
+    candidates.into_iter().find(|path| path.exists())
 }
 
 /// Scan Claude session files from projects directory

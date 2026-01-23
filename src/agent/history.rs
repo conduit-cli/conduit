@@ -359,8 +359,41 @@ struct OpencodeMessageInfo {
     time: Option<Value>,
 }
 
-fn opencode_storage_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|dir| dir.join("opencode").join("storage"))
+#[derive(Debug, Deserialize)]
+struct OpencodeSessionInfo {
+    id: String,
+    #[serde(rename = "directory")]
+    directory: Option<String>,
+    #[serde(default)]
+    time: Option<OpencodeSessionTime>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpencodeSessionTime {
+    #[serde(default)]
+    created: Option<i64>,
+    #[serde(default)]
+    updated: Option<i64>,
+}
+
+impl OpencodeSessionTime {
+    fn latest_timestamp(&self) -> i64 {
+        self.updated.or(self.created).unwrap_or(0)
+    }
+}
+
+fn opencode_storage_dir_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        candidates.push(dir.join("opencode").join("storage"));
+    }
+    if let Some(dir) = dirs::data_dir() {
+        candidates.push(dir.join("opencode").join("storage"));
+    }
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local/share/opencode/storage"));
+    }
+    candidates
 }
 
 fn find_opencode_session_file(storage_dir: &Path, session_id: &str) -> Option<PathBuf> {
@@ -377,6 +410,83 @@ fn find_opencode_session_file(storage_dir: &Path, session_id: &str) -> Option<Pa
         }
     }
     None
+}
+
+fn find_opencode_storage_for_session(session_id: &str) -> Result<(PathBuf, PathBuf), HistoryError> {
+    let mut has_storage = false;
+    for storage_dir in opencode_storage_dir_candidates() {
+        if !storage_dir.exists() {
+            continue;
+        }
+        has_storage = true;
+        if let Some(session_file) = find_opencode_session_file(&storage_dir, session_id) {
+            return Ok((storage_dir, session_file));
+        }
+    }
+    if !has_storage {
+        Err(HistoryError::StorageNotFound)
+    } else {
+        Err(HistoryError::SessionNotFound(session_id.to_string()))
+    }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn opencode_paths_match(session_dir: &str, working_dir: &Path) -> bool {
+    let session_path = PathBuf::from(session_dir);
+    let session_norm = normalize_path(&session_path);
+    let working_norm = normalize_path(working_dir);
+    session_norm == working_norm
+}
+
+fn find_opencode_session_for_dir(
+    storage_dir: &Path,
+    working_dir: &Path,
+) -> Option<(String, PathBuf, i64)> {
+    let sessions_dir = storage_dir.join("session");
+    let entries = fs::read_dir(&sessions_dir).ok()?;
+    let mut best: Option<(String, PathBuf, i64)> = None;
+
+    for project_entry in entries.flatten() {
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        for session_path in list_sorted_json(&project_path) {
+            let raw = match fs::read_to_string(&session_path) {
+                Ok(raw) => raw,
+                Err(_) => continue,
+            };
+            let info: OpencodeSessionInfo = match serde_json::from_str(&raw) {
+                Ok(info) => info,
+                Err(_) => continue,
+            };
+            let directory = match info.directory.as_deref() {
+                Some(directory) => directory,
+                None => continue,
+            };
+            if !opencode_paths_match(directory, working_dir) {
+                continue;
+            }
+            let updated = info
+                .time
+                .as_ref()
+                .map(OpencodeSessionTime::latest_timestamp)
+                .unwrap_or(0);
+            let candidate = (info.id, session_path, updated);
+            let should_replace = match best.as_ref() {
+                Some((_, _, best_updated)) => updated > *best_updated,
+                None => true,
+            };
+            if should_replace {
+                best = Some(candidate);
+            }
+        }
+    }
+
+    best
 }
 
 fn list_sorted_json(dir: &Path) -> Vec<PathBuf> {
@@ -1401,12 +1511,16 @@ pub fn load_codex_history_with_debug(
 pub fn load_opencode_history_with_debug(
     session_id: &str,
 ) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
-    let storage_dir = opencode_storage_dir().ok_or(HistoryError::StorageNotFound)?;
-    if !storage_dir.exists() {
-        return Err(HistoryError::StorageNotFound);
-    }
+    let (storage_dir, _session_file) = find_opencode_storage_for_session(session_id)?;
 
-    let session_file = find_opencode_session_file(&storage_dir, session_id)
+    load_opencode_history_from_storage(&storage_dir, session_id)
+}
+
+fn load_opencode_history_from_storage(
+    storage_dir: &Path,
+    session_id: &str,
+) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
+    let session_file = find_opencode_session_file(storage_dir, session_id)
         .ok_or_else(|| HistoryError::SessionNotFound(session_id.to_string()))?;
 
     let message_dir = storage_dir.join("message").join(session_id);
@@ -1421,7 +1535,7 @@ pub fn load_opencode_history_with_debug(
             serde_json::from_str(&raw).map_err(|e| HistoryError::ParseError(e.to_string()))?;
         let info: OpencodeMessageInfo = serde_json::from_value(raw_value.clone())
             .map_err(|e| HistoryError::ParseError(e.to_string()))?;
-        let parts = opencode_parts_for_message(&storage_dir, &info.id);
+        let parts = opencode_parts_for_message(storage_dir, &info.id);
         let created = info
             .time
             .as_ref()
@@ -1527,6 +1641,44 @@ pub fn load_opencode_history_with_debug(
     }
 
     Ok((messages, debug_entries, session_file))
+}
+
+/// Load OpenCode history for the latest session in the given working directory.
+pub fn load_opencode_history_for_dir_with_debug(
+    working_dir: &Path,
+) -> Result<(String, Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
+    let mut has_storage = false;
+    let mut best: Option<(PathBuf, String, PathBuf, i64)> = None;
+
+    for storage_dir in opencode_storage_dir_candidates() {
+        if !storage_dir.exists() {
+            continue;
+        }
+        has_storage = true;
+        if let Some((session_id, session_file, updated)) =
+            find_opencode_session_for_dir(&storage_dir, working_dir)
+        {
+            let should_replace = match best.as_ref() {
+                Some((_, _, _, best_updated)) => updated > *best_updated,
+                None => true,
+            };
+            if should_replace {
+                best = Some((storage_dir, session_id, session_file, updated));
+            }
+        }
+    }
+
+    if !has_storage {
+        return Err(HistoryError::StorageNotFound);
+    }
+
+    let (storage_dir, session_id, _session_file, _) = best
+        .ok_or_else(|| HistoryError::SessionNotFound(format!("dir:{}", working_dir.display())))?;
+
+    let (messages, debug_entries, session_file) =
+        load_opencode_history_from_storage(&storage_dir, &session_id)?;
+
+    Ok((session_id, messages, debug_entries, session_file))
 }
 
 /// Create a truncated preview of text for debug output

@@ -29,9 +29,10 @@ use uuid::Uuid;
 use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug,
-    load_opencode_history_with_debug, AgentEvent, AgentInput, AgentMode, AgentRunner,
-    AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
-    HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, SessionId,
+    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug, AgentEvent,
+    AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner,
+    CodexCliRunner, GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry,
+    OpencodeRunner, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::core::resolve_repo_workspace_settings;
@@ -520,6 +521,25 @@ impl App {
                             for msg in msgs {
                                 session.chat_view.push(msg);
                             }
+                        }
+                    }
+                }
+            } else if tab.agent_type == AgentType::Opencode {
+                if let Some(working_dir) = session.working_dir.as_ref() {
+                    if let Ok((session_id_str, msgs, debug_entries, file_path)) =
+                        load_opencode_history_for_dir_with_debug(working_dir)
+                    {
+                        let session_id = SessionId::from_string(session_id_str.clone());
+                        session.resume_session_id = Some(session_id.clone());
+                        session.agent_session_id = Some(session_id);
+
+                        Self::populate_debug_from_history(
+                            &mut session.raw_events_view,
+                            &debug_entries,
+                            &file_path,
+                        );
+                        for msg in msgs {
+                            session.chat_view.push(msg);
                         }
                     }
                 }
@@ -3334,6 +3354,25 @@ impl App {
                                 for msg in msgs {
                                     session.chat_view.push(msg);
                                 }
+                            }
+                        }
+                    }
+                } else if saved.agent_type == AgentType::Opencode {
+                    if let Some(working_dir) = session.working_dir.as_ref() {
+                        if let Ok((session_id_str, msgs, debug_entries, file_path)) =
+                            load_opencode_history_for_dir_with_debug(working_dir)
+                        {
+                            let session_id = SessionId::from_string(session_id_str.clone());
+                            session.resume_session_id = Some(session_id.clone());
+                            session.agent_session_id = Some(session_id);
+
+                            Self::populate_debug_from_history(
+                                &mut session.raw_events_view,
+                                &debug_entries,
+                                &file_path,
+                            );
+                            for msg in msgs {
+                                session.chat_view.push(msg);
                             }
                         }
                     }
