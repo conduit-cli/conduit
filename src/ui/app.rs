@@ -6051,6 +6051,48 @@ impl App {
         }
     }
 
+    fn send_opencode_question_response(
+        &mut self,
+        request_id: &str,
+        answers: Option<Vec<Vec<String>>>,
+    ) -> Vec<Effect> {
+        let Some(session) = self.state.tab_manager.active_session_mut() else {
+            return Vec::new();
+        };
+        if session.agent_type != AgentType::Opencode {
+            return Vec::new();
+        }
+        let Some(ref input_tx) = session.agent_input_tx else {
+            session.chat_view.push(
+                MessageDisplay::Error {
+                    content: "OpenCode question response failed: session not ready.".to_string(),
+                }
+                .to_chat_message(),
+            );
+            return Vec::new();
+        };
+
+        let input_tx = input_tx.clone();
+        let request_id = request_id.to_string();
+        tokio::spawn(async move {
+            if let Err(err) = input_tx
+                .send(AgentInput::OpencodeQuestion {
+                    request_id,
+                    answers,
+                })
+                .await
+            {
+                tracing::warn!("Failed to send OpenCode question response: {}", err);
+            }
+        });
+
+        session.start_processing();
+        session.set_processing_state(ProcessingState::Thinking);
+        self.state.start_footer_spinner(None);
+
+        Vec::new()
+    }
+
     fn send_control_response(
         &mut self,
         request_id: &str,
@@ -6356,6 +6398,29 @@ impl App {
         };
 
         (content, tool_use_result)
+    }
+
+    fn build_opencode_question_answers(
+        prompt: &InlinePromptState,
+        answers: &std::collections::HashMap<String, PromptAnswer>,
+    ) -> Vec<Vec<String>> {
+        let questions = match &prompt.prompt_type {
+            InlinePromptType::AskUserQuestion { questions } => questions,
+            _ => return Vec::new(),
+        };
+
+        questions
+            .iter()
+            .map(|question| {
+                answers
+                    .get(&question.question)
+                    .map(|answer| match answer {
+                        PromptAnswer::Single(text) => vec![text.clone()],
+                        PromptAnswer::Multiple(items) => items.clone(),
+                    })
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     fn build_exit_plan_tool_result(

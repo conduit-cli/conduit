@@ -197,6 +197,11 @@ pub enum AgentInput {
     ClaudeJsonl(String),
     /// Codex prompt with optional local images.
     CodexPrompt { text: String, images: Vec<PathBuf> },
+    /// OpenCode question response (None means reject).
+    OpencodeQuestion {
+        request_id: String,
+        answers: Option<Vec<Vec<String>>>,
+    },
 }
 
 /// Handle to a running agent process

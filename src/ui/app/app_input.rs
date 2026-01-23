@@ -141,6 +141,38 @@ impl App {
                                 .pending_tool_permission_responses
                                 .insert(tool_id.clone(), response_payload);
                             Vec::new()
+                        } else if agent_type == AgentType::Opencode {
+                            match response_clone {
+                                PromptResponse::AskUserAnswers { answers } => {
+                                    let answers_payload = Self::build_opencode_question_answers(
+                                        &prompt_snapshot,
+                                        &answers,
+                                    );
+                                    self.send_opencode_question_response(
+                                        &tool_id,
+                                        Some(answers_payload),
+                                    )
+                                }
+                                PromptResponse::ExitPlanApprove => {
+                                    // Not supported for OpenCode; fallback to tool result
+                                    let (content, tool_use_result) =
+                                        Self::build_exit_plan_tool_result(
+                                            &prompt_snapshot,
+                                            true,
+                                            None,
+                                        );
+                                    self.send_tool_result(&tool_id, content, tool_use_result)
+                                }
+                                PromptResponse::ExitPlanFeedback(feedback) => {
+                                    let (content, tool_use_result) =
+                                        Self::build_exit_plan_tool_result(
+                                            &prompt_snapshot,
+                                            false,
+                                            Some(feedback),
+                                        );
+                                    self.send_tool_result(&tool_id, content, tool_use_result)
+                                }
+                            }
                         } else {
                             match response_clone {
                                 PromptResponse::AskUserAnswers { answers } => {
@@ -203,6 +235,8 @@ impl App {
                                 .pending_tool_permission_responses
                                 .insert(tool_id.clone(), response_payload);
                             Vec::new()
+                        } else if agent_type == AgentType::Opencode {
+                            self.send_opencode_question_response(&tool_id, None)
                         } else {
                             self.send_tool_result(
                                 &tool_id,

@@ -18,8 +18,9 @@ use tokio::time::timeout;
 
 use crate::agent::error::AgentError;
 use crate::agent::events::{
-    AgentEvent, AssistantMessageEvent, ErrorEvent, ReasoningEvent, SessionInitEvent,
-    ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent, TurnFailedEvent,
+    AgentEvent, AssistantMessageEvent, ErrorEvent, QuestionOption, ReasoningEvent,
+    SessionInitEvent, ToolCompletedEvent, ToolStartedEvent, TurnCompletedEvent, TurnFailedEvent,
+    UserQuestion,
 };
 use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
@@ -81,6 +82,39 @@ struct PermissionEvent {
     #[serde(rename = "sessionID")]
     session_id: String,
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestionOptionInfo {
+    label: String,
+    #[serde(default)]
+    description: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestionInfo {
+    #[serde(default)]
+    header: String,
+    question: String,
+    options: Vec<QuestionOptionInfo>,
+    #[serde(default, rename = "multiple")]
+    multiple: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestionRequest {
+    id: String,
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    questions: Vec<QuestionInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuestionResponseEvent {
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    #[serde(rename = "requestID")]
+    request_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +245,48 @@ impl OpenCodeClient {
             .send()
             .await
             .map_err(|err| io::Error::other(err.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn reply_question(&self, request_id: &str, answers: Vec<Vec<String>>) -> io::Result<()> {
+        let url = format!("{}/question/{}/reply", self.base_url, request_id);
+        let request = serde_json::json!({
+            "answers": answers,
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))?;
+
+        if !response.status().is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(io::Error::other(format!("Question reply failed: {}", text)));
+        }
+
+        Ok(())
+    }
+
+    async fn reject_question(&self, request_id: &str) -> io::Result<()> {
+        let url = format!("{}/question/{}/reject", self.base_url, request_id);
+        let response = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))?;
+
+        if !response.status().is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(io::Error::other(format!(
+                "Question reject failed: {}",
+                text
+            )));
+        }
 
         Ok(())
     }
@@ -416,6 +492,9 @@ impl OpencodeRunner {
                                     }
                                 }
                                 "tool" => {
+                                    if part.tool.as_deref() == Some("question") {
+                                        continue;
+                                    }
                                     let tool_id = part
                                         .call_id
                                         .clone()
@@ -551,6 +630,79 @@ impl OpencodeRunner {
                                         .await;
                                 }
                             }
+                        }
+                        "question.asked" => {
+                            let request: QuestionRequest =
+                                match serde_json::from_value(properties.clone()) {
+                                    Ok(request) => request,
+                                    Err(_) => continue,
+                                };
+                            if request.session_id != session_id {
+                                continue;
+                            }
+
+                            let questions: Vec<UserQuestion> = request
+                                .questions
+                                .into_iter()
+                                .map(|question| UserQuestion {
+                                    header: question.header,
+                                    question: question.question,
+                                    options: question
+                                        .options
+                                        .into_iter()
+                                        .map(|option| QuestionOption {
+                                            label: option.label,
+                                            description: option.description,
+                                        })
+                                        .collect(),
+                                    multi_select: question.multiple,
+                                })
+                                .collect();
+
+                            let arguments = serde_json::json!({ "questions": questions });
+                            let _ = event_tx
+                                .send(AgentEvent::ToolStarted(ToolStartedEvent {
+                                    tool_name: "AskUserQuestion".to_string(),
+                                    tool_id: request.id,
+                                    arguments,
+                                }))
+                                .await;
+                        }
+                        "question.replied" => {
+                            let reply: QuestionResponseEvent =
+                                match serde_json::from_value(properties.clone()) {
+                                    Ok(reply) => reply,
+                                    Err(_) => continue,
+                                };
+                            if reply.session_id != session_id {
+                                continue;
+                            }
+                            let _ = event_tx
+                                .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
+                                    tool_id: reply.request_id,
+                                    success: true,
+                                    result: Some("Question answered".to_string()),
+                                    error: None,
+                                }))
+                                .await;
+                        }
+                        "question.rejected" => {
+                            let reply: QuestionResponseEvent =
+                                match serde_json::from_value(properties.clone()) {
+                                    Ok(reply) => reply,
+                                    Err(_) => continue,
+                                };
+                            if reply.session_id != session_id {
+                                continue;
+                            }
+                            let _ = event_tx
+                                .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
+                                    tool_id: reply.request_id,
+                                    success: false,
+                                    result: None,
+                                    error: Some("Question rejected".to_string()),
+                                }))
+                                .await;
                         }
                         _ => {
                             let _ = event_tx
@@ -740,6 +892,25 @@ impl AgentRunner for OpencodeRunner {
                                     is_fatal: false,
                                 }))
                                 .await;
+                        }
+                        AgentInput::OpencodeQuestion {
+                            request_id,
+                            answers,
+                        } => {
+                            let result = match answers {
+                                Some(answers) => client.reply_question(&request_id, answers).await,
+                                None => client.reject_question(&request_id).await,
+                            };
+                            if let Err(err) = result {
+                                let _ = event_tx
+                                    .send(AgentEvent::Error(ErrorEvent {
+                                        message: format!(
+                                            "OpenCode question response failed: {err}"
+                                        ),
+                                        is_fatal: false,
+                                    }))
+                                    .await;
+                            }
                         }
                     }
                 }
