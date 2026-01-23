@@ -557,6 +557,109 @@ fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String
     (text, reasoning)
 }
 
+fn opencode_tool_output_from_state(state: &Value) -> Option<String> {
+    let output = state.get("output").and_then(|v| v.as_str());
+    if let Some(output) = output {
+        if !output.trim().is_empty() {
+            return Some(output.to_string());
+        }
+    }
+    let meta_output = state
+        .get("metadata")
+        .and_then(|v| v.get("output"))
+        .and_then(|v| v.as_str());
+    if let Some(output) = meta_output {
+        if !output.trim().is_empty() {
+            return Some(output.to_string());
+        }
+    }
+    let preview = state
+        .get("metadata")
+        .and_then(|v| v.get("preview"))
+        .and_then(|v| v.as_str());
+    if let Some(preview) = preview {
+        if !preview.trim().is_empty() {
+            return Some(preview.to_string());
+        }
+    }
+    None
+}
+
+fn opencode_tool_args_from_state(state: &Value) -> String {
+    let input = match state.get("input") {
+        Some(input) => input,
+        None => return String::new(),
+    };
+
+    if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
+        return command.to_string();
+    }
+    if let Some(file_path) = input.get("filePath").and_then(|v| v.as_str()) {
+        let mut args = file_path.to_string();
+        let offset = input.get("offset").and_then(|v| v.as_i64());
+        let limit = input.get("limit").and_then(|v| v.as_i64());
+        if offset.is_some() || limit.is_some() {
+            let offset = offset.unwrap_or(0);
+            if let Some(limit) = limit {
+                args.push_str(&format!(" (offset {}, limit {})", offset, limit));
+            } else {
+                args.push_str(&format!(" (offset {})", offset));
+            }
+        }
+        return args;
+    }
+
+    serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string())
+}
+
+fn opencode_tool_message_from_part(part: &Value) -> Option<ChatMessage> {
+    let tool = part.get("tool").and_then(|v| v.as_str())?;
+    let state = part.get("state").unwrap_or(&Value::Null);
+    let status = state.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    let mut output = opencode_tool_output_from_state(state).unwrap_or_default();
+    if output.trim().is_empty() {
+        if let Some(error) = state.get("error").and_then(|v| v.as_str()) {
+            output = error.to_string();
+        }
+    }
+    if output.trim().is_empty() && !status.is_empty() {
+        output = format!("status: {}", status);
+    }
+
+    let args = opencode_tool_args_from_state(state);
+    let exit_code = state
+        .get("metadata")
+        .and_then(|v| v.get("exit"))
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32)
+        .or_else(|| if status == "error" { Some(1) } else { None });
+
+    Some(
+        MessageDisplay::Tool {
+            name: MessageDisplay::tool_display_name_owned(tool),
+            args,
+            output,
+            exit_code,
+            file_size: None,
+        }
+        .to_chat_message(),
+    )
+}
+
+fn opencode_push_assistant_message(messages: &mut Vec<ChatMessage>, text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    messages.push(
+        MessageDisplay::Assistant {
+            content: text.to_string(),
+            is_streaming: false,
+        }
+        .to_chat_message(),
+    );
+    true
+}
+
 /// Load Claude Code history for a session
 ///
 /// Claude stores sessions as `~/.claude/projects/{project-path}/{session-id}.jsonl`
@@ -1596,8 +1699,44 @@ fn load_opencode_history_from_storage(
                         .and_then(|v| v.as_array())
                         .cloned()
                         .unwrap_or_default();
-                    let (text, _reasoning) = opencode_text_from_parts(&parts_val, false);
-                    if text.trim().is_empty() {
+                    let mut pending_text = String::new();
+                    let mut has_tool = false;
+                    let mut has_text = false;
+
+                    for part in &parts_val {
+                        let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match part_type {
+                            "text" => {
+                                if part.get("ignored").and_then(|v| v.as_bool()) == Some(true) {
+                                    continue;
+                                }
+                                if part.get("synthetic").and_then(|v| v.as_bool()) == Some(true) {
+                                    continue;
+                                }
+                                let chunk = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                if chunk.is_empty() {
+                                    continue;
+                                }
+                                append_output(&mut pending_text, chunk);
+                            }
+                            "tool" => {
+                                if opencode_push_assistant_message(&mut messages, &pending_text) {
+                                    has_text = true;
+                                }
+                                pending_text.clear();
+                                if let Some(tool_message) = opencode_tool_message_from_part(part) {
+                                    messages.push(tool_message);
+                                    has_tool = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if opencode_push_assistant_message(&mut messages, &pending_text) {
+                        has_text = true;
+                    }
+                    if !has_text && !has_tool {
                         let error_message = info_val
                             .and_then(|v| v.get("error"))
                             .and_then(|v| v.get("message"))
@@ -1614,14 +1753,6 @@ fn load_opencode_history_from_storage(
                             status = "SKIP".to_string();
                             reason = "assistant message empty".to_string();
                         }
-                    } else {
-                        messages.push(
-                            MessageDisplay::Assistant {
-                                content: text,
-                                is_streaming: false,
-                            }
-                            .to_chat_message(),
-                        );
                     }
                 }
             }

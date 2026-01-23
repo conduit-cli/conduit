@@ -66,15 +66,15 @@ impl MessageDisplay {
     pub fn tool_display_name(raw_name: &str) -> &'static str {
         match raw_name {
             "exec_command" | "write_stdin" | "shell" | "shell_command" | "local_shell_call"
-            | "command_execution" | "Bash" => "Bash",
-            "read_file" | "Read" => "Read",
-            "write_file" | "Write" => "Write",
-            "list_directory" | "LS" => "LS",
-            "Glob" => "Glob",
-            "Grep" => "Grep",
-            "Edit" => "Edit",
-            "TodoWrite" => "TodoWrite",
-            "Task" => "Task",
+            | "command_execution" | "Bash" | "bash" => "Bash",
+            "read_file" | "Read" | "read" => "Read",
+            "write_file" | "Write" | "write" => "Write",
+            "list_directory" | "LS" | "ls" => "LS",
+            "Glob" | "glob" => "Glob",
+            "Grep" | "grep" => "Grep",
+            "Edit" | "edit" => "Edit",
+            "TodoWrite" | "todowrite" => "TodoWrite",
+            "Task" | "task" => "Task",
             _ => "Tool", // Default for unknown names
         }
     }
@@ -83,15 +83,15 @@ impl MessageDisplay {
     pub fn tool_display_name_owned(raw_name: &str) -> String {
         match raw_name {
             "exec_command" | "write_stdin" | "shell" | "shell_command" | "local_shell_call"
-            | "command_execution" | "Bash" => "Bash".to_string(),
-            "read_file" | "Read" => "Read".to_string(),
-            "write_file" | "Write" => "Write".to_string(),
-            "list_directory" | "LS" => "LS".to_string(),
-            "Glob" => "Glob".to_string(),
-            "Grep" => "Grep".to_string(),
-            "Edit" => "Edit".to_string(),
-            "TodoWrite" => "TodoWrite".to_string(),
-            "Task" => "Task".to_string(),
+            | "command_execution" | "Bash" | "bash" => "Bash".to_string(),
+            "read_file" | "Read" | "read" => "Read".to_string(),
+            "write_file" | "Write" | "write" => "Write".to_string(),
+            "list_directory" | "LS" | "ls" => "LS".to_string(),
+            "Glob" | "glob" => "Glob".to_string(),
+            "Grep" | "grep" => "Grep".to_string(),
+            "Edit" | "edit" => "Edit".to_string(),
+            "TodoWrite" | "todowrite" => "TodoWrite".to_string(),
+            "Task" | "task" => "Task".to_string(),
             _ => raw_name.to_string(), // Pass through unknown names
         }
     }
