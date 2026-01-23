@@ -297,7 +297,7 @@ impl OpenCodeClient {
         {
             Ok(Ok(response)) => response,
             Ok(Err(err)) => {
-                tracing::warn!(
+                tracing::error!(
                     session_id,
                     error = %err,
                     url = %url,
@@ -306,7 +306,7 @@ impl OpenCodeClient {
                 return Err(io::Error::other(err.to_string()));
             }
             Err(_) => {
-                tracing::warn!(
+                tracing::error!(
                     session_id,
                     url = %url,
                     timeout_secs = OPENCODE_PROMPT_TIMEOUT.as_secs(),
@@ -619,7 +619,7 @@ impl OpencodeRunner {
             Ok(body) => body,
             Err(err) => {
                 shared_state.set_turn_in_flight(false);
-                tracing::warn!(
+                tracing::error!(
                     session_id,
                     error = %err,
                     "OpenCode prompt failed"
@@ -968,7 +968,6 @@ impl OpencodeRunner {
         client: OpenCodeClient,
         session_id: String,
         event_tx: mpsc::Sender<AgentEvent>,
-        pid: u32,
         shared_state: Arc<OpencodeSharedState>,
     ) {
         let mut state = OpencodeEventState::default();
@@ -1208,11 +1207,7 @@ impl OpencodeRunner {
                                         }))
                                         .await;
                                 }
-                                #[cfg(unix)]
-                                unsafe {
-                                    let _ = libc::kill(pid as i32, libc::SIGTERM);
-                                }
-                                break;
+                                continue;
                             }
                         }
                         "session.error" => {
@@ -1602,7 +1597,7 @@ impl AgentRunner for OpencodeRunner {
             let session_id = session_id.as_str().to_string();
             let shared_state = shared_state.clone();
             async move {
-                OpencodeRunner::handle_events(client, session_id, event_tx, pid, shared_state).await
+                OpencodeRunner::handle_events(client, session_id, event_tx, shared_state).await
             }
         });
 
