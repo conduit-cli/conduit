@@ -809,7 +809,7 @@ fn parse_codex_session_file(path: &PathBuf) -> Option<ExternalSession> {
 }
 
 /// Parse an OpenCode session file and extract metadata
-fn parse_opencode_session_file(path: &PathBuf, storage_dir: &PathBuf) -> Option<ExternalSession> {
+fn parse_opencode_session_file(path: &Path, storage_dir: &Path) -> Option<ExternalSession> {
     let raw = fs::read_to_string(path).ok()?;
     let info: OpencodeSessionInfo = serde_json::from_str(&raw).ok()?;
 
@@ -850,10 +850,10 @@ fn parse_opencode_session_file(path: &PathBuf, storage_dir: &PathBuf) -> Option<
         } else {
             info.title
         },
-        project: (!info.directory.trim().is_empty()).then(|| info.directory),
+        project: (!info.directory.trim().is_empty()).then_some(info.directory),
         timestamp,
         message_count,
-        file_path: path.clone(),
+        file_path: path.to_path_buf(),
     })
 }
 

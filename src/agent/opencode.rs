@@ -420,8 +420,13 @@ impl OpencodeRunner {
                                         .call_id
                                         .clone()
                                         .unwrap_or_else(|| part.session_id.clone());
-                                    let tool_name =
-                                        part.tool.clone().unwrap_or_else(|| "tool".to_string());
+                                    let mut tool_name = part.tool.clone();
+                                    if let Some(state_info) = &part.state {
+                                        if tool_name.is_none() {
+                                            tool_name = state_info.title.clone();
+                                        }
+                                    }
+                                    let tool_name = tool_name.unwrap_or_else(|| "tool".to_string());
                                     if let Some(state_info) = part.state {
                                         match state_info.status.as_deref() {
                                             Some("pending") | Some("running") => {
@@ -659,9 +664,21 @@ impl AgentRunner for OpencodeRunner {
 
         let base_url = match timeout(OPENCODE_READY_TIMEOUT, url_rx).await {
             Ok(Ok(url)) if !url.is_empty() => url,
-            Ok(Ok(_)) => return Err(AgentError::Timeout(OPENCODE_READY_TIMEOUT.as_millis() as u64)),
-            Ok(Err(_)) => return Err(AgentError::Timeout(OPENCODE_READY_TIMEOUT.as_millis() as u64)),
-            Err(_) => return Err(AgentError::Timeout(OPENCODE_READY_TIMEOUT.as_millis() as u64)),
+            Ok(Ok(_)) => {
+                return Err(AgentError::Timeout(
+                    OPENCODE_READY_TIMEOUT.as_millis() as u64
+                ))
+            }
+            Ok(Err(_)) => {
+                return Err(AgentError::Timeout(
+                    OPENCODE_READY_TIMEOUT.as_millis() as u64
+                ))
+            }
+            Err(_) => {
+                return Err(AgentError::Timeout(
+                    OPENCODE_READY_TIMEOUT.as_millis() as u64
+                ))
+            }
         };
 
         let client = OpenCodeClient::new(base_url);
@@ -669,10 +686,13 @@ impl AgentRunner for OpencodeRunner {
         let session_id = if let Some(resume) = &config.resume_session {
             resume.as_str().to_string()
         } else {
-            timeout(OPENCODE_SESSION_TIMEOUT, client.create_session(Some("conduit".to_string())))
-                .await
-                .map_err(|_| AgentError::Timeout(OPENCODE_SESSION_TIMEOUT.as_millis() as u64))?
-                .map_err(AgentError::Io)?
+            timeout(
+                OPENCODE_SESSION_TIMEOUT,
+                client.create_session(Some("conduit".to_string())),
+            )
+            .await
+            .map_err(|_| AgentError::Timeout(OPENCODE_SESSION_TIMEOUT.as_millis() as u64))?
+            .map_err(AgentError::Io)?
         };
 
         let session_id = SessionId::from_string(session_id.clone());
@@ -715,7 +735,8 @@ impl AgentRunner for OpencodeRunner {
                         AgentInput::ClaudeJsonl(_) => {
                             let _ = event_tx
                                 .send(AgentEvent::Error(ErrorEvent {
-                                    message: "OpenCode runner does not support Claude JSONL input.".to_string(),
+                                    message: "OpenCode runner does not support Claude JSONL input."
+                                        .to_string(),
                                     is_fatal: false,
                                 }))
                                 .await;
@@ -857,10 +878,9 @@ fn parse_models_output(text: &str) -> Vec<String> {
             if provider.is_empty() || model.is_empty() {
                 continue;
             }
-            if !trimmed
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '@'))
-            {
+            if !trimmed.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '@')
+            }) {
                 continue;
             }
             models.push(trimmed.to_string());

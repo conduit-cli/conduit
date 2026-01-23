@@ -2,8 +2,8 @@
 
 use std::sync::{OnceLock, RwLock};
 
-use crate::agent::AgentType;
 use crate::agent::opencode::load_opencode_models;
+use crate::agent::AgentType;
 
 /// Information about a model
 #[derive(Debug, Clone)]

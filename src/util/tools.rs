@@ -80,7 +80,10 @@ impl Tool {
 
     /// Check if this tool is an agent
     pub fn is_agent(&self) -> bool {
-        matches!(self, Tool::Claude | Tool::Codex | Tool::Gemini | Tool::Opencode)
+        matches!(
+            self,
+            Tool::Claude | Tool::Codex | Tool::Gemini | Tool::Opencode
+        )
     }
 
     /// Get all tools

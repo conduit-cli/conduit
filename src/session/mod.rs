@@ -9,6 +9,6 @@ pub mod import;
 pub use cache::{get_file_mtime, SessionCache};
 pub use import::{
     discover_all_sessions, discover_claude_sessions, discover_codex_sessions,
-    discover_opencode_sessions,
-    discover_sessions_incremental, ExternalSession, SessionDiscoveryUpdate,
+    discover_opencode_sessions, discover_sessions_incremental, ExternalSession,
+    SessionDiscoveryUpdate,
 };
