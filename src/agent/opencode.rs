@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -133,6 +133,8 @@ struct QuestionResponseEvent {
 
 #[derive(Debug, Deserialize)]
 struct MessagePart {
+    #[serde(default)]
+    id: Option<String>,
     #[serde(rename = "sessionID")]
     session_id: String,
     #[serde(rename = "messageID")]
@@ -204,6 +206,7 @@ struct TimeInfo {
 #[derive(Default)]
 struct OpencodeSharedState {
     completed_messages: Mutex<HashSet<String>>,
+    part_texts: Mutex<HashMap<String, String>>,
     turn_in_flight: AtomicBool,
     sse_active: AtomicBool,
 }
@@ -212,6 +215,29 @@ impl OpencodeSharedState {
     async fn mark_completed(&self, message_id: &str) -> bool {
         let mut guard = self.completed_messages.lock().await;
         guard.insert(message_id.to_string())
+    }
+
+    async fn part_text(&self, key: &str) -> Option<String> {
+        let guard = self.part_texts.lock().await;
+        guard.get(key).cloned()
+    }
+
+    async fn set_part_text(&self, key: String, text: String) {
+        let mut guard = self.part_texts.lock().await;
+        guard.insert(key, text);
+    }
+
+    async fn append_part_text(&self, key: String, text: &str) {
+        let mut guard = self.part_texts.lock().await;
+        guard
+            .entry(key)
+            .and_modify(|value| value.push_str(text))
+            .or_insert_with(|| text.to_string());
+    }
+
+    async fn clear_part_text(&self, key: &str) {
+        let mut guard = self.part_texts.lock().await;
+        guard.remove(key);
     }
 
     fn set_turn_in_flight(&self, in_flight: bool) {
@@ -1182,48 +1208,17 @@ impl OpencodeRunner {
 
                             match part.part_type.as_str() {
                                 "text" => {
-                                    if let Some(delta_text) = delta {
-                                        let _ = event_tx
-                                            .send(AgentEvent::AssistantMessage(
-                                                AssistantMessageEvent {
-                                                    text: delta_text,
-                                                    is_final: false,
-                                                },
-                                            ))
-                                            .await;
-                                    }
-                                    if part.time.as_ref().and_then(|t| t.end).is_some() {
-                                        if let Some(message_id) = part.message_id.as_deref() {
-                                            shared_state.mark_completed(message_id).await;
-                                        }
-                                        let _ = event_tx
-                                            .send(AgentEvent::AssistantMessage(
-                                                AssistantMessageEvent {
-                                                    text: String::new(),
-                                                    is_final: true,
-                                                },
-                                            ))
-                                            .await;
-                                        if shared_state.take_turn_in_flight() {
-                                            let _ = event_tx
-                                                .send(AgentEvent::TurnCompleted(
-                                                    TurnCompletedEvent {
-                                                        usage: Default::default(),
-                                                    },
-                                                ))
-                                                .await;
-                                        }
-                                    }
+                                    Self::handle_text_part(&part, delta, &event_tx, &shared_state)
+                                        .await;
                                 }
                                 "reasoning" => {
-                                    let text = delta.or(part.text).unwrap_or_default();
-                                    if !text.is_empty() {
-                                        let _ = event_tx
-                                            .send(AgentEvent::AssistantReasoning(ReasoningEvent {
-                                                text,
-                                            }))
-                                            .await;
-                                    }
+                                    Self::handle_reasoning_part(
+                                        &part,
+                                        delta,
+                                        &event_tx,
+                                        &shared_state,
+                                    )
+                                    .await;
                                 }
                                 "tool" => {
                                     if part.tool.as_deref() == Some("question") {
@@ -1493,6 +1488,126 @@ impl OpencodeRunner {
                 }
             }
         }
+    }
+
+    async fn handle_text_part(
+        part: &MessagePart,
+        delta: Option<String>,
+        event_tx: &mpsc::Sender<AgentEvent>,
+        shared_state: &Arc<OpencodeSharedState>,
+    ) {
+        let part_key = part
+            .id
+            .as_ref()
+            .map(|id| format!("part:{}", id))
+            .or_else(|| {
+                part.message_id
+                    .as_ref()
+                    .map(|id| format!("msg:{}:text", id))
+            })
+            .unwrap_or_else(|| format!("session:{}", part.session_id));
+        if let Some(full_text) = part.text.clone() {
+            let previous = shared_state.part_text(&part_key).await;
+            if let Some(delta_text) = compute_text_delta(previous.as_deref(), &full_text) {
+                let _ = event_tx
+                    .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: delta_text,
+                        is_final: false,
+                    }))
+                    .await;
+            }
+            shared_state
+                .set_part_text(part_key.clone(), full_text)
+                .await;
+        } else if let Some(delta_text) = delta {
+            if !delta_text.is_empty() {
+                let _ = event_tx
+                    .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                        text: delta_text.clone(),
+                        is_final: false,
+                    }))
+                    .await;
+                shared_state
+                    .append_part_text(part_key.clone(), &delta_text)
+                    .await;
+            }
+        }
+        if part.time.as_ref().and_then(|t| t.end).is_some() {
+            shared_state.clear_part_text(&part_key).await;
+            if let Some(message_id) = part.message_id.as_deref() {
+                shared_state.mark_completed(message_id).await;
+            }
+            let _ = event_tx
+                .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                    text: String::new(),
+                    is_final: true,
+                }))
+                .await;
+            if shared_state.take_turn_in_flight() {
+                let _ = event_tx
+                    .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
+                        usage: Default::default(),
+                    }))
+                    .await;
+            }
+        }
+    }
+
+    async fn handle_reasoning_part(
+        part: &MessagePart,
+        delta: Option<String>,
+        event_tx: &mpsc::Sender<AgentEvent>,
+        shared_state: &Arc<OpencodeSharedState>,
+    ) {
+        let part_key = part
+            .id
+            .as_ref()
+            .map(|id| format!("part:{}", id))
+            .or_else(|| {
+                part.message_id
+                    .as_ref()
+                    .map(|id| format!("msg:{}:reasoning", id))
+            })
+            .unwrap_or_else(|| format!("session:{}", part.session_id));
+        if let Some(full_text) = part.text.clone() {
+            let previous = shared_state.part_text(&part_key).await;
+            if let Some(delta_text) = compute_text_delta(previous.as_deref(), &full_text) {
+                let _ = event_tx
+                    .send(AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: delta_text,
+                    }))
+                    .await;
+            }
+            shared_state
+                .set_part_text(part_key.clone(), full_text)
+                .await;
+        } else if let Some(delta_text) = delta {
+            if !delta_text.is_empty() {
+                let _ = event_tx
+                    .send(AgentEvent::AssistantReasoning(ReasoningEvent {
+                        text: delta_text.clone(),
+                    }))
+                    .await;
+                shared_state
+                    .append_part_text(part_key.clone(), &delta_text)
+                    .await;
+            }
+        }
+        if part.time.as_ref().and_then(|t| t.end).is_some() {
+            shared_state.clear_part_text(&part_key).await;
+        }
+    }
+}
+
+fn compute_text_delta(previous: Option<&str>, current: &str) -> Option<String> {
+    if current.is_empty() {
+        return None;
+    }
+    match previous {
+        None => Some(current.to_string()),
+        Some(prev) if prev == current => None,
+        Some(prev) if current.starts_with(prev) => Some(current[prev.len()..].to_string()),
+        Some(_) => Some(current.to_string()),
     }
 }
 
@@ -2047,5 +2162,87 @@ pub fn load_opencode_models(binary_path: Option<PathBuf>) -> Vec<String> {
             }
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_text_delta, MessagePart, OpencodeRunner, OpencodeSharedState};
+    use crate::agent::events::AgentEvent;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use tokio::time::timeout;
+
+    #[test]
+    fn test_compute_text_delta_none_prev() {
+        assert_eq!(compute_text_delta(None, "hello"), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_compute_text_delta_same() {
+        assert_eq!(compute_text_delta(Some("hello"), "hello"), None);
+    }
+
+    #[test]
+    fn test_compute_text_delta_prefix() {
+        assert_eq!(
+            compute_text_delta(Some("hel"), "hello"),
+            Some("lo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_compute_text_delta_non_prefix() {
+        assert_eq!(
+            compute_text_delta(Some("world"), "hello"),
+            Some("hello".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_opencode_text_part_dedupes_full_updates() {
+        let shared_state = Arc::new(OpencodeSharedState::default());
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut part = MessagePart {
+            id: Some("prt-1".to_string()),
+            session_id: "session-1".to_string(),
+            message_id: Some("msg-1".to_string()),
+            part_type: "text".to_string(),
+            call_id: None,
+            text: Some("Hello".to_string()),
+            tool: None,
+            state: None,
+            time: None,
+        };
+
+        OpencodeRunner::handle_text_part(&part, None, &event_tx, &shared_state).await;
+        part.text = Some("Hello world".to_string());
+        OpencodeRunner::handle_text_part(&part, None, &event_tx, &shared_state).await;
+
+        let first = timeout(Duration::from_millis(50), event_rx.recv())
+            .await
+            .expect("first event")
+            .expect("first event value");
+        let second = timeout(Duration::from_millis(50), event_rx.recv())
+            .await
+            .expect("second event")
+            .expect("second event value");
+
+        match first {
+            AgentEvent::AssistantMessage(msg) => assert_eq!(msg.text, "Hello"),
+            other => panic!("expected AssistantMessage, got {other:?}"),
+        }
+        match second {
+            AgentEvent::AssistantMessage(msg) => assert_eq!(msg.text, " world"),
+            other => panic!("expected AssistantMessage, got {other:?}"),
+        }
+
+        assert!(
+            timeout(Duration::from_millis(50), event_rx.recv())
+                .await
+                .is_err(),
+            "no extra events expected"
+        );
     }
 }
