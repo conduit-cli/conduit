@@ -57,7 +57,7 @@ export interface Session {
   id: string;
   tab_index: number;
   workspace_id: string | null;
-  agent_type: 'claude' | 'codex' | 'gemini';
+  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
   agent_mode: string | null;
   agent_session_id: string | null;
   model: string | null;
@@ -119,7 +119,7 @@ export interface ArchiveWorkspaceRequest {
 
 export interface CreateSessionRequest {
   workspace_id?: string;
-  agent_type: 'claude' | 'codex' | 'gemini';
+  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
   model?: string;
 }
 
@@ -175,7 +175,7 @@ export interface BootstrapResponse {
 
 export interface ExternalSession {
   id: string;
-  agent_type: 'claude' | 'codex' | 'gemini';
+  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
   display: string;
   project?: string | null;
   project_name?: string | null;
@@ -312,7 +312,7 @@ export interface ModelInfo {
   display_name: string;
   description: string;
   is_default: boolean;
-  agent_type: 'claude' | 'codex' | 'gemini';
+  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
   context_window: number;
 }
 
@@ -329,12 +329,12 @@ export interface ListModelsResponse {
 
 export interface UpdateSessionRequest {
   model?: string;
-  agent_type?: 'claude' | 'codex' | 'gemini';
+  agent_type?: 'claude' | 'codex' | 'gemini' | 'opencode';
   agent_mode?: 'build' | 'plan';
 }
 
 export interface SetDefaultModelRequest {
-  agent_type: 'claude' | 'codex' | 'gemini';
+  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
   model_id: string;
 }
 

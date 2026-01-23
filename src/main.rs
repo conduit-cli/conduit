@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "conduit")]
-#[command(about = "Multi-agent TUI for Claude Code, Codex CLI, and Gemini CLI")]
+#[command(about = "Multi-agent TUI for Claude Code, Codex CLI, Gemini CLI, and OpenCode")]
 struct Cli {
     /// Custom data directory (default: ~/.conduit)
     #[arg(long, value_name = "PATH")]
@@ -146,6 +146,8 @@ async fn run_app() -> Result<()> {
                     Tool::Codex
                 } else if file_name.contains("gemini") {
                     Tool::Gemini
+                } else if file_name.contains("opencode") {
+                    Tool::Opencode
                 } else {
                     Tool::Claude
                 };

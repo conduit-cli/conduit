@@ -119,9 +119,10 @@ pub async fn create_session(
         "claude" => AgentType::Claude,
         "codex" => AgentType::Codex,
         "gemini" => AgentType::Gemini,
+        "opencode" => AgentType::Opencode,
         _ => {
             return Err(WebError::BadRequest(format!(
-                "Invalid agent type: {}. Must be one of: claude, codex, gemini",
+                "Invalid agent type: {}. Must be one of: claude, codex, gemini, opencode",
                 req.agent_type
             )));
         }
@@ -167,8 +168,9 @@ pub async fn update_session(
                 "claude" => Ok(AgentType::Claude),
                 "codex" => Ok(AgentType::Codex),
                 "gemini" => Ok(AgentType::Gemini),
+                "opencode" => Ok(AgentType::Opencode),
                 _ => Err(WebError::BadRequest(format!(
-                    "Invalid agent type: {}. Must be one of: claude, codex, gemini",
+                    "Invalid agent type: {}. Must be one of: claude, codex, gemini, opencode",
                     agent_type_str
                 ))),
             },
@@ -228,7 +230,7 @@ fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
                 tracing::warn!("Failed to load Codex history: {}", e);
                 Vec::new()
             }),
-        AgentType::Gemini => Vec::new(),
+        AgentType::Gemini | AgentType::Opencode => Vec::new(),
     }
 }
 
@@ -370,6 +372,10 @@ pub async fn get_session_events(
         },
         AgentType::Gemini => {
             // Gemini history loading not supported yet
+            vec![]
+        }
+        AgentType::Opencode => {
+            // OpenCode history loading not supported yet
             vec![]
         }
     };

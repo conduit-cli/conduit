@@ -11,8 +11,8 @@ pub mod web;
 pub use agent::{
     AgentError, AgentEvent, AgentHandle, AgentMode, AgentRunner, AgentStartConfig, AgentType,
     ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, MockAgentRunner, MockConfig,
-    MockEventBuilder, MockStartError, ModelInfo, ModelRegistry, SessionId, SessionMetadata,
-    SessionStatus,
+    MockEventBuilder, MockStartError, ModelInfo, ModelRegistry, OpencodeRunner, SessionId,
+    SessionMetadata, SessionStatus,
 };
 pub use config::Config;
 pub use core::ConduitCore;
@@ -23,7 +23,8 @@ pub use git::{
     WorktreeManager,
 };
 pub use session::{
-    discover_all_sessions, discover_claude_sessions, discover_codex_sessions, ExternalSession,
+    discover_all_sessions, discover_claude_sessions, discover_codex_sessions,
+    discover_opencode_sessions, ExternalSession,
 };
 pub use ui::App;
 pub use util::{generate_branch_name, generate_workspace_name, get_git_username};

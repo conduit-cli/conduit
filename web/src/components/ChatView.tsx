@@ -945,10 +945,10 @@ export function ChatView({
   const currentAttachments = session ? attachmentsBySession[session.id] ?? [] : [];
   const canStop = isProcessing || isAwaitingResponse;
 
-  const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
+  const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
     if (!session) return;
     // Only include agent_type in the request if it's different from current
-    const data: { model: string; agent_type?: 'claude' | 'codex' | 'gemini' } = { model: modelId };
+    const data: { model: string; agent_type?: 'claude' | 'codex' | 'gemini' | 'opencode' } = { model: modelId };
     if (newAgentType !== session.agent_type) {
       data.agent_type = newAgentType;
     }
@@ -963,7 +963,7 @@ export function ChatView({
   }, [session, updateSessionMutation]);
 
   const handleSetDefaultModel = useCallback(
-    (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => {
+    (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
       setDefaultModelMutation.mutate({ agent_type: newAgentType, model_id: modelId });
     },
     [setDefaultModelMutation]
@@ -1052,6 +1052,8 @@ export function ChatView({
                 ? 'bg-orange-400'
                 : session.agent_type === 'codex'
                 ? 'bg-green-400'
+                : session.agent_type === 'opencode'
+                ? 'bg-teal-400'
                 : 'bg-blue-400'
             )}
           />
@@ -1067,8 +1069,10 @@ export function ChatView({
                   ? 'Claude Code'
                   : session.agent_type === 'codex'
                   ? 'Codex CLI'
+                  : session.agent_type === 'opencode'
+                  ? 'OpenCode'
                   : 'Gemini CLI'}
-              </span>
+            </span>
             </p>
           </div>
         </div>

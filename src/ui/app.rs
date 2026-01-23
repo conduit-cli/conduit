@@ -30,7 +30,7 @@ use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug, AgentEvent, AgentInput,
     AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner,
-    GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, SessionId,
+    GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, SessionId,
 };
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::core::resolve_repo_workspace_settings;
@@ -255,6 +255,12 @@ impl App {
     #[inline]
     fn gemini_runner(&self) -> &Arc<GeminiCliRunner> {
         self.core.gemini_runner()
+    }
+
+    /// Get the OpenCode runner.
+    #[inline]
+    fn opencode_runner(&self) -> &Arc<OpencodeRunner> {
+        self.core.opencode_runner()
     }
 
     /// Get the worktree manager.
@@ -497,6 +503,14 @@ impl App {
                         session.chat_view.push(
                             MessageDisplay::System {
                                 content: "Gemini CLI history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                            }
+                            .to_chat_message(),
+                        );
+                    }
+                    AgentType::Opencode => {
+                        session.chat_view.push(
+                            MessageDisplay::System {
+                                content: "OpenCode history import isn't supported yet, so previous messages won't be shown.".to_string(),
                             }
                             .to_chat_message(),
                         );
@@ -1863,6 +1877,7 @@ impl App {
                         AgentType::Claude => self.claude_runner().clone(),
                         AgentType::Codex => self.codex_runner().clone(),
                         AgentType::Gemini => self.gemini_runner().clone(),
+                        AgentType::Opencode => self.opencode_runner().clone(),
                     };
 
                     let event_tx = self.event_tx.clone();
@@ -3155,7 +3170,8 @@ impl App {
         let has_saved_session = saved_tab.is_some();
         let no_agents_available = !self.tools().is_available(crate::util::Tool::Claude)
             && !self.tools().is_available(crate::util::Tool::Codex)
-            && !self.tools().is_available(crate::util::Tool::Gemini);
+            && !self.tools().is_available(crate::util::Tool::Gemini)
+            && !self.tools().is_available(crate::util::Tool::Opencode);
         let tab_agent_type = saved_tab
             .as_ref()
             .map(|saved| saved.agent_type)
@@ -3170,6 +3186,8 @@ impl App {
                     AgentType::Codex
                 } else if self.tools().is_available(crate::util::Tool::Gemini) {
                     AgentType::Gemini
+                } else if self.tools().is_available(crate::util::Tool::Opencode) {
+                    AgentType::Opencode
                 } else {
                     AgentType::Claude
                 }
@@ -3194,7 +3212,7 @@ impl App {
                         required_tool.display_name()
                     )
                 } else if no_agents_available {
-                    "An agent tool (Claude Code, Codex CLI, or Gemini CLI) is required to open this workspace."
+                    "An agent tool (Claude Code, Codex CLI, Gemini CLI, or OpenCode) is required to open this workspace."
                         .to_string()
                 } else {
                     format!(
@@ -3297,6 +3315,14 @@ impl App {
                                 .to_chat_message(),
                             );
                         }
+                        AgentType::Opencode => {
+                            session.chat_view.push(
+                                MessageDisplay::System {
+                                    content: "OpenCode history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                                }
+                                .to_chat_message(),
+                            );
+                        }
                     }
                 }
 
@@ -3369,6 +3395,7 @@ impl App {
             AgentType::Claude => crate::util::Tool::Claude,
             AgentType::Codex => crate::util::Tool::Codex,
             AgentType::Gemini => crate::util::Tool::Gemini,
+            AgentType::Opencode => crate::util::Tool::Opencode,
         }
     }
 
@@ -4191,6 +4218,16 @@ impl App {
                 session.chat_view.push(
                     MessageDisplay::System {
                         content: "Gemini CLI session import isn't supported yet.".to_string(),
+                    }
+                    .to_chat_message(),
+                );
+            }
+            AgentType::Opencode => {
+                session.resume_session_id = None;
+                session.agent_session_id = None;
+                session.chat_view.push(
+                    MessageDisplay::System {
+                        content: "OpenCode session import isn't supported yet.".to_string(),
                     }
                     .to_chat_message(),
                 );
@@ -6472,13 +6509,22 @@ impl App {
         }
 
         // Start agent
-        if agent_type == AgentType::Gemini && !images.is_empty() {
+        if matches!(agent_type, AgentType::Gemini | AgentType::Opencode) && !images.is_empty() {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 session.stop_processing();
                 session.pending_user_message = None;
                 let display = MessageDisplay::Error {
-                    content: "Image attachments aren't supported for Gemini in Conduit yet."
-                        .to_string(),
+                    content: match agent_type {
+                        AgentType::Gemini => {
+                            "Image attachments aren't supported for Gemini in Conduit yet."
+                                .to_string()
+                        }
+                        AgentType::Opencode => {
+                            "Image attachments aren't supported for OpenCode in Conduit yet."
+                                .to_string()
+                        }
+                        _ => "Image attachments aren't supported for this agent.".to_string(),
+                    },
                 };
                 session.chat_view.push(display.to_chat_message());
             }
@@ -6491,7 +6537,7 @@ impl App {
         // Strip placeholders for agents that send images out-of-band.
         if matches!(
             agent_type,
-            AgentType::Codex | AgentType::Claude | AgentType::Gemini
+            AgentType::Codex | AgentType::Claude | AgentType::Gemini | AgentType::Opencode
         ) {
             agent_prompt = Self::strip_image_placeholders(agent_prompt, &image_placeholders);
         }
@@ -6586,7 +6632,7 @@ impl App {
             }
         }
 
-        if agent_type == AgentType::Codex {
+        if matches!(agent_type, AgentType::Codex | AgentType::Opencode) {
             let is_active_tab = self.state.tab_manager.active_index() == tab_index;
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 if let Some(ref input_tx) = session.agent_input_tx {
@@ -6599,7 +6645,7 @@ impl App {
                             images: images_to_send,
                         };
                         if let Err(err) = input_tx.send(input).await {
-                            tracing::warn!("Failed to send codex prompt: {}", err);
+                            tracing::warn!("Failed to send prompt: {}", err);
                         }
                     });
 

@@ -125,6 +125,14 @@ impl ModelSelectorState {
             items.push(ModelSelectorItem::Model(model));
         }
 
+        let opencode_models = ModelRegistry::opencode_models();
+        if !opencode_models.is_empty() {
+            items.push(ModelSelectorItem::SectionHeader(AgentType::Opencode));
+            for model in opencode_models {
+                items.push(ModelSelectorItem::Model(model));
+            }
+        }
+
         items
     }
 

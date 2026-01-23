@@ -21,7 +21,7 @@ interface ChatInputProps {
   notice?: string | null;
   // Session/workspace info for status line
   modelDisplayName?: string | null;
-  agentType?: 'claude' | 'codex' | 'gemini' | null;
+  agentType?: 'claude' | 'codex' | 'gemini' | 'opencode' | null;
   agentMode?: string | null;
   gitStats?: { additions: number; deletions: number } | null;
   branch?: string | null;
@@ -359,7 +359,9 @@ export function ChatInput({
                 ? 'Claude Code'
                 : agentType === 'codex'
                   ? 'Codex CLI'
-                  : 'Gemini CLI'}
+                  : agentType === 'opencode'
+                    ? 'OpenCode'
+                    : 'Gemini CLI'}
             </span>
           )}
           {!modelDisplayName && !agentType && !canChangeModel && (

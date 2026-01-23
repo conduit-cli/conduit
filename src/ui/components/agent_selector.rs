@@ -21,7 +21,7 @@ use super::{
 pub struct AgentSelectorState {
     /// Whether the dialog is visible
     pub visible: bool,
-    /// Currently selected index (0 = Claude, 1 = Codex)
+    /// Currently selected index
     pub selected: usize,
     /// Available agents
     agents: Vec<AgentOption>,
@@ -61,6 +61,11 @@ impl AgentSelectorState {
                     name: "Gemini CLI",
                     description: "Google's Gemini coding assistant",
                 },
+                AgentOption {
+                    agent_type: AgentType::Opencode,
+                    name: "OpenCode",
+                    description: "OpenCode multi-provider assistant",
+                },
             ],
         }
     }
@@ -90,6 +95,14 @@ impl AgentSelectorState {
                 agent_type: AgentType::Gemini,
                 name: "Gemini CLI",
                 description: "Google's Gemini coding assistant",
+            });
+        }
+
+        if tools.is_available(Tool::Opencode) {
+            agents.push(AgentOption {
+                agent_type: AgentType::Opencode,
+                name: "OpenCode",
+                description: "OpenCode multi-provider assistant",
             });
         }
 
@@ -131,6 +144,14 @@ impl AgentSelectorState {
                 agent_type: AgentType::Gemini,
                 name: "Gemini CLI",
                 description: "Google's Gemini coding assistant",
+            });
+        }
+
+        if tools.is_available(Tool::Opencode) {
+            agents.push(AgentOption {
+                agent_type: AgentType::Opencode,
+                name: "OpenCode",
+                description: "OpenCode multi-provider assistant",
             });
         }
 

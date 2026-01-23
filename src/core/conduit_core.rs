@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::agent::{ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner};
+use crate::agent::{
+    ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, ModelRegistry, OpencodeRunner,
+};
 use crate::config::Config;
 use crate::data::{
     AppStateStore, Database, ForkSeedStore, RepositoryStore, SessionTabStore, WorkspaceStore,
@@ -14,13 +16,13 @@ use crate::util::{Tool, ToolAvailability};
 ///
 /// This struct owns all the foundational components:
 /// - Database connection and DAO stores for persistent data
-/// - Agent runners for Claude, Codex, and Gemini
+/// - Agent runners for Claude, Codex, Gemini, and OpenCode
 /// - Configuration and tool availability
 /// - Worktree manager for git workspace operations
 pub struct ConduitCore {
     /// Application configuration
     config: Config,
-    /// Tool availability (git, gh, claude, codex, gemini)
+    /// Tool availability (git, gh, claude, codex, gemini, opencode)
     tools: ToolAvailability,
     /// Database connection (owned to keep connection alive)
     _database: Option<Database>,
@@ -40,6 +42,8 @@ pub struct ConduitCore {
     codex_runner: Arc<CodexCliRunner>,
     /// Gemini CLI runner
     gemini_runner: Arc<GeminiCliRunner>,
+    /// OpenCode runner
+    opencode_runner: Arc<OpencodeRunner>,
     /// Worktree manager
     worktree_manager: WorkspaceRepoManager,
 }
@@ -97,6 +101,19 @@ impl ConduitCore {
             Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
             None => Arc::new(GeminiCliRunner::new()),
         };
+        let opencode_runner = match tools.get_path(Tool::Opencode) {
+            Some(path) => Arc::new(OpencodeRunner::with_path(path.clone())),
+            None => Arc::new(OpencodeRunner::new()),
+        };
+
+        if tools.is_available(Tool::Opencode) {
+            let models = crate::agent::opencode::load_opencode_models(
+                tools.get_path(Tool::Opencode).cloned(),
+            );
+            ModelRegistry::set_opencode_models(models);
+        } else {
+            ModelRegistry::clear_opencode_models();
+        }
 
         Self {
             config,
@@ -110,6 +127,7 @@ impl ConduitCore {
             claude_runner,
             codex_runner,
             gemini_runner,
+            opencode_runner,
             worktree_manager,
         }
     }
@@ -189,6 +207,11 @@ impl ConduitCore {
         &self.gemini_runner
     }
 
+    /// Get the OpenCode runner.
+    pub fn opencode_runner(&self) -> &Arc<OpencodeRunner> {
+        &self.opencode_runner
+    }
+
     /// Get the worktree manager.
     pub fn worktree_manager(&self) -> &WorkspaceRepoManager {
         &self.worktree_manager
@@ -226,5 +249,18 @@ impl ConduitCore {
             Some(path) => Arc::new(GeminiCliRunner::with_path(path.clone())),
             None => Arc::new(GeminiCliRunner::new()),
         };
+        self.opencode_runner = match self.tools.get_path(Tool::Opencode) {
+            Some(path) => Arc::new(OpencodeRunner::with_path(path.clone())),
+            None => Arc::new(OpencodeRunner::new()),
+        };
+
+        if self.tools.is_available(Tool::Opencode) {
+            let models = crate::agent::opencode::load_opencode_models(
+                self.tools.get_path(Tool::Opencode).cloned(),
+            );
+            ModelRegistry::set_opencode_models(models);
+        } else {
+            ModelRegistry::clear_opencode_models();
+        }
     }
 }

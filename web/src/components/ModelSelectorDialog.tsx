@@ -8,9 +8,9 @@ interface ModelSelectorDialogProps {
   isOpen: boolean;
   onClose: () => void;
   currentModel: string | null;
-  agentType: 'claude' | 'codex' | 'gemini';
-  onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => void;
-  onSetDefault: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini') => void;
+  agentType: 'claude' | 'codex' | 'gemini' | 'opencode';
+  onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
+  onSetDefault: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
   isUpdating?: boolean;
   isSettingDefault?: boolean;
 }
@@ -56,10 +56,10 @@ export function ModelSelectorDialog({
 
   // Flatten models for keyboard navigation
   const flatModels = useMemo(() => {
-    const models: { model: ModelInfo; groupAgentType: 'claude' | 'codex' | 'gemini' }[] = [];
+    const models: { model: ModelInfo; groupAgentType: 'claude' | 'codex' | 'gemini' | 'opencode' }[] = [];
     filteredGroups.forEach((group) => {
       group.models.forEach((model) => {
-        models.push({ model, groupAgentType: group.agent_type as 'claude' | 'codex' | 'gemini' });
+        models.push({ model, groupAgentType: group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode' });
       });
     });
     return models;
@@ -118,12 +118,12 @@ export function ModelSelectorDialog({
     }
   };
 
-  const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini') => {
+  const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
     if (isBusy) return;
     onSelect(modelId, modelAgentType);
   };
 
-  const handleSetDefault = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini') => {
+  const handleSetDefault = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
     if (isBusy) return;
     onSetDefault(modelId, modelAgentType);
   };
@@ -197,7 +197,7 @@ export function ModelSelectorDialog({
                     const isSelected = model.id === currentModel && model.agent_type === agentType;
                     const isHighlighted = currentFlatIndex === selectedIndex;
                     const flatIndex = currentFlatIndex;
-                    const groupAgentType = group.agent_type as 'claude' | 'codex' | 'gemini';
+                    const groupAgentType = group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode';
                     currentFlatIndex++;
 
                     return (

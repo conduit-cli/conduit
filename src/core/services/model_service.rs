@@ -7,13 +7,21 @@ pub struct ModelService;
 
 impl ModelService {
     pub fn list_models(core: &ConduitCore) -> ListModelsDto {
-        let agent_types = [AgentType::Claude, AgentType::Codex, AgentType::Gemini];
+        let agent_types = [
+            AgentType::Claude,
+            AgentType::Codex,
+            AgentType::Gemini,
+            AgentType::Opencode,
+        ];
         let (default_agent, default_model) = ConfigService::default_model(core);
 
         let groups = agent_types
             .iter()
-            .map(|&agent_type| {
+            .filter_map(|&agent_type| {
                 let models = ModelRegistry::models_for(agent_type);
+                if models.is_empty() {
+                    return None;
+                }
                 let agent_type_str = agent_type.as_str().to_string();
 
                 let model_entries = models
@@ -32,12 +40,12 @@ impl ModelService {
                     })
                     .collect();
 
-                ModelGroupDto {
+                Some(ModelGroupDto {
                     agent_type: agent_type_str,
                     section_title: ModelRegistry::agent_section_title(agent_type).to_string(),
                     icon: ModelRegistry::agent_icon(agent_type).to_string(),
                     models: model_entries,
-                }
+                })
             })
             .collect();
 

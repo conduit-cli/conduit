@@ -131,6 +131,8 @@ export function SessionTabs({
                   ? 'bg-orange-400'
                   : session.agent_type === 'codex'
                   ? 'bg-green-400'
+                  : session.agent_type === 'opencode'
+                  ? 'bg-teal-400'
                   : 'bg-blue-400'
               )}
             />

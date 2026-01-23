@@ -91,6 +91,11 @@ async fn list_agents(State(state): State<WebAppState>) -> Json<AgentsResponse> {
                 name: "Gemini CLI",
                 available: tools.is_available(Tool::Gemini),
             },
+            AgentInfo {
+                id: "opencode",
+                name: "OpenCode",
+                available: tools.is_available(Tool::Opencode),
+            },
         ],
     })
 }

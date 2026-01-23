@@ -99,6 +99,7 @@ pub use theme::{
     agent_claude,
     agent_codex,
     agent_gemini,
+    agent_opencode,
     // Background colors (functions)
     bg_base,
     bg_elevated,

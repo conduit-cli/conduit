@@ -86,6 +86,8 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
 rust-embed = "8.5"
 mime_guess = "2.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest-eventsource = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

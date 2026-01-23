@@ -136,6 +136,7 @@ impl SessionManager {
             AgentType::Claude => core.claude_runner().clone(),
             AgentType::Codex => core.codex_runner().clone(),
             AgentType::Gemini => core.gemini_runner().clone(),
+            AgentType::Opencode => core.opencode_runner().clone(),
         };
 
         if !runner.is_available() {
@@ -360,7 +361,7 @@ impl SessionManager {
         // Send as appropriate input type based on agent
         let agent_input = match agent_type {
             AgentType::Claude => AgentInput::ClaudeJsonl(input),
-            AgentType::Codex | AgentType::Gemini => AgentInput::CodexPrompt {
+            AgentType::Codex | AgentType::Gemini | AgentType::Opencode => AgentInput::CodexPrompt {
                 text: input,
                 images,
             },
@@ -988,6 +989,23 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                             }
                             continue;
                         }
+                        AgentType::Opencode => {
+                            if let Err(send_err) = tx
+                                .send(ServerMessage::session_error(
+                                    session_id,
+                                    "Image attachments are not supported for OpenCode sessions",
+                                ))
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
+                            continue;
+                        }
                     }
                 };
 
@@ -1199,6 +1217,23 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     "Image attachments are not supported for Gemini sessions",
+                                ))
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
+                            continue;
+                        }
+                        Some(AgentType::Opencode) => {
+                            if let Err(send_err) = tx
+                                .send(ServerMessage::session_error(
+                                    session_id,
+                                    "Image attachments are not supported for OpenCode sessions",
                                 ))
                                 .await
                             {

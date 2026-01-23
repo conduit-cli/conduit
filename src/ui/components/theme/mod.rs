@@ -309,6 +309,11 @@ pub fn agent_gemini() -> Color {
     current_theme().agent_codex
 }
 
+#[inline]
+pub fn agent_opencode() -> Color {
+    current_theme().agent_codex
+}
+
 // PR State Colors
 #[inline]
 pub fn pr_open_bg() -> Color {

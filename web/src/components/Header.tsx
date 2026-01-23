@@ -58,6 +58,8 @@ export function Header({
                   ? 'bg-orange-400'
                   : activeSession.agent_type === 'codex'
                   ? 'bg-green-400'
+                  : activeSession.agent_type === 'opencode'
+                  ? 'bg-teal-400'
                   : 'bg-blue-400'
               )}
             />
@@ -66,6 +68,8 @@ export function Header({
                 ? 'Claude'
                 : activeSession.agent_type === 'codex'
                 ? 'Codex'
+                : activeSession.agent_type === 'opencode'
+                ? 'OpenCode'
                 : 'Gemini'}
             </span>
             {supportsPlanMode(activeSession.agent_type) && (

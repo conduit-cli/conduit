@@ -1,7 +1,7 @@
 //! Tool availability detection and management
 //!
 //! This module provides functionality to detect and track the availability
-//! of external tools required by Conduit (git, gh, claude, codex, gemini).
+//! of external tools required by Conduit (git, gh, claude, codex, gemini, opencode).
 
 use std::path::{Path, PathBuf};
 
@@ -20,6 +20,8 @@ pub enum Tool {
     Codex,
     /// Google Gemini CLI agent
     Gemini,
+    /// OpenCode CLI agent
+    Opencode,
 }
 
 impl Tool {
@@ -31,6 +33,7 @@ impl Tool {
             Tool::Claude => "claude",
             Tool::Codex => "codex",
             Tool::Gemini => "gemini",
+            Tool::Opencode => "opencode",
         }
     }
 
@@ -42,6 +45,7 @@ impl Tool {
             Tool::Claude => "Claude Code",
             Tool::Codex => "Codex CLI",
             Tool::Gemini => "Gemini CLI",
+            Tool::Opencode => "OpenCode",
         }
     }
 
@@ -53,6 +57,7 @@ impl Tool {
             Tool::Claude => "npm install -g @anthropic-ai/claude-code\nhttps://docs.anthropic.com/en/docs/claude-code",
             Tool::Codex => "npm install -g @openai/codex\nhttps://github.com/openai/codex-cli",
             Tool::Gemini => "npm install -g @google/gemini-cli\nhttps://github.com/google-gemini/gemini-cli",
+            Tool::Opencode => "brew install anomalyco/tap/opencode\nhttps://opencode.ai/docs",
         }
     }
 
@@ -64,6 +69,7 @@ impl Tool {
             Tool::Claude => "Claude Code is an AI coding assistant from Anthropic.",
             Tool::Codex => "Codex is an AI coding assistant from OpenAI.",
             Tool::Gemini => "Gemini CLI is an AI coding assistant from Google.",
+            Tool::Opencode => "OpenCode is a multi-provider AI coding assistant.",
         }
     }
 
@@ -74,12 +80,19 @@ impl Tool {
 
     /// Check if this tool is an agent
     pub fn is_agent(&self) -> bool {
-        matches!(self, Tool::Claude | Tool::Codex | Tool::Gemini)
+        matches!(self, Tool::Claude | Tool::Codex | Tool::Gemini | Tool::Opencode)
     }
 
     /// Get all tools
     pub fn all() -> &'static [Tool] {
-        &[Tool::Git, Tool::Gh, Tool::Claude, Tool::Codex, Tool::Gemini]
+        &[
+            Tool::Git,
+            Tool::Gh,
+            Tool::Claude,
+            Tool::Codex,
+            Tool::Gemini,
+            Tool::Opencode,
+        ]
     }
 }
 
@@ -124,6 +137,7 @@ pub struct ToolPaths {
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
     pub gemini: Option<PathBuf>,
+    pub opencode: Option<PathBuf>,
 }
 
 impl ToolPaths {
@@ -135,6 +149,7 @@ impl ToolPaths {
             Tool::Claude => self.claude.as_ref(),
             Tool::Codex => self.codex.as_ref(),
             Tool::Gemini => self.gemini.as_ref(),
+            Tool::Opencode => self.opencode.as_ref(),
         }
     }
 
@@ -146,6 +161,7 @@ impl ToolPaths {
             Tool::Claude => self.claude = Some(path),
             Tool::Codex => self.codex = Some(path),
             Tool::Gemini => self.gemini = Some(path),
+            Tool::Opencode => self.opencode = Some(path),
         }
     }
 }
@@ -158,6 +174,7 @@ pub struct ToolAvailability {
     claude: ToolStatus,
     codex: ToolStatus,
     gemini: ToolStatus,
+    opencode: ToolStatus,
 }
 
 impl ToolAvailability {
@@ -174,6 +191,7 @@ impl ToolAvailability {
             claude: Self::detect_tool(Tool::Claude, configured_paths.claude.as_ref()),
             codex: Self::detect_tool(Tool::Codex, configured_paths.codex.as_ref()),
             gemini: Self::detect_tool(Tool::Gemini, configured_paths.gemini.as_ref()),
+            opencode: Self::detect_tool(Tool::Opencode, configured_paths.opencode.as_ref()),
         }
     }
 
@@ -236,6 +254,7 @@ impl ToolAvailability {
             Tool::Claude => &self.claude,
             Tool::Codex => &self.codex,
             Tool::Gemini => &self.gemini,
+            Tool::Opencode => &self.opencode,
         }
     }
 
@@ -271,6 +290,7 @@ impl ToolAvailability {
         self.is_available(Tool::Claude)
             || self.is_available(Tool::Codex)
             || self.is_available(Tool::Gemini)
+            || self.is_available(Tool::Opencode)
     }
 
     /// Get list of available agents
@@ -300,6 +320,7 @@ impl ToolAvailability {
             Tool::Claude => self.claude = status,
             Tool::Codex => self.codex = status,
             Tool::Gemini => self.gemini = status,
+            Tool::Opencode => self.opencode = status,
         }
 
         is_available
@@ -344,6 +365,7 @@ mod tests {
         assert_eq!(Tool::Claude.binary_name(), "claude");
         assert_eq!(Tool::Codex.binary_name(), "codex");
         assert_eq!(Tool::Gemini.binary_name(), "gemini");
+        assert_eq!(Tool::Opencode.binary_name(), "opencode");
     }
 
     #[test]
@@ -353,6 +375,7 @@ mod tests {
         assert!(!Tool::Claude.is_required());
         assert!(!Tool::Codex.is_required());
         assert!(!Tool::Gemini.is_required());
+        assert!(!Tool::Opencode.is_required());
     }
 
     #[test]
@@ -362,6 +385,7 @@ mod tests {
         assert!(Tool::Claude.is_agent());
         assert!(Tool::Codex.is_agent());
         assert!(Tool::Gemini.is_agent());
+        assert!(Tool::Opencode.is_agent());
     }
 
     #[test]
