@@ -343,7 +343,10 @@ export function useSessionEvents(sessionId: string | null): AgentEvent[] {
         } else if (event.type === 'AssistantMessage') {
           const last = prev[prev.length - 1];
           if (last?.type === 'AssistantMessage' && !last.is_final) {
-            next = [...prev.slice(0, -1), { ...event, text: last.text + event.text }];
+            const mergedText = event.is_final && event.text.startsWith(last.text)
+              ? event.text
+              : last.text + event.text;
+            next = [...prev.slice(0, -1), { ...event, text: mergedText }];
           } else {
             next = [...prev, event];
           }

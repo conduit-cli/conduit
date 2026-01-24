@@ -583,6 +583,7 @@ impl OpenCodeClient {
 #[derive(Default)]
 struct OpencodeEventState {
     started_tools: HashSet<String>,
+    message_roles: HashMap<String, String>,
 }
 
 pub struct OpencodeRunner {
@@ -1141,6 +1142,7 @@ impl OpencodeRunner {
                                     Ok(info) => info,
                                     Err(_) => continue,
                                 };
+                            state.message_roles.insert(info.id.clone(), info.role.clone());
                             if info.role == "assistant" {
                                 let has_streamable_parts = info.parts.iter().any(|part| {
                                     matches!(part.part_type.as_str(), "text" | "reasoning")
@@ -1204,6 +1206,12 @@ impl OpencodeRunner {
 
                             if part.session_id != session_id {
                                 continue;
+                            }
+
+                            if let Some(message_id) = part.message_id.as_ref() {
+                                if matches!(state.message_roles.get(message_id).map(String::as_str), Some("user")) {
+                                    continue;
+                                }
                             }
 
                             match part.part_type.as_str() {
@@ -1937,6 +1945,13 @@ impl AgentRunner for OpencodeRunner {
             input_tx
         };
 
+        spawn_event_stream(
+            client.clone(),
+            session_id.as_str().to_string(),
+            event_tx.clone(),
+            shared_state.clone(),
+        );
+
         if !config.prompt.trim().is_empty() {
             OpencodeRunner::send_prompt(
                 &client,
@@ -1949,14 +1964,9 @@ impl AgentRunner for OpencodeRunner {
             .await;
         }
 
-        spawn_event_stream(
-            client.clone(),
-            session_id.as_str().to_string(),
-            event_tx.clone(),
-            shared_state.clone(),
-        );
-
-        Ok(AgentHandle::new(event_rx, pid, Some(input_tx)))
+        let mut handle = AgentHandle::new(event_rx, pid, Some(input_tx));
+        handle.set_session_id(session_id);
+        Ok(handle)
     }
 
     async fn send_input(&self, handle: &AgentHandle, input: AgentInput) -> Result<(), AgentError> {

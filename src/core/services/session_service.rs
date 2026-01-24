@@ -123,7 +123,11 @@ impl SessionService {
                 && params.model.is_some()
                 && params.agent_type.is_none()
                 && params.agent_mode.is_none();
-            if !allow_model_repair {
+            let allow_opencode_model_change = session.agent_type == AgentType::Opencode
+                && params.model.is_some()
+                && params.agent_type.is_none()
+                && params.agent_mode.is_none();
+            if !allow_model_repair && !allow_opencode_model_change {
                 return Err(ServiceError::InvalidInput(
                     "Cannot change session settings while a run is active".to_string(),
                 ));

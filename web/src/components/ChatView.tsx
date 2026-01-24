@@ -868,18 +868,7 @@ export function ChatView({
     if (session?.agent_type !== 'opencode' || wsEventCutoff === 0) {
       return wsEvents;
     }
-    return wsEvents.filter((event, index) => {
-      if (index >= wsEventCutoff) {
-        return true;
-      }
-      if (event.type === 'AssistantMessage' || event.type === 'AssistantReasoning') {
-        return false;
-      }
-      if (event.type === 'TurnStarted' || event.type === 'TurnCompleted' || event.type === 'TurnFailed') {
-        return false;
-      }
-      return true;
-    });
+    return wsEvents.filter((_, index) => index >= wsEventCutoff);
   }, [session?.agent_type, wsEventCutoff, wsEvents]);
 
   const renderableWsEvents = useMemo(() => {
@@ -989,10 +978,10 @@ export function ChatView({
   }, [historyEvents, optimisticUserMessages, session, inputHistory]);
 
   // Can only change model if session hasn't started (no agent_session_id) and not processing
-  const canChangeModel =
-    !!session &&
-    !isProcessing &&
-    (!session.agent_session_id || session.model_invalid || !session.model);
+  const canChangeModel = !!session && !isProcessing &&
+    (session.agent_type === 'opencode'
+      ? true
+      : (!session.agent_session_id || session.model_invalid || !session.model));
   const canChangeMode =
     supportsPlanMode(session?.agent_type) && !session?.agent_session_id && !isProcessing;
 
@@ -1046,9 +1035,13 @@ export function ChatView({
         onSuccess: () => {
           setShowModelSelector(false);
         },
+        onError: (error) => {
+          const message = error instanceof Error ? error.message : 'Failed to update session model.';
+          onNotify?.(message, 'error');
+        },
       }
     );
-  }, [session, updateSessionMutation]);
+  }, [session, updateSessionMutation, onNotify]);
 
   const handleSetDefaultModel = useCallback(
     (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {

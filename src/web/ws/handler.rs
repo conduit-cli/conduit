@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
+use crate::agent::session::SessionId;
 use crate::core::services::{SessionService, UpdateSessionParams};
 use crate::core::ConduitCore;
 use crate::ui::app_prompt;
@@ -158,11 +159,41 @@ impl SessionManager {
             config = config.with_stdin_payload(payload);
         }
 
+        if agent_type == AgentType::Opencode {
+            match SessionService::get_session(&core, session_id) {
+                Ok(session_tab) => {
+                    if let Some(agent_session_id) = session_tab.agent_session_id {
+                        config = config.with_resume(SessionId::from_string(agent_session_id));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %session_id,
+                        error = %error,
+                        "Failed to load session for OpenCode resume"
+                    );
+                }
+            }
+        }
+
         // Start the agent
         let mut handle = runner
             .start(config)
             .await
             .map_err(|e| format!("Failed to start agent: {}", e))?;
+
+        if let Some(agent_session_id) = handle.session_id.clone() {
+            if let Err(error) =
+                persist_agent_session_id(&self.core, session_id, agent_session_id.as_str()).await
+            {
+                tracing::warn!(
+                    %session_id,
+                    agent_session_id = %agent_session_id,
+                    error = %error,
+                    "Failed to persist agent session id"
+                );
+            }
+        }
 
         let pid = handle.pid;
         let input_tx = handle.input_tx.take();
