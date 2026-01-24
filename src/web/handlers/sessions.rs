@@ -219,7 +219,7 @@ fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
         return Vec::new();
     };
 
-    match session.agent_type {
+    let mut messages = match session.agent_type {
         AgentType::Claude => load_claude_history_with_debug(agent_session_id)
             .map(|(messages, _, _)| messages)
             .unwrap_or_else(|e| {
@@ -239,7 +239,22 @@ fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
                 tracing::warn!("Failed to load OpenCode history: {}", e);
                 Vec::new()
             }),
+    };
+
+    if let Some(pending) = session.pending_user_message.as_ref() {
+        let already_in_history = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::User)
+            .map(|m| m.content.as_str() == pending.as_str())
+            .unwrap_or(false);
+
+        if !already_in_history {
+            messages.push(ChatMessage::user(pending.clone()));
+        }
     }
+
+    messages
 }
 
 fn estimate_tokens(text: &str) -> i64 {
@@ -429,6 +444,7 @@ pub async fn get_session_events(
             let role = match msg.role {
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
+                MessageRole::Reasoning => "reasoning",
                 MessageRole::Tool => "tool",
                 MessageRole::System => "system",
                 MessageRole::Error => "error",

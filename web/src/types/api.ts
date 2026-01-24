@@ -131,7 +131,7 @@ export interface TurnSummary {
 }
 
 export interface SessionEvent {
-  role: 'user' | 'assistant' | 'tool' | 'system' | 'error' | 'summary';
+  role: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error' | 'summary';
   content: string;
   tool_name?: string;
   tool_args?: string;

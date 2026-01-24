@@ -668,6 +668,51 @@ impl OpencodeRunner {
         false
     }
 
+    fn extract_tool_error_message(state: &ToolState) -> Option<String> {
+        fn non_empty(value: Option<&str>) -> Option<String> {
+            value
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        }
+
+        if let Some(error) = non_empty(state.error.as_deref()) {
+            return Some(error);
+        }
+
+        let output = state.output.as_ref()?;
+        if let Some(text) = non_empty(output.as_str()) {
+            return Some(text);
+        }
+
+        if let Some(obj) = output.as_object() {
+            if let Some(text) = non_empty(obj.get("message").and_then(|v| v.as_str())) {
+                return Some(text);
+            }
+            if let Some(err) = obj.get("error") {
+                if let Some(text) = non_empty(err.get("message").and_then(|v| v.as_str())) {
+                    return Some(text);
+                }
+                if let Some(text) = non_empty(err.as_str()) {
+                    return Some(text);
+                }
+            }
+            if let Some(issues) = obj.get("issues") {
+                let rendered = issues.to_string();
+                if !rendered.is_empty() {
+                    return Some(rendered);
+                }
+            }
+        }
+
+        let rendered = output.to_string();
+        if rendered.is_empty() {
+            None
+        } else {
+            Some(rendered)
+        }
+    }
+
     async fn send_prompt(
         client: &OpenCodeClient,
         session_id: &str,
@@ -1295,13 +1340,8 @@ impl OpencodeRunner {
                                                 state.started_tools.remove(&tool_id);
                                             }
                                             Some("error") => {
-                                                let error = state_info.error.or_else(|| {
-                                                    state_info
-                                                        .output
-                                                        .as_ref()
-                                                        .and_then(|o| o.as_str())
-                                                        .map(|s| s.to_string())
-                                                });
+                                                let error =
+                                                    Self::extract_tool_error_message(&state_info);
                                                 let _ = event_tx
                                                     .send(AgentEvent::ToolCompleted(
                                                         ToolCompletedEvent {
@@ -2191,6 +2231,7 @@ pub fn load_opencode_models(binary_path: Option<PathBuf>) -> Vec<String> {
 mod tests {
     use super::{
         compute_text_delta, MessagePart, OpencodeEventState, OpencodeRunner, OpencodeSharedState,
+        ToolState,
     };
     use crate::agent::events::AgentEvent;
     use std::sync::Arc;
@@ -2303,5 +2344,48 @@ mod tests {
 
         assert!(OpencodeRunner::should_ignore_part(&user_part, &state));
         assert!(!OpencodeRunner::should_ignore_part(&assistant_part, &state));
+    }
+    #[test]
+    fn test_opencode_tool_error_message_prefers_error_field() {
+        let state = ToolState {
+            status: Some("error".to_string()),
+            title: None,
+            input: None,
+            output: Some(serde_json::json!({"message": "ignored"})),
+            error: Some("boom".to_string()),
+        };
+
+        let message = OpencodeRunner::extract_tool_error_message(&state);
+        assert_eq!(message.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn test_opencode_tool_error_message_reads_output_object() {
+        let state = ToolState {
+            status: Some("error".to_string()),
+            title: None,
+            input: None,
+            output: Some(serde_json::json!({
+                "error": {"message": "Invalid input"}
+            })),
+            error: None,
+        };
+
+        let message = OpencodeRunner::extract_tool_error_message(&state);
+        assert_eq!(message.as_deref(), Some("Invalid input"));
+    }
+
+    #[test]
+    fn test_opencode_tool_error_message_reads_output_string() {
+        let state = ToolState {
+            status: Some("error".to_string()),
+            title: None,
+            input: None,
+            output: Some(serde_json::Value::String("bad args".to_string())),
+            error: None,
+        };
+
+        let message = OpencodeRunner::extract_tool_error_message(&state);
+        assert_eq!(message.as_deref(), Some("bad args"));
     }
 }

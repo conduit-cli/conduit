@@ -5638,6 +5638,7 @@ impl App {
         let is_content_event = matches!(
             &event,
             AgentEvent::AssistantMessage(_)
+                | AgentEvent::AssistantReasoning(_)
                 | AgentEvent::ToolStarted(_)
                 | AgentEvent::ToolCompleted(_)
                 | AgentEvent::CommandOutput(_)
@@ -5748,6 +5749,13 @@ impl App {
                         content: failed.error,
                     };
                     session.chat_view.push(display.to_chat_message());
+                }
+                AgentEvent::AssistantReasoning(reasoning) => {
+                    let token_estimate = (reasoning.text.len() / 4).max(1);
+                    session.add_streaming_tokens(token_estimate);
+                    session
+                        .chat_view
+                        .stream_append_role(MessageRole::Reasoning, &reasoning.text);
                 }
                 AgentEvent::AssistantMessage(msg) => {
                     if session.suppress_next_assistant_reply {
@@ -9400,6 +9408,7 @@ impl App {
                 "chat_messages": messages,
                 "chat_message_count": session.chat_view.len(),
                 "streaming_buffer": session.chat_view.streaming_buffer(),
+                "streaming_reasoning": session.chat_view.streaming_message_for(MessageRole::Reasoning),
                 "raw_events": raw_events,
                 "raw_event_count": session.raw_events_view.len(),
                 "input_box_content": session.input_box.input(),
@@ -9623,7 +9632,7 @@ async fn generate_title_and_branch_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::events::AssistantMessageEvent;
+    use crate::agent::events::{AssistantMessageEvent, ReasoningEvent};
     use crate::agent::AgentType;
     use crate::config::Config;
     use crate::data::{QueuedMessage, QueuedMessageMode};
@@ -10036,6 +10045,58 @@ mod tests {
                 .expect("session C missing");
             assert!(session.chat_view.streaming_buffer().is_none());
             assert!(session.chat_view.messages().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_event_routes_reasoning_by_session_id_after_tab_close() {
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+        let session_c = Uuid::new_v4();
+
+        let mut app = build_test_app_with_sessions(&[session_a, session_b, session_c]);
+
+        // Close the first tab so indices shift: B -> 0, C -> 1
+        assert!(app.state.tab_manager.close_tab(0));
+        assert_eq!(
+            app.state.tab_manager.session_index_by_id(session_b),
+            Some(0)
+        );
+        assert_eq!(
+            app.state.tab_manager.session_index_by_id(session_c),
+            Some(1)
+        );
+
+        let event = AgentEvent::AssistantReasoning(ReasoningEvent {
+            text: "thinking...".to_string(),
+        });
+
+        app.handle_agent_event(session_b, event).await.unwrap();
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_b)
+                .expect("session B missing");
+            assert_eq!(
+                session
+                    .chat_view
+                    .streaming_message_for(MessageRole::Reasoning),
+                Some("thinking...")
+            );
+        }
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_c)
+                .expect("session C missing");
+            assert!(session
+                .chat_view
+                .streaming_message_for(MessageRole::Reasoning)
+                .is_none());
         }
     }
 

@@ -202,6 +202,7 @@ fn format_fork_message(msg: &ChatMessage) -> String {
     let role = match msg.role {
         MessageRole::User => "user",
         MessageRole::Assistant => "assistant",
+        MessageRole::Reasoning => "reasoning",
         MessageRole::Tool => "tool",
         MessageRole::System => "system",
         MessageRole::Error => "error",

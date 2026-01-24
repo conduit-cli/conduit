@@ -581,6 +581,9 @@ fn opencode_parts_for_message(
     message_id: &str,
 ) -> Result<Vec<Value>, HistoryError> {
     let parts_dir = storage_dir.join("part").join(message_id);
+    if !parts_dir.exists() {
+        return Ok(Vec::new());
+    }
     let mut parts = Vec::new();
     for path in list_sorted_json(&parts_dir)? {
         let raw = fs::read_to_string(&path).map_err(|error| {
@@ -1794,13 +1797,37 @@ fn load_opencode_history_from_storage(
                         .cloned()
                         .unwrap_or_default();
                     let mut pending_text = String::new();
+                    let mut pending_reasoning = String::new();
                     let mut has_tool = false;
                     let mut has_text = false;
 
                     for part in &parts_val {
                         let part_type = part.get("type").and_then(|v| v.as_str()).unwrap_or("");
                         match part_type {
+                            "reasoning" => {
+                                if part.get("ignored").and_then(|v| v.as_bool()) == Some(true) {
+                                    continue;
+                                }
+                                if part.get("synthetic").and_then(|v| v.as_bool()) == Some(true) {
+                                    continue;
+                                }
+                                let chunk = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                if chunk.is_empty() {
+                                    continue;
+                                }
+                                append_output(&mut pending_reasoning, chunk);
+                            }
                             "text" => {
+                                if !pending_reasoning.trim().is_empty() {
+                                    messages.push(
+                                        MessageDisplay::Reasoning {
+                                            content: pending_reasoning.clone(),
+                                        }
+                                        .to_chat_message(),
+                                    );
+                                    has_text = true;
+                                    pending_reasoning.clear();
+                                }
                                 if part.get("ignored").and_then(|v| v.as_bool()) == Some(true) {
                                     continue;
                                 }
@@ -1814,6 +1841,16 @@ fn load_opencode_history_from_storage(
                                 append_output(&mut pending_text, chunk);
                             }
                             "tool" => {
+                                if !pending_reasoning.trim().is_empty() {
+                                    messages.push(
+                                        MessageDisplay::Reasoning {
+                                            content: pending_reasoning.clone(),
+                                        }
+                                        .to_chat_message(),
+                                    );
+                                    has_text = true;
+                                    pending_reasoning.clear();
+                                }
                                 if opencode_push_assistant_message(&mut messages, &pending_text) {
                                     has_text = true;
                                 }
@@ -1825,6 +1862,17 @@ fn load_opencode_history_from_storage(
                             }
                             _ => {}
                         }
+                    }
+
+                    if !pending_reasoning.trim().is_empty() {
+                        messages.push(
+                            MessageDisplay::Reasoning {
+                                content: pending_reasoning.clone(),
+                            }
+                            .to_chat_message(),
+                        );
+                        has_text = true;
+                        pending_reasoning.clear();
                     }
 
                     if opencode_push_assistant_message(&mut messages, &pending_text) {
@@ -2088,6 +2136,8 @@ fn convert_codex_entry_with_debug(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_convert_claude_user_entry() {
@@ -2539,5 +2589,106 @@ mod tests {
             has_ls_tool,
             "Tool message should have 'ls' command from function_call lookup"
         );
+    }
+
+    #[test]
+    fn test_opencode_history_includes_reasoning_parts() {
+        let temp = TempDir::new().unwrap();
+        let storage_dir = temp.path();
+        let session_id = "ses_reasoning";
+
+        let session_dir = storage_dir.join("session").join("project");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        fs::write(
+            &session_file,
+            serde_json::json!({
+                "id": session_id,
+                "directory": "/tmp/project",
+                "time": {"created": 1}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let message_dir = storage_dir.join("message").join(session_id);
+        fs::create_dir_all(&message_dir).unwrap();
+        let message_file = message_dir.join("0001.json");
+        fs::write(
+            &message_file,
+            serde_json::json!({
+                "id": "msg_1",
+                "role": "assistant",
+                "time": {"created": 1}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let parts_dir = storage_dir.join("part").join("msg_1");
+        fs::create_dir_all(&parts_dir).unwrap();
+        let part_file = parts_dir.join("0001.json");
+        fs::write(
+            &part_file,
+            serde_json::json!({
+                "id": "prt_1",
+                "sessionID": session_id,
+                "messageID": "msg_1",
+                "type": "reasoning",
+                "text": "Thinking about tests..."
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (messages, _debug_entries, _session_path) =
+            load_opencode_history_from_storage(storage_dir, session_id).unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, MessageRole::Reasoning);
+        assert!(messages[0].content.contains("Thinking about tests"));
+    }
+
+    #[test]
+    fn test_opencode_history_missing_parts_dir() {
+        let temp = TempDir::new().unwrap();
+        let storage_dir = temp.path();
+        let session_id = "ses_test";
+
+        let session_dir = storage_dir.join("session").join("project");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        fs::write(
+            &session_file,
+            serde_json::json!({
+                "id": session_id,
+                "directory": "/tmp/project",
+                "time": {"created": 1}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let message_dir = storage_dir.join("message").join(session_id);
+        fs::create_dir_all(&message_dir).unwrap();
+        let message_file = message_dir.join("0001.json");
+        fs::write(
+            &message_file,
+            serde_json::json!({
+                "id": "msg_1",
+                "role": "assistant",
+                "time": {"created": 1},
+                "error": {"message": "Model missing"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (messages, _debug_entries, _session_path) =
+            load_opencode_history_from_storage(storage_dir, session_id).unwrap();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, MessageRole::Error);
+        assert!(messages[0].content.contains("Model missing"));
     }
 }

@@ -461,13 +461,19 @@ fn sanitize_tool_output_line(line: &str) -> Cow<'_, str> {
 }
 
 /// Chat view component displaying message history
+#[derive(Debug, Clone)]
+struct StreamingMessage {
+    role: MessageRole,
+    content: String,
+}
+
 pub struct ChatView {
     /// All messages in the chat
     messages: Vec<ChatMessage>,
     /// Scroll offset (0 = bottom, increases upward)
     scroll_offset: usize,
-    /// Currently streaming message buffer
-    streaming_buffer: Option<String>,
+    /// Currently streaming messages (in arrival order)
+    streaming_messages: Vec<StreamingMessage>,
     /// Cached rendered lines per message
     line_cache: LineCache,
     /// Width the cache was built for (invalidate on change)
@@ -520,7 +526,7 @@ impl ChatView {
         Self {
             messages: Vec::new(),
             scroll_offset: 0,
-            streaming_buffer: None,
+            streaming_messages: Vec::new(),
             line_cache: LineCache::default(),
             cache_width: None,
             flat_cache: Vec::new(),
@@ -566,7 +572,7 @@ impl ChatView {
     /// Add a message to the chat
     pub fn push(&mut self, message: ChatMessage) {
         // If we were streaming, finalize it
-        if self.streaming_buffer.is_some() {
+        if !self.streaming_messages.is_empty() {
             self.finalize_streaming();
         }
 
@@ -648,52 +654,59 @@ impl ChatView {
 
     /// Start or append to streaming message
     pub fn stream_append(&mut self, text: &str) {
-        match &mut self.streaming_buffer {
-            Some(buffer) => {
-                buffer.push_str(text);
-            }
-            None => {
-                self.streaming_buffer = Some(text.to_string());
-            }
+        self.stream_append_role(MessageRole::Assistant, text);
+    }
+
+    /// Start or append to streaming message for a specific role
+    pub fn stream_append_role(&mut self, role: MessageRole, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(idx) = self
+            .streaming_messages
+            .iter()
+            .rposition(|message| message.role == role)
+        {
+            self.streaming_messages[idx].content.push_str(text);
+        } else {
+            self.streaming_messages.push(StreamingMessage {
+                role,
+                content: text.to_string(),
+            });
         }
         // Invalidate streaming cache so it gets rebuilt on next render
         self.streaming_cache = None;
         self.streaming_joiner_before = None;
     }
 
-    /// Finalize streaming message and add to history
+    /// Finalize streaming messages and add to history
     pub fn finalize_streaming(&mut self) {
-        if let Some(content) = self.streaming_buffer.take() {
-            // Clear streaming cache
-            self.streaming_cache = None;
-            self.streaming_joiner_before = None;
+        if self.streaming_messages.is_empty() {
+            return;
+        }
 
-            // Update previous message's spacing if needed
-            if !self.messages.is_empty() {
-                if let Some(width) = self.cache_width {
-                    let prev_idx = self.messages.len() - 1;
-                    self.invalidate_cache_entry(prev_idx);
-                    self.update_cache_entry(prev_idx, width);
-                }
-            }
+        let streaming_messages = std::mem::take(&mut self.streaming_messages);
+        // Clear streaming cache
+        self.streaming_cache = None;
+        self.streaming_joiner_before = None;
 
-            self.messages.push(ChatMessage::assistant(content));
-
-            // Add cache entry for new message
-            if let Some(width) = self.cache_width {
-                let idx = self.messages.len() - 1;
-                self.update_cache_entry(idx, width);
-            }
-
-            // Auto-scroll to bottom only if user is already at bottom
-            // When scroll_offset > 0, user has scrolled up - preserve their position
+        for message in streaming_messages {
+            let chat_message = match message.role {
+                MessageRole::Assistant => ChatMessage::assistant(message.content),
+                MessageRole::Reasoning => ChatMessage::reasoning(message.content),
+                MessageRole::System => ChatMessage::system(message.content),
+                MessageRole::Error => ChatMessage::error(message.content),
+                MessageRole::User => ChatMessage::user(message.content),
+                MessageRole::Tool | MessageRole::Summary => ChatMessage::assistant(message.content),
+            };
+            self.push(chat_message);
         }
     }
 
     /// Clear all messages
     pub fn clear(&mut self) {
         self.messages.clear();
-        self.streaming_buffer = None;
+        self.streaming_messages.clear();
         self.scroll_offset = 0;
         self.clear_selection();
         self.last_render_extra_lines = 0;
@@ -831,23 +844,26 @@ impl ChatView {
     }
 
     fn ensure_streaming_cache(&mut self, width: u16) {
-        if let Some(ref buffer) = self.streaming_buffer {
-            if self.streaming_cache.is_none() {
-                let msg = ChatMessage::streaming(buffer.clone());
-                let mut streaming_lines = Vec::new();
-                let mut streaming_joiners = Vec::new();
+        if self.streaming_messages.is_empty() {
+            self.streaming_cache = None;
+            self.streaming_joiner_before = None;
+            return;
+        }
+
+        if self.streaming_cache.is_none() {
+            let mut streaming_lines = Vec::new();
+            let mut streaming_joiners = Vec::new();
+            for message in &self.streaming_messages {
+                let msg = ChatMessage::streaming_with_role(message.role, message.content.clone());
                 self.format_message_with_joiners(
                     &msg,
                     width as usize,
                     &mut streaming_lines,
                     &mut streaming_joiners,
                 );
-                self.streaming_cache = Some(streaming_lines);
-                self.streaming_joiner_before = Some(streaming_joiners);
             }
-        } else {
-            self.streaming_cache = None;
-            self.streaming_joiner_before = None;
+            self.streaming_cache = Some(streaming_lines);
+            self.streaming_joiner_before = Some(streaming_joiners);
         }
     }
 
@@ -1391,7 +1407,7 @@ impl ChatView {
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.messages.is_empty() && self.streaming_buffer.is_none()
+        self.messages.is_empty() && self.streaming_messages.is_empty()
     }
 
     /// Get all messages (for debug dump)
@@ -1399,9 +1415,18 @@ impl ChatView {
         &self.messages
     }
 
-    /// Get streaming buffer (for debug dump)
+    /// Get streaming message content for a specific role (for debug dump)
+    pub fn streaming_message_for(&self, role: MessageRole) -> Option<&str> {
+        self.streaming_messages
+            .iter()
+            .rposition(|message| message.role == role)
+            .and_then(|idx| self.streaming_messages.get(idx))
+            .map(|message| message.content.as_str())
+    }
+
+    /// Get assistant streaming buffer (for debug dump)
     pub fn streaming_buffer(&self) -> Option<&str> {
-        self.streaming_buffer.as_deref()
+        self.streaming_message_for(MessageRole::Assistant)
     }
 
     /// Toggle collapsed state for a tool message at the given index
@@ -1481,6 +1506,9 @@ impl ChatView {
             MessageRole::User => self.format_user_message(msg, width, lines, joiner_before),
             MessageRole::Assistant => {
                 self.format_assistant_message(msg, width, lines, joiner_before)
+            }
+            MessageRole::Reasoning => {
+                self.format_reasoning_message(msg, width, lines, joiner_before)
             }
             MessageRole::System => self.format_system_message(msg, width, lines, joiner_before),
             MessageRole::Error => self.format_error_message(msg, width, lines, joiner_before),
@@ -1636,6 +1664,60 @@ impl ChatView {
                     "…",
                     Style::default()
                         .fg(Color::Yellow)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ),
+            ]));
+            joiner_before.push(None);
+        }
+    }
+
+    /// Format reasoning messages with subdued styling
+    fn format_reasoning_message(
+        &self,
+        msg: &ChatMessage,
+        width: usize,
+        lines: &mut Vec<Line<'static>>,
+        joiner_before: &mut Vec<Option<String>>,
+    ) {
+        if msg.content.is_empty() {
+            return;
+        }
+
+        let content_lines: Vec<&str> = msg.content.lines().collect();
+        let text_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC);
+        let prefix_first = vec![Span::styled("... ", text_style)];
+        let prefix_next = vec![Span::raw("    ")];
+        let prefix_first_width = UnicodeWidthStr::width("... ");
+        let prefix_next_width = UnicodeWidthStr::width("    ");
+
+        for (i, line) in content_lines.iter().enumerate() {
+            let content_spans = vec![Span::styled(line.to_string(), text_style)];
+            let (first_prefix, first_prefix_width) = if i == 0 {
+                (prefix_first.clone(), prefix_first_width)
+            } else {
+                (prefix_next.clone(), prefix_next_width)
+            };
+            self.format_wrapped_lines(
+                lines,
+                joiner_before,
+                content_spans,
+                first_prefix,
+                prefix_next.clone(),
+                first_prefix_width,
+                prefix_next_width,
+                width,
+            );
+        }
+
+        if msg.is_streaming {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "...",
+                    Style::default()
+                        .fg(Color::DarkGray)
                         .add_modifier(Modifier::SLOW_BLINK),
                 ),
             ]));
@@ -2896,6 +2978,21 @@ mod tests {
             "Scroll position should be preserved after finalize_streaming, got {}",
             view.scroll_offset
         );
+    }
+
+    #[test]
+    fn test_streaming_reasoning_finalizes_in_order() {
+        let mut view = ChatView::new();
+        view.stream_append_role(MessageRole::Reasoning, "thinking...");
+        view.stream_append("answer");
+
+        view.finalize_streaming();
+
+        assert_eq!(view.messages.len(), 2);
+        assert_eq!(view.messages[0].role, MessageRole::Reasoning);
+        assert_eq!(view.messages[0].content, "thinking...");
+        assert_eq!(view.messages[1].role, MessageRole::Assistant);
+        assert_eq!(view.messages[1].content, "answer");
     }
 
     #[test]

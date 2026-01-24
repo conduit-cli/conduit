@@ -15,6 +15,9 @@ pub enum MessageDisplay {
         content: String,
         is_streaming: bool,
     },
+    Reasoning {
+        content: String,
+    },
     Tool {
         name: String,
         args: String,
@@ -45,6 +48,7 @@ impl MessageDisplay {
                     ChatMessage::assistant(content)
                 }
             }
+            MessageDisplay::Reasoning { content } => ChatMessage::reasoning(content),
             MessageDisplay::Tool {
                 name,
                 args,

@@ -34,6 +34,19 @@ export const HistoryMessage = memo(function HistoryMessage({ event }: HistoryMes
         </div>
       );
 
+    case 'reasoning':
+      return (
+        <div className="flex min-w-0 gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-500/10">
+            <Bot className="h-4 w-4 text-text-muted" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs uppercase tracking-wide text-text-muted">Thinking</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm italic text-text-muted">{event.content}</p>
+          </div>
+        </div>
+      );
+
     case 'tool':
       return (
         <ToolRunMessage

@@ -7,6 +7,7 @@ use super::TurnSummary;
 pub enum MessageRole {
     User,
     Assistant,
+    Reasoning,
     Tool,
     System,
     Error,
@@ -49,6 +50,20 @@ impl ChatMessage {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
+            content: content.into(),
+            tool_name: None,
+            tool_args: None,
+            is_streaming: false,
+            summary: None,
+            is_collapsed: false,
+            exit_code: None,
+            file_size: None,
+        }
+    }
+
+    pub fn reasoning(content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Reasoning,
             content: content.into(),
             tool_name: None,
             tool_args: None,
@@ -127,8 +142,16 @@ impl ChatMessage {
     }
 
     pub fn streaming(content: impl Into<String>) -> Self {
+        Self::streaming_with_role(MessageRole::Assistant, content)
+    }
+
+    pub fn streaming_reasoning(content: impl Into<String>) -> Self {
+        Self::streaming_with_role(MessageRole::Reasoning, content)
+    }
+
+    pub fn streaming_with_role(role: MessageRole, content: impl Into<String>) -> Self {
         Self {
-            role: MessageRole::Assistant,
+            role,
             content: content.into(),
             tool_name: None,
             tool_args: None,

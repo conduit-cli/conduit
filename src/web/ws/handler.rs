@@ -96,6 +96,34 @@ async fn append_input_history(
     Ok(())
 }
 
+async fn persist_pending_user_message(
+    core: &Arc<RwLock<ConduitCore>>,
+    session_id: Uuid,
+    input: &str,
+) -> Result<(), String> {
+    let store = {
+        let core = core.read().await;
+        core.session_tab_store_clone()
+            .ok_or_else(|| "Database not available".to_string())?
+    };
+
+    let mut tab = store
+        .get_by_id(session_id)
+        .map_err(|e| format!("Failed to get session {}: {}", session_id, e))?
+        .ok_or_else(|| format!("Session {} not found in database", session_id))?;
+
+    if tab.pending_user_message.as_deref() == Some(input) {
+        return Ok(());
+    }
+
+    tab.pending_user_message = Some(input.to_string());
+    store
+        .update(&tab)
+        .map_err(|e| format!("Failed to update session {}: {}", session_id, e))?;
+
+    Ok(())
+}
+
 impl SessionManager {
     pub fn new(core: Arc<RwLock<ConduitCore>>) -> Self {
         Self {
@@ -1413,6 +1441,16 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         break 'ws_loop;
                     }
                 } else if !hidden {
+                    if let Err(error) =
+                        persist_pending_user_message(&session_manager.core, session_id, &input)
+                            .await
+                    {
+                        tracing::warn!(
+                            %session_id,
+                            error = %error,
+                            "Failed to persist pending user message"
+                        );
+                    }
                     if let Err(error) =
                         append_input_history(&session_manager.core, session_id, &input).await
                     {
