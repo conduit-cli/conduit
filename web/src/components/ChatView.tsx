@@ -208,6 +208,7 @@ export function ChatView({
   });
   const { data: inputHistory } = useSessionHistory(session?.id ?? null);
   const { data: queueData } = useSessionQueue(session?.id ?? null);
+  const queuedMessages = queueData?.messages ?? [];
   const addQueueMutation = useAddQueueMessage();
   const updateQueueMutation = useUpdateQueueMessage();
   const deleteQueueMutation = useDeleteQueueMessage();
@@ -794,6 +795,32 @@ export function ChatView({
     deleteQueueMutation.mutate({ id: session.id, messageId: queued.id });
   };
 
+  const autoQueueInFlightRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    autoQueueInFlightRef.current = null;
+  }, [session?.id]);
+
+  useEffect(() => {
+    if (!session || !workspace) return;
+    if (isProcessing || isAwaitingResponse) return;
+    if (queuedMessages.length === 0) {
+      autoQueueInFlightRef.current = null;
+      return;
+    }
+    if (session.model_invalid || !session.model) return;
+    const nextQueued = queuedMessages[0];
+    if (autoQueueInFlightRef.current === nextQueued.id) return;
+    autoQueueInFlightRef.current = nextQueued.id;
+    void handleSendQueued(nextQueued);
+  }, [
+    isProcessing,
+    isAwaitingResponse,
+    queuedMessages,
+    session,
+    workspace,
+  ]);
+
   const handleRemoveQueued = (messageId: string) => {
     if (!session) return;
     deleteQueueMutation.mutate({ id: session.id, messageId });
@@ -1017,7 +1044,6 @@ export function ChatView({
           ? 'Wait for the current response to finish.'
           : null;
   const effectiveAgentMode = session?.agent_mode ?? 'build';
-  const queuedMessages = queueData?.messages ?? [];
   const canSendQueued = !!session && !!workspace && !isProcessing;
   const currentAttachments = session ? attachmentsBySession[session.id] ?? [] : [];
   const canStop = isProcessing || isAwaitingResponse;

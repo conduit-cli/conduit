@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test';
+import type { QueuedMessage, Session, UiState } from '../../src/types';
 
 export const sessionId = 'session-1';
 export const workspaceId = 'workspace-1';
@@ -133,17 +134,32 @@ function fulfillJson(route: Route, payload: unknown) {
   });
 }
 
-export async function mockApi(page: Page) {
+export async function mockApi(
+  page: Page,
+  overrides: {
+    session?: Session;
+    uiState?: UiState;
+    queueMessages?: QueuedMessage[];
+  } = {}
+) {
+  const effectiveSession = overrides.session ?? session;
+  const effectiveUiState = overrides.uiState ?? {
+    ...uiState,
+    active_session_id: effectiveSession.id,
+    tab_order: [effectiveSession.id],
+  };
+  const queueMessages = overrides.queueMessages ?? [];
+
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace('/api', '');
 
     if (path === '/bootstrap') {
       return fulfillJson(route, {
-        ui_state: uiState,
-        sessions: [session],
+        ui_state: effectiveUiState,
+        sessions: [effectiveSession],
         workspaces: [workspace],
-        active_session: session,
+        active_session: effectiveSession,
         active_workspace: workspace,
       });
     }
@@ -165,27 +181,38 @@ export async function mockApi(page: Page) {
     }
 
     if (path === '/sessions') {
-      return fulfillJson(route, { sessions: [session] });
+      return fulfillJson(route, { sessions: [effectiveSession] });
     }
 
-    if (path === `/sessions/${sessionId}`) {
-      return fulfillJson(route, session);
+    if (path === `/sessions/${effectiveSession.id}`) {
+      return fulfillJson(route, effectiveSession);
     }
 
-    if (path === `/sessions/${sessionId}/events`) {
+    if (path === `/sessions/${effectiveSession.id}/events`) {
       return fulfillJson(route, sessionEventsResponse);
     }
 
-    if (path === `/sessions/${sessionId}/history`) {
+    if (path === `/sessions/${effectiveSession.id}/history`) {
       return fulfillJson(route, { history: [] });
     }
 
-    if (path === `/sessions/${sessionId}/queue`) {
-      return fulfillJson(route, { messages: [] });
+    if (path === `/sessions/${effectiveSession.id}/queue`) {
+      if (route.request().method() === 'GET') {
+        return fulfillJson(route, { messages: queueMessages });
+      }
+      return fulfillJson(route, { messages: queueMessages });
+    }
+
+    if (path.startsWith(`/sessions/${effectiveSession.id}/queue/`)) {
+      if (route.request().method() === 'DELETE') {
+        queueMessages.splice(0, queueMessages.length);
+        return fulfillJson(route, { ok: true });
+      }
+      return fulfillJson(route, { ok: true });
     }
 
     if (path === '/ui/state') {
-      return fulfillJson(route, uiState);
+      return fulfillJson(route, effectiveUiState);
     }
 
     if (path === '/onboarding/base-dir') {
