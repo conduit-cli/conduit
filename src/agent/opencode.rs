@@ -18,6 +18,7 @@ use tokio::process::Command;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
 
+use crate::agent::display::MessageDisplay;
 use crate::agent::error::AgentError;
 use crate::agent::events::{
     AgentEvent, AssistantMessageEvent, ErrorEvent, QuestionOption, ReasoningEvent,
@@ -1299,7 +1300,9 @@ impl OpencodeRunner {
                                             tool_name = state_info.title.clone();
                                         }
                                     }
-                                    let tool_name = tool_name.unwrap_or_else(|| "tool".to_string());
+                                    let tool_name = tool_name.unwrap_or_else(|| "Tool".to_string());
+                                    let tool_name =
+                                        MessageDisplay::tool_display_name_owned(&tool_name);
                                     if let Some(state_info) = part.state {
                                         match state_info.status.as_deref() {
                                             Some("pending") | Some("running") => {

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } fr
 import { HistoryMessage } from './HistoryMessage';
 import { ChatMessage } from './ChatMessage';
 import { ToolRunMessage } from './ToolRunMessage';
+import { SessionStatusIndicator } from './SessionStatusIndicator';
 import { ChatInput } from './ChatInput';
 import { QueuePanel } from './QueuePanel';
 import { InlinePrompt, type InlinePromptData, type InlinePromptResponse } from './InlinePrompt';
@@ -45,6 +46,9 @@ interface ChatViewProps {
 }
 
 const INLINE_PROMPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const PROCESSING_WORDS = ['Thinking', 'Working', 'Whirring', 'Computing', 'Processing', 'Pondering', 'Mulling', 'Synthesizing', 'Calculating', 'Planning', 'Crafting', 'Noodling', 'Ruminating', 'Scheming', 'Tinkering', 'Brewing', 'Cooking', 'Conjuring', 'Hustling', 'Wandering'];
+const pickProcessingWord = () =>
+  PROCESSING_WORDS[Math.floor(Math.random() * PROCESSING_WORDS.length)];
 const ESC_DOUBLE_PRESS_TIMEOUT_MS = 500;
 const ESC_INTERRUPT_MESSAGE = 'Press Esc again to interrupt';
 
@@ -213,6 +217,10 @@ export function ChatView({
   const updateQueueMutation = useUpdateQueueMessage();
   const deleteQueueMutation = useDeleteQueueMessage();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingWord, setProcessingWord] = useState(() => pickProcessingWord());
+  const [processingStart, setProcessingStart] = useState<number | null>(null);
+  const [processingElapsed, setProcessingElapsed] = useState(0);
+  const wasProcessingRef = useRef(false);
   const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
   const [hasInitiallyScrolled, setHasInitiallyScrolled] = useState(false);
   const [inlinePrompt, setInlinePrompt] = useState<InlinePromptData | null>(null);
@@ -407,6 +415,27 @@ export function ChatView({
 
   useEffect(() => () => clearEscHint(), [clearEscHint]);
 
+
+  useEffect(() => {
+    const nowProcessing = isProcessing || isAwaitingResponse;
+    if (nowProcessing && !wasProcessingRef.current) {
+      setProcessingWord(pickProcessingWord());
+      setProcessingStart(Date.now());
+      setProcessingElapsed(0);
+    } else if (!nowProcessing && wasProcessingRef.current) {
+      setProcessingStart(null);
+      setProcessingElapsed(0);
+    }
+    wasProcessingRef.current = nowProcessing;
+  }, [isProcessing, isAwaitingResponse, session?.id]);
+
+  useEffect(() => {
+    if (processingStart === null) return;
+    const interval = window.setInterval(() => {
+      setProcessingElapsed(Math.floor((Date.now() - processingStart) / 1000));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [processingStart]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -923,10 +952,10 @@ export function ChatView({
         return true;
       }
       if (event.type === 'ToolStarted' && event.tool_name === 'Bash') {
-        return true;
+        return session?.agent_type !== 'opencode';
       }
       if (event.type === 'ToolCompleted' && toolIdToName.get(event.tool_id) === 'Bash') {
-        return true;
+        return session?.agent_type !== 'opencode';
       }
       if (inlinePrompt && event.type === 'ToolCompleted' && event.tool_id === inlinePrompt.toolUseId) {
         return true;
@@ -982,11 +1011,33 @@ export function ChatView({
     }
 
     return merged;
-  }, [inlinePrompt, visibleWsEvents]);
+  }, [inlinePrompt, visibleWsEvents, session?.agent_type]);
+
+  const activeToolName = useMemo(() => {
+    if (wsEvents.length === 0) return null;
+    const completed = new Set<string>();
+    for (let i = wsEvents.length - 1; i >= 0; i -= 1) {
+      const event = wsEvents[i];
+      if (event.type === 'ToolCompleted') {
+        completed.add(event.tool_id);
+        continue;
+      }
+      if (event.type === 'ToolStarted' && !INLINE_PROMPT_TOOLS.has(event.tool_name)) {
+        if (!completed.has(event.tool_id)) {
+          return event.tool_name;
+        }
+      }
+    }
+    return null;
+  }, [wsEvents, inlinePrompt]);
 
   // Check if we have content to display
   const hasHistory = historyEvents.length > 0;
   const hasWsEvents = renderableWsEvents.length > 0;
+  const showStatusIndicator = !inlinePrompt && (isProcessing || isAwaitingResponse);
+  const statusLabel = activeToolName
+    ? `Running ${activeToolName}…`
+    : `${processingWord}…`;
   const hasOptimisticMessages = optimisticUserMessages.length > 0;
   const hasContent = hasHistory || hasWsEvents || hasOptimisticMessages;
   const rawEventsForView = useMemo(() => {
@@ -1296,6 +1347,12 @@ export function ChatView({
                 onSubmit={handlePromptSubmit}
                 onCancel={handlePromptCancel}
                 isPending={!inlinePrompt.requestId}
+              />
+            )}
+            {showStatusIndicator && (
+              <SessionStatusIndicator
+                label={statusLabel}
+                elapsedSeconds={processingElapsed}
               />
             )}
           </div>
