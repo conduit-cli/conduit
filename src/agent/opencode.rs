@@ -656,6 +656,18 @@ impl OpencodeRunner {
         Some((event_type, props))
     }
 
+    fn should_ignore_part(part: &MessagePart, state: &OpencodeEventState) -> bool {
+        if let Some(message_id) = part.message_id.as_ref() {
+            if matches!(
+                state.message_roles.get(message_id).map(String::as_str),
+                Some("user")
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
     async fn send_prompt(
         client: &OpenCodeClient,
         session_id: &str,
@@ -1142,7 +1154,9 @@ impl OpencodeRunner {
                                     Ok(info) => info,
                                     Err(_) => continue,
                                 };
-                            state.message_roles.insert(info.id.clone(), info.role.clone());
+                            state
+                                .message_roles
+                                .insert(info.id.clone(), info.role.clone());
                             if info.role == "assistant" {
                                 let has_streamable_parts = info.parts.iter().any(|part| {
                                     matches!(part.part_type.as_str(), "text" | "reasoning")
@@ -1208,10 +1222,8 @@ impl OpencodeRunner {
                                 continue;
                             }
 
-                            if let Some(message_id) = part.message_id.as_ref() {
-                                if matches!(state.message_roles.get(message_id).map(String::as_str), Some("user")) {
-                                    continue;
-                                }
+                            if Self::should_ignore_part(&part, &state) {
+                                continue;
                             }
 
                             match part.part_type.as_str() {
@@ -2177,7 +2189,9 @@ pub fn load_opencode_models(binary_path: Option<PathBuf>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_text_delta, MessagePart, OpencodeRunner, OpencodeSharedState};
+    use super::{
+        compute_text_delta, MessagePart, OpencodeEventState, OpencodeRunner, OpencodeSharedState,
+    };
     use crate::agent::events::AgentEvent;
     use std::sync::Arc;
     use std::time::Duration;
@@ -2254,5 +2268,40 @@ mod tests {
                 .is_err(),
             "no extra events expected"
         );
+    }
+
+    #[test]
+    fn test_opencode_ignores_user_parts() {
+        let mut state = OpencodeEventState::default();
+        state
+            .message_roles
+            .insert("msg-user".to_string(), "user".to_string());
+
+        let user_part = MessagePart {
+            id: Some("prt-user".to_string()),
+            session_id: "session-1".to_string(),
+            message_id: Some("msg-user".to_string()),
+            part_type: "text".to_string(),
+            call_id: None,
+            text: Some("hi".to_string()),
+            tool: None,
+            state: None,
+            time: None,
+        };
+
+        let assistant_part = MessagePart {
+            id: Some("prt-assistant".to_string()),
+            session_id: "session-1".to_string(),
+            message_id: Some("msg-assistant".to_string()),
+            part_type: "text".to_string(),
+            call_id: None,
+            text: Some("hi".to_string()),
+            tool: None,
+            state: None,
+            time: None,
+        };
+
+        assert!(OpencodeRunner::should_ignore_part(&user_part, &state));
+        assert!(!OpencodeRunner::should_ignore_part(&assistant_part, &state));
     }
 }
