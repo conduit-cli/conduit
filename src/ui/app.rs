@@ -4740,11 +4740,28 @@ impl App {
                     }
                 }
             } else if relative_x >= model_start && relative_x < model_end && !shell_mode {
-                // Click on model/agent area - open model selector
-                self.state.close_overlays();
-                let defaults = self.model_selector_defaults();
-                self.state.model_selector_state.show(model, defaults);
-                self.state.input_mode = InputMode::SelectingModel;
+                let should_block_model_switch = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .is_some_and(|session| {
+                        session.is_processing
+                            || session.tools_in_flight > 0
+                            || session.pending_user_message.is_some()
+                            || session.inline_prompt.is_some()
+                    });
+                if should_block_model_switch {
+                    self.state.set_timed_footer_message(
+                        "Finish the current response before switching models".to_string(),
+                        Duration::from_secs(3),
+                    );
+                } else {
+                    // Click on model/agent area - open model selector
+                    self.state.close_overlays();
+                    let defaults = self.model_selector_defaults();
+                    self.state.model_selector_state.show(model, defaults);
+                    self.state.input_mode = InputMode::SelectingModel;
+                }
             }
         } else {
             // No mode area, just model/agent
@@ -4752,10 +4769,27 @@ impl App {
             let model_end = leading + model_width + 1 + agent_width + 1; // 1 char after agent
 
             if relative_x >= model_start && relative_x < model_end && !shell_mode {
-                self.state.close_overlays();
-                let defaults = self.model_selector_defaults();
-                self.state.model_selector_state.show(model, defaults);
-                self.state.input_mode = InputMode::SelectingModel;
+                let should_block_model_switch = self
+                    .state
+                    .tab_manager
+                    .active_session()
+                    .is_some_and(|session| {
+                        session.is_processing
+                            || session.tools_in_flight > 0
+                            || session.pending_user_message.is_some()
+                            || session.inline_prompt.is_some()
+                    });
+                if should_block_model_switch {
+                    self.state.set_timed_footer_message(
+                        "Finish the current response before switching models".to_string(),
+                        Duration::from_secs(3),
+                    );
+                } else {
+                    self.state.close_overlays();
+                    let defaults = self.model_selector_defaults();
+                    self.state.model_selector_state.show(model, defaults);
+                    self.state.input_mode = InputMode::SelectingModel;
+                }
             }
         }
 
@@ -5651,6 +5685,7 @@ impl App {
         let mut should_start_footer_spinner = false;
         let mut pending_sidebar_pr_update: Option<(Uuid, PrStatus)> = None;
         let mut pending_model_invalidation = false;
+        let mut should_drain_queue = false;
 
         {
             let Some(session) = self.state.tab_manager.session_mut(tab_index) else {
@@ -5710,6 +5745,9 @@ impl App {
                     session.stop_processing();
                     if session.inline_prompt.is_none() {
                         session.agent_input_tx = None;
+                    }
+                    if session.inline_prompt.is_none() && !session.queued_messages.is_empty() {
+                        should_drain_queue = true;
                     }
                     // Safety net: avoid suppressing a future real assistant message
                     // (in case the final assistant message event never arrived)
@@ -6086,6 +6124,18 @@ impl App {
                         session_id = %session_id,
                         "Failed to load session for model invalidation"
                     );
+                }
+            }
+        }
+
+        if should_drain_queue {
+            match self.drain_queue_for_tab(tab_index) {
+                Ok(effects) if !effects.is_empty() => {
+                    self.run_effects(effects).await?;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "Failed to drain queued messages");
                 }
             }
         }
