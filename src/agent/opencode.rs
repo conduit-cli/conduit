@@ -35,6 +35,18 @@ const OPENCODE_PROMPT_TIMEOUT: Duration = Duration::from_secs(60);
 const OPENCODE_MODEL_CACHE_TTL_SECS: u64 = 60 * 60 * 24;
 const OPENCODE_LOG_PREVIEW_CHARS: usize = 200;
 
+async fn send_event_or_log(
+    event_tx: &mpsc::Sender<AgentEvent>,
+    event: AgentEvent,
+    context: &'static str,
+) -> bool {
+    if let Err(err) = event_tx.send(event).await {
+        tracing::debug!(error = %err, context, "OpenCode event channel closed");
+        return false;
+    }
+    true
+}
+
 fn truncate_for_log(text: &str, max_chars: usize) -> String {
     let char_count = text.chars().count();
     if char_count <= max_chars {
@@ -444,8 +456,7 @@ impl OpenCodeClient {
         );
         if !status.is_success() {
             return Err(io::Error::other(format!(
-                "Permission response failed: {}",
-                body
+                "Permission response failed: {status} - {body}"
             )));
         }
 
@@ -927,8 +938,9 @@ impl OpencodeRunner {
                     error = %error,
                     "OpenCode assistant message error"
                 );
-                let _ = tx
-                    .send(AgentEvent::Error(ErrorEvent {
+                if !send_event_or_log(
+                    tx,
+                    AgentEvent::Error(ErrorEvent {
                         message: format!("OpenCode error: {}", error),
                         is_fatal: true,
                         code: if is_model_error {
@@ -937,8 +949,13 @@ impl OpencodeRunner {
                             None
                         },
                         details: None,
-                    }))
-                    .await;
+                    }),
+                    "opencode_assistant_error",
+                )
+                .await
+                {
+                    return;
+                }
             }
         }
 
@@ -1150,14 +1167,20 @@ impl OpencodeRunner {
         let mut events = match client.subscribe_events() {
             Ok(events) => events,
             Err(err) => {
-                let _ = event_tx
-                    .send(AgentEvent::Error(ErrorEvent {
+                if !send_event_or_log(
+                    &event_tx,
+                    AgentEvent::Error(ErrorEvent {
                         message: format!("OpenCode SSE setup failed: {err}"),
                         is_fatal: false,
                         code: None,
                         details: None,
-                    }))
-                    .await;
+                    }),
+                    "opencode_sse_setup",
+                )
+                .await
+                {
+                    return;
+                }
                 return;
             }
         };
@@ -1175,20 +1198,34 @@ impl OpencodeRunner {
                     let value: Value = match serde_json::from_str(&msg.data) {
                         Ok(value) => value,
                         Err(err) => {
-                            let _ = event_tx
-                                .send(AgentEvent::Error(ErrorEvent {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
                                     message: format!("OpenCode event parse error: {err}"),
                                     is_fatal: false,
                                     code: None,
                                     details: None,
-                                }))
-                                .await;
+                                }),
+                                "opencode_event_parse",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                             continue;
                         }
                     };
 
                     let Some((event_type, properties)) = Self::parse_event(&value) else {
-                        let _ = event_tx.send(AgentEvent::Raw { data: value }).await;
+                        if !send_event_or_log(
+                            &event_tx,
+                            AgentEvent::Raw { data: value },
+                            "opencode_raw",
+                        )
+                        .await
+                        {
+                            return;
+                        }
                         continue;
                     };
 
@@ -1311,15 +1348,19 @@ impl OpencodeRunner {
                                                         .input
                                                         .clone()
                                                         .unwrap_or(Value::Null);
-                                                    let _ = event_tx
-                                                        .send(AgentEvent::ToolStarted(
-                                                            ToolStartedEvent {
-                                                                tool_name,
-                                                                tool_id,
-                                                                arguments,
-                                                            },
-                                                        ))
-                                                        .await;
+                                                    if !send_event_or_log(
+                                                        &event_tx,
+                                                        AgentEvent::ToolStarted(ToolStartedEvent {
+                                                            tool_name,
+                                                            tool_id,
+                                                            arguments,
+                                                        }),
+                                                        "opencode_tool_started",
+                                                    )
+                                                    .await
+                                                    {
+                                                        return;
+                                                    }
                                                 }
                                             }
                                             Some("completed") => {
@@ -1330,31 +1371,39 @@ impl OpencodeRunner {
                                                         output.to_string()
                                                     }
                                                 });
-                                                let _ = event_tx
-                                                    .send(AgentEvent::ToolCompleted(
-                                                        ToolCompletedEvent {
-                                                            tool_id: tool_id.clone(),
-                                                            success: true,
-                                                            result,
-                                                            error: None,
-                                                        },
-                                                    ))
-                                                    .await;
+                                                if !send_event_or_log(
+                                                    &event_tx,
+                                                    AgentEvent::ToolCompleted(ToolCompletedEvent {
+                                                        tool_id: tool_id.clone(),
+                                                        success: true,
+                                                        result,
+                                                        error: None,
+                                                    }),
+                                                    "opencode_tool_completed",
+                                                )
+                                                .await
+                                                {
+                                                    return;
+                                                }
                                                 state.started_tools.remove(&tool_id);
                                             }
                                             Some("error") => {
                                                 let error =
                                                     Self::extract_tool_error_message(&state_info);
-                                                let _ = event_tx
-                                                    .send(AgentEvent::ToolCompleted(
-                                                        ToolCompletedEvent {
-                                                            tool_id: tool_id.clone(),
-                                                            success: false,
-                                                            result: None,
-                                                            error,
-                                                        },
-                                                    ))
-                                                    .await;
+                                                if !send_event_or_log(
+                                                    &event_tx,
+                                                    AgentEvent::ToolCompleted(ToolCompletedEvent {
+                                                        tool_id: tool_id.clone(),
+                                                        success: false,
+                                                        result: None,
+                                                        error,
+                                                    }),
+                                                    "opencode_tool_completed",
+                                                )
+                                                .await
+                                                {
+                                                    return;
+                                                }
                                                 state.started_tools.remove(&tool_id);
                                             }
                                             _ => {}
@@ -1372,12 +1421,17 @@ impl OpencodeRunner {
                                 .unwrap_or(false);
                             if matches_session {
                                 tracing::debug!(session_id, "OpenCode session idle");
-                                if shared_state.take_turn_in_flight() {
-                                    let _ = event_tx
-                                        .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
+                                if shared_state.take_turn_in_flight()
+                                    && !send_event_or_log(
+                                        &event_tx,
+                                        AgentEvent::TurnCompleted(TurnCompletedEvent {
                                             usage: Default::default(),
-                                        }))
-                                        .await;
+                                        }),
+                                        "opencode_turn_completed",
+                                    )
+                                    .await
+                                {
+                                    return;
                                 }
                                 break;
                             }
@@ -1398,11 +1452,15 @@ impl OpencodeRunner {
                                     error = %message,
                                     "OpenCode session error event"
                                 );
-                                let _ = event_tx
-                                    .send(AgentEvent::TurnFailed(TurnFailedEvent {
-                                        error: message,
-                                    }))
-                                    .await;
+                                if !send_event_or_log(
+                                    &event_tx,
+                                    AgentEvent::TurnFailed(TurnFailedEvent { error: message }),
+                                    "opencode_turn_failed",
+                                )
+                                .await
+                                {
+                                    return;
+                                }
                             }
                         }
                         "permission.asked" => {
@@ -1421,16 +1479,22 @@ impl OpencodeRunner {
                                     .respond_permission(&session_id, &permission.id, "once")
                                     .await
                                 {
-                                    let _ = event_tx
-                                        .send(AgentEvent::Error(ErrorEvent {
+                                    if !send_event_or_log(
+                                        &event_tx,
+                                        AgentEvent::Error(ErrorEvent {
                                             message: format!(
                                                 "Failed to respond to OpenCode permission: {err}"
                                             ),
                                             is_fatal: false,
                                             code: None,
                                             details: None,
-                                        }))
-                                        .await;
+                                        }),
+                                        "opencode_permission_error",
+                                    )
+                                    .await
+                                    {
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -1469,13 +1533,19 @@ impl OpencodeRunner {
                                 .collect();
 
                             let arguments = serde_json::json!({ "questions": questions });
-                            let _ = event_tx
-                                .send(AgentEvent::ToolStarted(ToolStartedEvent {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::ToolStarted(ToolStartedEvent {
                                     tool_name: "AskUserQuestion".to_string(),
                                     tool_id: request.id,
                                     arguments,
-                                }))
-                                .await;
+                                }),
+                                "opencode_question_tool_started",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                         }
                         "question.replied" => {
                             let reply: QuestionResponseEvent =
@@ -1491,14 +1561,20 @@ impl OpencodeRunner {
                                 request_id = %reply.request_id,
                                 "OpenCode question replied"
                             );
-                            let _ = event_tx
-                                .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::ToolCompleted(ToolCompletedEvent {
                                     tool_id: reply.request_id,
                                     success: true,
                                     result: Some("Question answered".to_string()),
                                     error: None,
-                                }))
-                                .await;
+                                }),
+                                "opencode_question_tool_completed",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                         }
                         "question.rejected" => {
                             let reply: QuestionResponseEvent =
@@ -1514,24 +1590,36 @@ impl OpencodeRunner {
                                 request_id = %reply.request_id,
                                 "OpenCode question rejected"
                             );
-                            let _ = event_tx
-                                .send(AgentEvent::ToolCompleted(ToolCompletedEvent {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::ToolCompleted(ToolCompletedEvent {
                                     tool_id: reply.request_id,
                                     success: false,
                                     result: None,
                                     error: Some("Question rejected".to_string()),
-                                }))
-                                .await;
+                                }),
+                                "opencode_question_tool_completed",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                         }
                         _ => {
-                            let _ = event_tx
-                                .send(AgentEvent::Raw {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Raw {
                                     data: serde_json::json!({
                                         "type": event_type,
                                         "properties": properties,
                                     }),
-                                })
-                                .await;
+                                },
+                                "opencode_raw",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                         }
                     }
                 }
@@ -1539,14 +1627,20 @@ impl OpencodeRunner {
                     tracing::debug!("OpenCode SSE connected");
                 }
                 Err(err) => {
-                    let _ = event_tx
-                        .send(AgentEvent::Error(ErrorEvent {
+                    if !send_event_or_log(
+                        &event_tx,
+                        AgentEvent::Error(ErrorEvent {
                             message: format!("OpenCode SSE error: {err}"),
                             is_fatal: false,
                             code: None,
                             details: None,
-                        }))
-                        .await;
+                        }),
+                        "opencode_sse_error",
+                    )
+                    .await
+                    {
+                        return;
+                    }
                     break;
                 }
             }
@@ -1572,24 +1666,36 @@ impl OpencodeRunner {
         if let Some(full_text) = part.text.clone() {
             let previous = shared_state.part_text(&part_key).await;
             if let Some(delta_text) = compute_text_delta(previous.as_deref(), &full_text) {
-                let _ = event_tx
-                    .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                if !send_event_or_log(
+                    event_tx,
+                    AgentEvent::AssistantMessage(AssistantMessageEvent {
                         text: delta_text,
                         is_final: false,
-                    }))
-                    .await;
+                    }),
+                    "opencode_assistant_delta",
+                )
+                .await
+                {
+                    return;
+                }
             }
             shared_state
                 .set_part_text(part_key.clone(), full_text)
                 .await;
         } else if let Some(delta_text) = delta {
             if !delta_text.is_empty() {
-                let _ = event_tx
-                    .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+                if !send_event_or_log(
+                    event_tx,
+                    AgentEvent::AssistantMessage(AssistantMessageEvent {
                         text: delta_text.clone(),
                         is_final: false,
-                    }))
-                    .await;
+                    }),
+                    "opencode_assistant_delta",
+                )
+                .await
+                {
+                    return;
+                }
                 shared_state
                     .append_part_text(part_key.clone(), &delta_text)
                     .await;
@@ -1600,18 +1706,27 @@ impl OpencodeRunner {
             if let Some(message_id) = part.message_id.as_deref() {
                 shared_state.mark_completed(message_id).await;
             }
-            let _ = event_tx
-                .send(AgentEvent::AssistantMessage(AssistantMessageEvent {
+            if !send_event_or_log(
+                event_tx,
+                AgentEvent::AssistantMessage(AssistantMessageEvent {
                     text: String::new(),
                     is_final: true,
-                }))
-                .await;
+                }),
+                "opencode_assistant_final",
+            )
+            .await
+            {
+                return;
+            }
             if shared_state.take_turn_in_flight() {
-                let _ = event_tx
-                    .send(AgentEvent::TurnCompleted(TurnCompletedEvent {
+                let _ = send_event_or_log(
+                    event_tx,
+                    AgentEvent::TurnCompleted(TurnCompletedEvent {
                         usage: Default::default(),
-                    }))
-                    .await;
+                    }),
+                    "opencode_turn_completed",
+                )
+                .await;
             }
         }
     }
@@ -1635,22 +1750,32 @@ impl OpencodeRunner {
         if let Some(full_text) = part.text.clone() {
             let previous = shared_state.part_text(&part_key).await;
             if let Some(delta_text) = compute_text_delta(previous.as_deref(), &full_text) {
-                let _ = event_tx
-                    .send(AgentEvent::AssistantReasoning(ReasoningEvent {
-                        text: delta_text,
-                    }))
-                    .await;
+                if !send_event_or_log(
+                    event_tx,
+                    AgentEvent::AssistantReasoning(ReasoningEvent { text: delta_text }),
+                    "opencode_reasoning_delta",
+                )
+                .await
+                {
+                    return;
+                }
             }
             shared_state
                 .set_part_text(part_key.clone(), full_text)
                 .await;
         } else if let Some(delta_text) = delta {
             if !delta_text.is_empty() {
-                let _ = event_tx
-                    .send(AgentEvent::AssistantReasoning(ReasoningEvent {
+                if !send_event_or_log(
+                    event_tx,
+                    AgentEvent::AssistantReasoning(ReasoningEvent {
                         text: delta_text.clone(),
-                    }))
-                    .await;
+                    }),
+                    "opencode_reasoning_delta",
+                )
+                .await
+                {
+                    return;
+                }
                 shared_state
                     .append_part_text(part_key.clone(), &delta_text)
                     .await;
@@ -1713,14 +1838,20 @@ impl AgentRunner for OpencodeRunner {
                         }
                     }
                     Err(err) => {
-                        let _ = event_tx_for_stdout
-                            .send(AgentEvent::Error(ErrorEvent {
+                        if !send_event_or_log(
+                            &event_tx_for_stdout,
+                            AgentEvent::Error(ErrorEvent {
                                 message: format!("OpenCode stdout error: {err}"),
                                 is_fatal: false,
                                 code: None,
                                 details: None,
-                            }))
-                            .await;
+                            }),
+                            "opencode_stdout_error",
+                        )
+                        .await
+                        {
+                            return;
+                        }
                         break;
                     }
                 }
@@ -1817,14 +1948,20 @@ impl AgentRunner for OpencodeRunner {
                                         "model": model_id,
                                         "suggestions": suggestions,
                                     });
-                                    let _ = event_tx_for_stderr
-                                        .send(AgentEvent::Error(ErrorEvent {
+                                    if !send_event_or_log(
+                                        &event_tx_for_stderr,
+                                        AgentEvent::Error(ErrorEvent {
                                             message,
                                             is_fatal: true,
                                             code: Some("model_not_found".to_string()),
                                             details: Some(details),
-                                        }))
-                                        .await;
+                                        }),
+                                        "opencode_model_not_found",
+                                    )
+                                    .await
+                                    {
+                                        return;
+                                    }
                                     capturing_model_error = false;
                                 }
                             }
@@ -1835,6 +1972,41 @@ impl AgentRunner for OpencodeRunner {
             });
         }
 
+        let ready_timeout_ms = OPENCODE_READY_TIMEOUT.as_millis() as u64;
+        let start_error_event = || {
+            AgentEvent::Error(ErrorEvent {
+                message: format!("OpenCode server startup timed out after {ready_timeout_ms}ms"),
+                is_fatal: true,
+                code: Some("opencode_start_timeout".to_string()),
+                details: None,
+            })
+        };
+
+        let base_url = match timeout(OPENCODE_READY_TIMEOUT, url_rx).await {
+            Ok(Ok(url)) if !url.is_empty() => url,
+            Ok(Ok(_)) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await;
+                return Err(AgentError::Timeout(ready_timeout_ms));
+            }
+            Ok(Err(_)) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await;
+                return Err(AgentError::Timeout(ready_timeout_ms));
+            }
+            Err(_) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await;
+                return Err(AgentError::Timeout(ready_timeout_ms));
+            }
+        };
+
         let event_tx_for_wait = event_tx.clone();
         tokio::spawn(async move {
             if let Ok(status) = child.wait().await {
@@ -1844,8 +2016,9 @@ impl AgentRunner for OpencodeRunner {
                         code = ?status.code(),
                         "OpenCode server exited"
                     );
-                    let _ = event_tx_for_wait
-                        .send(AgentEvent::Error(ErrorEvent {
+                    let _ = send_event_or_log(
+                        &event_tx_for_wait,
+                        AgentEvent::Error(ErrorEvent {
                             message: format!(
                                 "OpenCode server exited with status {:?}",
                                 status.code()
@@ -1853,30 +2026,13 @@ impl AgentRunner for OpencodeRunner {
                             is_fatal: true,
                             code: None,
                             details: None,
-                        }))
-                        .await;
+                        }),
+                        "opencode_server_exit",
+                    )
+                    .await;
                 }
             }
         });
-
-        let base_url = match timeout(OPENCODE_READY_TIMEOUT, url_rx).await {
-            Ok(Ok(url)) if !url.is_empty() => url,
-            Ok(Ok(_)) => {
-                return Err(AgentError::Timeout(
-                    OPENCODE_READY_TIMEOUT.as_millis() as u64
-                ))
-            }
-            Ok(Err(_)) => {
-                return Err(AgentError::Timeout(
-                    OPENCODE_READY_TIMEOUT.as_millis() as u64
-                ))
-            }
-            Err(_) => {
-                return Err(AgentError::Timeout(
-                    OPENCODE_READY_TIMEOUT.as_millis() as u64
-                ))
-            }
-        };
 
         tracing::debug!(base_url = %base_url, "OpenCode server ready");
         let client = OpenCodeClient::new(base_url);
@@ -1938,15 +2094,20 @@ impl AgentRunner for OpencodeRunner {
                             images,
                             model,
                         } => {
-                            if !images.is_empty() {
-                                let _ = event_tx
-                                    .send(AgentEvent::Error(ErrorEvent {
+                            if !images.is_empty()
+                                && !send_event_or_log(
+                                    &event_tx,
+                                    AgentEvent::Error(ErrorEvent {
                                         message: "OpenCode runner does not support image attachments yet.".to_string(),
                                         is_fatal: false,
                                         code: None,
                                         details: None,
-                                    }))
-                                .await;
+                                    }),
+                                    "opencode_images_unsupported",
+                                )
+                                .await
+                            {
+                                return;
                             }
                             let model_ref_for_input = model
                                 .as_deref()
@@ -1963,15 +2124,21 @@ impl AgentRunner for OpencodeRunner {
                             .await;
                         }
                         AgentInput::ClaudeJsonl(_) => {
-                            let _ = event_tx
-                                .send(AgentEvent::Error(ErrorEvent {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
                                     message: "OpenCode runner does not support Claude JSONL input."
                                         .to_string(),
                                     is_fatal: false,
                                     code: None,
                                     details: None,
-                                }))
-                                .await;
+                                }),
+                                "opencode_claude_jsonl_unsupported",
+                            )
+                            .await
+                            {
+                                return;
+                            }
                         }
                         AgentInput::OpencodeQuestion {
                             request_id,
@@ -1982,16 +2149,22 @@ impl AgentRunner for OpencodeRunner {
                                 None => client.reject_question(&request_id).await,
                             };
                             if let Err(err) = result {
-                                let _ = event_tx
-                                    .send(AgentEvent::Error(ErrorEvent {
+                                if !send_event_or_log(
+                                    &event_tx,
+                                    AgentEvent::Error(ErrorEvent {
                                         message: format!(
                                             "OpenCode question response failed: {err}"
                                         ),
                                         is_fatal: false,
                                         code: None,
                                         details: None,
-                                    }))
-                                    .await;
+                                    }),
+                                    "opencode_question_response_failed",
+                                )
+                                .await
+                                {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -2039,7 +2212,9 @@ impl AgentRunner for OpencodeRunner {
         {
             let result = unsafe { libc::kill(handle.pid as i32, libc::SIGTERM) };
             if result == -1 {
-                return Err(AgentError::Io(std::io::Error::last_os_error()));
+                let err = std::io::Error::last_os_error();
+                tracing::error!(pid = handle.pid, error = %err, "OpenCode SIGTERM failed");
+                return Err(AgentError::Io(err));
             }
         }
         #[cfg(not(unix))]
@@ -2057,7 +2232,9 @@ impl AgentRunner for OpencodeRunner {
         {
             let result = unsafe { libc::kill(handle.pid as i32, libc::SIGKILL) };
             if result == -1 {
-                return Err(AgentError::Io(std::io::Error::last_os_error()));
+                let err = std::io::Error::last_os_error();
+                tracing::error!(pid = handle.pid, error = %err, "OpenCode SIGKILL failed");
+                return Err(AgentError::Io(err));
             }
         }
         #[cfg(not(unix))]

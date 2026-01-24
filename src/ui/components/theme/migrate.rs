@@ -341,6 +341,7 @@ fn extract_palette(theme: &Theme) -> HashMap<String, String> {
         theme.accent_error,
         theme.agent_claude,
         theme.agent_codex,
+        theme.agent_opencode,
         theme.pr_open_bg,
         theme.pr_merged_bg,
         theme.pr_closed_bg,

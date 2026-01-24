@@ -820,18 +820,32 @@ fn parse_codex_session_file(path: &PathBuf) -> Option<ExternalSession> {
 
 /// Parse an OpenCode session file and extract metadata
 fn parse_opencode_session_file(path: &Path, storage_dir: &Path) -> Option<ExternalSession> {
-    let raw = fs::read_to_string(path).ok()?;
-    let info: OpencodeSessionInfo = serde_json::from_str(&raw).ok()?;
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warn!(path = %path.display(), error = %err, "Failed to read OpenCode session file");
+            return None;
+        }
+    };
+    let info: OpencodeSessionInfo = match serde_json::from_str(&raw) {
+        Ok(info) => info,
+        Err(err) => {
+            warn!(path = %path.display(), error = %err, "Failed to parse OpenCode session file");
+            return None;
+        }
+    };
 
     let message_dir = storage_dir.join("message").join(&info.id);
-    let message_count = fs::read_dir(&message_dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("json"))
-                .count()
-        })
-        .unwrap_or(0);
+    let message_count = match fs::read_dir(&message_dir) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("json"))
+            .count(),
+        Err(err) => {
+            warn!(dir = %message_dir.display(), error = %err, "Failed to read OpenCode message directory");
+            return None;
+        }
+    };
 
     if message_count == 0 {
         return None;

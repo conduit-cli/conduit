@@ -581,7 +581,7 @@ fn opencode_parts_for_message(
     message_id: &str,
 ) -> Result<Vec<Value>, HistoryError> {
     let parts_dir = storage_dir.join("part").join(message_id);
-    if !parts_dir.exists() {
+    if !parts_dir.exists() || !parts_dir.is_dir() {
         return Ok(Vec::new());
     }
     let mut parts = Vec::new();

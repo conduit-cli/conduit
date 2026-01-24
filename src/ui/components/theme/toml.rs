@@ -132,6 +132,7 @@ pub struct TomlAccent {
 pub struct TomlAgent {
     pub claude: Option<String>,
     pub codex: Option<String>,
+    pub opencode: Option<String>,
 }
 
 /// PR state section.
@@ -377,6 +378,7 @@ impl<'a> ThemeBuilder<'a> {
             // Agent
             agent_claude: resolve_color!(agent, claude, agent_claude),
             agent_codex: resolve_color!(agent, codex, agent_codex),
+            agent_opencode: resolve_color!(agent, opencode, agent_opencode),
 
             // PR
             pr_open_bg: resolve_color!(pr, open, pr_open_bg),

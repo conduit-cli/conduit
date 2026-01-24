@@ -231,7 +231,7 @@ impl AgentSelector {
         }
 
         // Render dialog frame (instructions on bottom border)
-        let frame = DialogFrame::new("Select Agent", 44, 10).instructions(vec![
+        let frame = DialogFrame::new("Select Agent", 44, 12).instructions(vec![
             ("↑↓", "select"),
             ("Enter", "confirm"),
             ("Esc", "cancel"),
@@ -245,6 +245,7 @@ impl AgentSelector {
             Constraint::Length(2), // Claude option
             Constraint::Length(2), // Codex option
             Constraint::Length(2), // Gemini option
+            Constraint::Length(2), // OpenCode option
         ])
         .split(inner);
 

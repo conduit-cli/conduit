@@ -821,7 +821,16 @@ export function ChatView({
       undefined,
       queuedImagePayload
     );
-    deleteQueueMutation.mutate({ id: session.id, messageId: queued.id });
+    deleteQueueMutation.mutate(
+      { id: session.id, messageId: queued.id },
+      {
+        onSettled: () => {
+          if (autoQueueInFlightRef.current === queued.id) {
+            autoQueueInFlightRef.current = null;
+          }
+        },
+      }
+    );
   };
 
   const autoQueueInFlightRef = useRef<string | null>(null);

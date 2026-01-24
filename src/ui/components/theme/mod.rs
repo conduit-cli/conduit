@@ -311,7 +311,7 @@ pub fn agent_gemini() -> Color {
 
 #[inline]
 pub fn agent_opencode() -> Color {
-    current_theme().agent_codex
+    current_theme().agent_opencode
 }
 
 // PR State Colors

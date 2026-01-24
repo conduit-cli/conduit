@@ -2,6 +2,8 @@
 
 use std::sync::{OnceLock, RwLock};
 
+use tracing::error;
+
 use crate::agent::opencode::load_opencode_models;
 use crate::agent::AgentType;
 
@@ -115,16 +117,24 @@ impl ModelRegistry {
             let default = models.remove(pos);
             models.insert(0, default);
         }
-        let mut store = Self::opencode_store()
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut store = match Self::opencode_store().write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                error!(error = %err, "opencode_store poisoned in set_opencode_models");
+                err.into_inner()
+            }
+        };
         *store = models;
     }
 
     pub fn clear_opencode_models() {
-        let mut store = Self::opencode_store()
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut store = match Self::opencode_store().write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                error!(error = %err, "opencode_store poisoned in clear_opencode_models");
+                err.into_inner()
+            }
+        };
         store.clear();
     }
 
@@ -132,9 +142,13 @@ impl ModelRegistry {
         if model_id == Self::OPENCODE_DEFAULT_MODEL_ID {
             return;
         }
-        let mut store = Self::opencode_store()
-            .write()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut store = match Self::opencode_store().write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                error!(error = %err, "opencode_store poisoned in drop_opencode_model");
+                err.into_inner()
+            }
+        };
         store.retain(|model| model.id != model_id);
     }
 
@@ -147,10 +161,13 @@ impl ModelRegistry {
     }
 
     pub fn opencode_models() -> Vec<ModelInfo> {
-        Self::opencode_store()
-            .read()
-            .unwrap_or_else(|err| err.into_inner())
-            .clone()
+        match Self::opencode_store().read() {
+            Ok(guard) => guard.clone(),
+            Err(err) => {
+                error!(error = %err, "opencode_store poisoned in opencode_models");
+                Vec::new()
+            }
+        }
     }
 
     /// Get available models for Claude Code

@@ -191,12 +191,11 @@ impl Database {
                 "ALTER TABLE session_tabs ADD COLUMN model_invalid INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
+            conn.execute(
+                "UPDATE session_tabs SET model_invalid = 0 WHERE model_invalid IS NULL",
+                [],
+            )?;
         }
-
-        conn.execute(
-            "UPDATE session_tabs SET model_invalid = 0 WHERE model_invalid IS NULL",
-            [],
-        )?;
 
         // Migration 3: Add pending_user_message column to session_tabs table
         let has_pending_user_message: bool = conn

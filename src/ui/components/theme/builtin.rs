@@ -82,6 +82,7 @@ pub fn catppuccin_mocha() -> Theme {
 
         agent_claude: sky,
         agent_codex: mauve,
+        agent_opencode: blue,
 
         pr_open_bg: green,
         pr_merged_bg: mauve,
@@ -164,6 +165,7 @@ pub fn catppuccin_latte() -> Theme {
 
         agent_claude: sky,
         agent_codex: mauve,
+        agent_opencode: blue,
 
         pr_open_bg: green,
         pr_merged_bg: mauve,
@@ -244,6 +246,7 @@ pub fn tokyo_night() -> Theme {
 
         agent_claude: cyan,
         agent_codex: magenta,
+        agent_opencode: blue,
 
         pr_open_bg: green,
         pr_merged_bg: magenta,
@@ -318,6 +321,7 @@ pub fn dracula() -> Theme {
 
         agent_claude: cyan,
         agent_codex: pink,
+        agent_opencode: purple,
 
         pr_open_bg: green,
         pr_merged_bg: purple,

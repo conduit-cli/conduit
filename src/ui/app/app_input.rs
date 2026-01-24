@@ -154,7 +154,8 @@ impl App {
                                     )
                                 }
                                 PromptResponse::ExitPlanApprove => {
-                                    // Not supported for OpenCode; fallback to tool result
+                                    session.agent_mode = AgentMode::Build;
+                                    session.update_status();
                                     let (content, tool_use_result) =
                                         Self::build_exit_plan_tool_result(
                                             &prompt_snapshot,

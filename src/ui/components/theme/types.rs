@@ -70,6 +70,8 @@ pub struct Theme {
     pub agent_claude: Color,
     /// Codex agent color
     pub agent_codex: Color,
+    /// OpenCode agent color
+    pub agent_opencode: Color,
 
     // =========================================================================
     // PR State Colors (5 colors)
@@ -181,6 +183,7 @@ impl Theme {
             // Agent Colors
             agent_claude: Color::Rgb(130, 180, 220),
             agent_codex: Color::Rgb(180, 140, 200),
+            agent_opencode: Color::Rgb(120, 200, 190),
 
             // PR State Colors
             pr_open_bg: Color::Rgb(35, 134, 54),
@@ -251,6 +254,7 @@ impl Theme {
             // Agent Colors
             agent_claude: Color::Rgb(50, 130, 180),
             agent_codex: Color::Rgb(130, 80, 160),
+            agent_opencode: Color::Rgb(70, 160, 170),
 
             // PR State Colors (same as dark - good contrast)
             pr_open_bg: Color::Rgb(35, 134, 54),
