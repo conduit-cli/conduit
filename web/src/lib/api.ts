@@ -68,8 +68,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new ApiError(response.status, error);
+    const errorText = await response.text();
+    let message = errorText;
+    try {
+      const parsed = JSON.parse(errorText);
+      message = parsed.details || parsed.error || parsed.message || errorText;
+    } catch {
+      // Not JSON, use raw text
+    }
+    throw new ApiError(response.status, message);
   }
 
   if (response.status === 204 || response.status === 205) {
