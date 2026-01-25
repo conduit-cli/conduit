@@ -242,10 +242,12 @@ export function ChatView({
   const escTimeoutRef = useRef<number | null>(null);
 
   const historyLimit = 200;
+  const historyLengthRef = useRef(historyEvents.length);
+  historyLengthRef.current = historyEvents.length;
   const hasMoreHistory = historyOffset > 0;
   const refreshHistoryTail = useCallback(async () => {
     if (!session?.id) return;
-    if (historyEvents.length > historyLimit && !isPinnedToBottom.current) return;
+    if (historyLengthRef.current > historyLimit && !isPinnedToBottom.current) return;
     try {
       const response = await getSessionEventsPage(session.id, { tail: true, limit: historyLimit });
       setHistoryEvents(response.events);
@@ -258,9 +260,9 @@ export function ChatView({
         )
       );
     } catch {
-      // Ignore refresh errors for now.
+      console.debug('Failed to refresh history tail');
     }
-  }, [session?.id, historyLimit, historyEvents.length]);
+  }, [session?.id, historyLimit]);
 
   useEffect(() => {
     let isActive = true;
@@ -785,54 +787,57 @@ export function ChatView({
     );
   };
 
-  const handleSendQueued = async (queued: QueuedMessage) => {
-    if (!session || !workspace) return;
-    if (session.model_invalid || !session.model) {
-      onNotify?.('Select a model to continue.', 'error');
-      setShowModelSelector(true);
-      return;
-    }
-    setOptimisticMessages((prev) => ({
-      ...prev,
-      [session.id]: [...(prev[session.id] ?? []), queued.text],
-    }));
-    setIsAwaitingResponse(true);
-    let queuedImagePayload: ImageAttachment[] = [];
-    if (queued.images.length > 0) {
-      try {
-        const payloads = await Promise.all(
-          queued.images.map(async (image) => {
-            const response = await getFileContent(workspace.id, image.path);
-            if (!response.exists) return null;
-            return { data: response.content, media_type: response.media_type };
-          })
-        );
-        queuedImagePayload = payloads.filter(
-          (payload): payload is ImageAttachment => Boolean(payload)
-        );
-      } catch (error) {
-        console.error('Failed to load queued images', error);
+  const handleSendQueued = useCallback(
+    async (queued: QueuedMessage) => {
+      if (!session || !workspace) return;
+      if (session.model_invalid || !session.model) {
+        onNotify?.('Select a model to continue.', 'error');
+        setShowModelSelector(true);
+        return;
       }
-    }
-    sendPrompt(
-      session.id,
-      queued.text,
-      workspace.path,
-      session.model ?? undefined,
-      undefined,
-      queuedImagePayload
-    );
-    deleteQueueMutation.mutate(
-      { id: session.id, messageId: queued.id },
-      {
-        onSettled: () => {
-          if (autoQueueInFlightRef.current === queued.id) {
-            autoQueueInFlightRef.current = null;
-          }
-        },
+      setOptimisticMessages((prev) => ({
+        ...prev,
+        [session.id]: [...(prev[session.id] ?? []), queued.text],
+      }));
+      setIsAwaitingResponse(true);
+      let queuedImagePayload: ImageAttachment[] = [];
+      if (queued.images.length > 0) {
+        try {
+          const payloads = await Promise.all(
+            queued.images.map(async (image) => {
+              const response = await getFileContent(workspace.id, image.path);
+              if (!response.exists) return null;
+              return { data: response.content, media_type: response.media_type };
+            })
+          );
+          queuedImagePayload = payloads.filter(
+            (payload): payload is ImageAttachment => Boolean(payload)
+          );
+        } catch (error) {
+          console.error('Failed to load queued images', error);
+        }
       }
-    );
-  };
+      sendPrompt(
+        session.id,
+        queued.text,
+        workspace.path,
+        session.model ?? undefined,
+        undefined,
+        queuedImagePayload
+      );
+      deleteQueueMutation.mutate(
+        { id: session.id, messageId: queued.id },
+        {
+          onSettled: () => {
+            if (autoQueueInFlightRef.current === queued.id) {
+              autoQueueInFlightRef.current = null;
+            }
+          },
+        }
+      );
+    },
+    [session, workspace, onNotify, deleteQueueMutation, sendPrompt]
+  );
 
   const autoQueueInFlightRef = useRef<string | null>(null);
 
@@ -858,6 +863,7 @@ export function ChatView({
     queuedMessages,
     session,
     workspace,
+    handleSendQueued,
   ]);
 
   const handleRemoveQueued = (messageId: string) => {
@@ -1039,7 +1045,7 @@ export function ChatView({
       }
     }
     return null;
-  }, [wsEvents, inlinePrompt]);
+  }, [wsEvents]);
 
   // Check if we have content to display
   const hasHistory = historyEvents.length > 0;

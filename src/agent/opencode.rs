@@ -1868,6 +1868,7 @@ impl AgentRunner for OpencodeRunner {
                 let mut model_id: Option<String> = None;
                 let mut suggestions: Vec<String> = Vec::new();
                 let mut line_count = 0usize;
+                let mut model_error_lines: Vec<String> = Vec::new();
 
                 loop {
                     line.clear();
@@ -1880,6 +1881,7 @@ impl AgentRunner for OpencodeRunner {
                             }
                             tracing::debug!("OpenCode stderr: {}", trimmed);
 
+                            // NOTE: OpenCode stderr format is parsed heuristically. Keep in sync with upstream.
                             if trimmed.contains("ProviderModelNotFoundError")
                                 || trimmed.contains("ModelNotFoundError")
                             {
@@ -1888,6 +1890,7 @@ impl AgentRunner for OpencodeRunner {
                                 model_id = None;
                                 suggestions.clear();
                                 line_count = 0;
+                                model_error_lines.clear();
                                 tracing::warn!(
                                     "OpenCode model lookup failed; collecting error details"
                                 );
@@ -1896,6 +1899,7 @@ impl AgentRunner for OpencodeRunner {
 
                             if capturing_model_error {
                                 line_count += 1;
+                                model_error_lines.push(trimmed.to_string());
                                 if trimmed.contains("providerID:") {
                                     if let Some(value) = trimmed.split('"').nth(1) {
                                         provider_id = Some(value.to_string());
@@ -1921,6 +1925,12 @@ impl AgentRunner for OpencodeRunner {
                                 }
 
                                 if trimmed.contains('}') || line_count > 12 {
+                                    if provider_id.is_none() || model_id.is_none() {
+                                        tracing::debug!(
+                                            lines = ?model_error_lines,
+                                            "OpenCode model error parse incomplete"
+                                        );
+                                    }
                                     invalidate_model_cache();
                                     if let (Some(provider), Some(model)) =
                                         (provider_id.as_ref(), model_id.as_ref())
@@ -1966,7 +1976,10 @@ impl AgentRunner for OpencodeRunner {
                                 }
                             }
                         }
-                        Err(_) => break,
+                        Err(err) => {
+                            tracing::debug!(error = %err, "OpenCode stderr read failed");
+                            break;
+                        }
                     }
                 }
             });
@@ -2309,7 +2322,8 @@ fn save_cache(path: &PathBuf, models: &[String]) -> std::io::Result<()> {
         generated_at: now_secs(),
         models: models.to_vec(),
     };
-    let payload = serde_json::to_string_pretty(&cache).unwrap_or_else(|_| "{}".to_string());
+    let payload = serde_json::to_string_pretty(&cache)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     fs::write(path, payload)
 }
 
