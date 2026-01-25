@@ -222,6 +222,7 @@ export function ChatView({
   const [processingStart, setProcessingStart] = useState<number | null>(null);
   const [processingElapsed, setProcessingElapsed] = useState(0);
   const wasProcessingRef = useRef(false);
+  const prevSessionIdRef = useRef<string | null>(session?.id ?? null);
   const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
   const [hasInitiallyScrolled, setHasInitiallyScrolled] = useState(false);
   const [inlinePrompt, setInlinePrompt] = useState<InlinePromptData | null>(null);
@@ -432,6 +433,14 @@ export function ChatView({
 
 
   useEffect(() => {
+    const sessionId = session?.id ?? null;
+    if (prevSessionIdRef.current !== sessionId) {
+      setProcessingStart(null);
+      setProcessingElapsed(0);
+      wasProcessingRef.current = false;
+      prevSessionIdRef.current = sessionId;
+    }
+
     const nowProcessing = isProcessing || isAwaitingResponse;
     if (nowProcessing && !wasProcessingRef.current) {
       setProcessingWord(pickProcessingWord());
