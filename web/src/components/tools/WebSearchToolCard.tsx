@@ -23,12 +23,14 @@ export function WebSearchToolCard({ status, query, content, error }: WebSearchTo
       {error ? (
         <div className="p-3 text-sm text-error">{error}</div>
       ) : hasContent ? (
-        <div className="p-3 text-sm">
-          {content && looksLikeJson(content) ? (
-            <pre className="text-xs text-text-muted overflow-x-auto max-h-64 overflow-y-auto">{content}</pre>
-          ) : (
-            <MarkdownBody content={content ?? ''} />
-          )}
+        <div className="p-3">
+          <div className="max-h-[320px] overflow-auto rounded-md border border-border/50 bg-surface-elevated/60 p-3 text-sm">
+            {content && looksLikeJson(content) ? (
+              <pre className="rounded bg-surface-elevated/60 p-2 text-xs text-text-muted overflow-x-auto">{content}</pre>
+            ) : (
+              <MarkdownBody content={content ?? ''} />
+            )}
+          </div>
         </div>
       ) : (
         <div className="p-3 text-xs text-text-muted">No results</div>
