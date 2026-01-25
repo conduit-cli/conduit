@@ -679,6 +679,13 @@ fn opencode_tool_args_from_state(state: &Value) -> String {
         None => return String::new(),
     };
 
+    if input.is_null() {
+        return String::new();
+    }
+    if input.as_object().map(|obj| obj.is_empty()).unwrap_or(false) {
+        return String::new();
+    }
+
     if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
         return command.to_string();
     }
@@ -2651,6 +2658,12 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, MessageRole::Reasoning);
         assert!(messages[0].content.contains("Thinking about tests"));
+    }
+
+    #[test]
+    fn test_opencode_tool_args_empty_input() {
+        let state = serde_json::json!({"input": {}});
+        assert!(opencode_tool_args_from_state(&state).is_empty());
     }
 
     #[test]
