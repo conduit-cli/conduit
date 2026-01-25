@@ -245,6 +245,7 @@ export function ChatView({
   const hasMoreHistory = historyOffset > 0;
   const refreshHistoryTail = useCallback(async () => {
     if (!session?.id) return;
+    if (historyEvents.length > historyLimit && !isPinnedToBottom.current) return;
     try {
       const response = await getSessionEventsPage(session.id, { tail: true, limit: historyLimit });
       setHistoryEvents(response.events);
@@ -259,7 +260,7 @@ export function ChatView({
     } catch {
       // Ignore refresh errors for now.
     }
-  }, [session?.id, historyLimit]);
+  }, [session?.id, historyLimit, historyEvents.length]);
 
   useEffect(() => {
     let isActive = true;

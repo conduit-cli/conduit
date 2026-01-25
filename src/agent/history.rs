@@ -628,6 +628,7 @@ fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String
         }
         if part_type == "reasoning" {
             reasoning.push_str(chunk);
+            reasoning.push('\n');
         } else {
             text.push_str(chunk);
             text.push('\n');
@@ -636,6 +637,9 @@ fn opencode_text_from_parts(parts: &[Value], include_reasoning: bool) -> (String
 
     if text.ends_with('\n') {
         text.pop();
+    }
+    if reasoning.ends_with('\n') {
+        reasoning.pop();
     }
 
     (text, reasoning)

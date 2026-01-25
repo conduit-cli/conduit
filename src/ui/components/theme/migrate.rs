@@ -210,6 +210,10 @@ fn generate_toml(
         color_value(theme.agent_claude)
     ));
     output.push_str(&format!("codex = \"{}\"\n", color_value(theme.agent_codex)));
+    output.push_str(&format!(
+        "opencode = \"{}\"\n",
+        color_value(theme.agent_opencode)
+    ));
     output.push('\n');
 
     // PR section

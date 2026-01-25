@@ -836,6 +836,7 @@ fn parse_opencode_session_file(path: &Path, storage_dir: &Path) -> Option<Extern
     };
 
     let message_dir = storage_dir.join("message").join(&info.id);
+    let mut message_dir_read_failed = false;
     let message_count = match fs::read_dir(&message_dir) {
         Ok(entries) => entries
             .flatten()
@@ -843,11 +844,12 @@ fn parse_opencode_session_file(path: &Path, storage_dir: &Path) -> Option<Extern
             .count(),
         Err(err) => {
             warn!(dir = %message_dir.display(), error = %err, "Failed to read OpenCode message directory");
-            return None;
+            message_dir_read_failed = true;
+            0
         }
     };
 
-    if message_count == 0 {
+    if message_count == 0 && !message_dir_read_failed {
         return None;
     }
 

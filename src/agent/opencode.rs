@@ -2280,8 +2280,21 @@ fn now_secs() -> u64 {
 }
 
 fn load_cache(path: &PathBuf) -> Option<ModelCache> {
-    let data = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&data).ok()
+    let data = match fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            tracing::debug!(path = %path.display(), error = %err, "Failed to read OpenCode model cache");
+            return None;
+        }
+    };
+    match serde_json::from_str(&data) {
+        Ok(cache) => Some(cache),
+        Err(err) => {
+            tracing::debug!(path = %path.display(), error = %err, "Failed to parse OpenCode model cache");
+            None
+        }
+    }
 }
 
 fn cache_is_fresh(cache: &ModelCache) -> bool {

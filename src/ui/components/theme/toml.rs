@@ -569,6 +569,7 @@ impl<'a> ThemeBuilder<'a> {
             "agent" => self.toml.agent.as_ref().and_then(|s| match field {
                 "claude" => s.claude.clone(),
                 "codex" => s.codex.clone(),
+                "opencode" => s.opencode.clone(),
                 _ => None,
             }),
             "pr" => self.toml.pr.as_ref().and_then(|s| match field {
