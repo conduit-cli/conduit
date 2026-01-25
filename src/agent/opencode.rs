@@ -1704,7 +1704,9 @@ impl OpencodeRunner {
         if part.time.as_ref().and_then(|t| t.end).is_some() {
             shared_state.clear_part_text(&part_key).await;
             if let Some(message_id) = part.message_id.as_deref() {
-                shared_state.mark_completed(message_id).await;
+                if !shared_state.mark_completed(message_id).await {
+                    return;
+                }
             }
             if !send_event_or_log(
                 event_tx,
@@ -1998,24 +2000,45 @@ impl AgentRunner for OpencodeRunner {
         let base_url = match timeout(OPENCODE_READY_TIMEOUT, url_rx).await {
             Ok(Ok(url)) if !url.is_empty() => url,
             Ok(Ok(_)) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
-                    .await;
+                if let Err(err) = child.kill().await {
+                    tracing::warn!(error = %err, "OpenCode child.kill failed after start timeout");
+                }
+                if let Err(err) = child.wait().await {
+                    tracing::warn!(error = %err, "OpenCode child.wait failed after start timeout");
+                }
+                if !send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await
+                {
+                    tracing::warn!("OpenCode start timeout event failed to send");
+                }
                 return Err(AgentError::Timeout(ready_timeout_ms));
             }
             Ok(Err(_)) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
-                    .await;
+                if let Err(err) = child.kill().await {
+                    tracing::warn!(error = %err, "OpenCode child.kill failed after start timeout");
+                }
+                if let Err(err) = child.wait().await {
+                    tracing::warn!(error = %err, "OpenCode child.wait failed after start timeout");
+                }
+                if !send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await
+                {
+                    tracing::warn!("OpenCode start timeout event failed to send");
+                }
                 return Err(AgentError::Timeout(ready_timeout_ms));
             }
             Err(_) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                let _ = send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
-                    .await;
+                if let Err(err) = child.kill().await {
+                    tracing::warn!(error = %err, "OpenCode child.kill failed after start timeout");
+                }
+                if let Err(err) = child.wait().await {
+                    tracing::warn!(error = %err, "OpenCode child.wait failed after start timeout");
+                }
+                if !send_event_or_log(&event_tx, start_error_event(), "opencode_start_timeout")
+                    .await
+                {
+                    tracing::warn!("OpenCode start timeout event failed to send");
+                }
                 return Err(AgentError::Timeout(ready_timeout_ms));
             }
         };

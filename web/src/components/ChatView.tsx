@@ -213,6 +213,7 @@ export function ChatView({
   const { data: inputHistory } = useSessionHistory(session?.id ?? null);
   const { data: queueData } = useSessionQueue(session?.id ?? null);
   const queuedMessages = queueData?.messages ?? [];
+  const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const addQueueMutation = useAddQueueMessage();
   const updateQueueMutation = useUpdateQueueMessage();
   const deleteQueueMutation = useDeleteQueueMessage();
@@ -241,15 +242,24 @@ export function ChatView({
   const lastEscPressRef = useRef<number | null>(null);
   const escTimeoutRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    sessionIdRef.current = session?.id ?? null;
+  }, [session?.id]);
+
   const historyLimit = 200;
   const historyLengthRef = useRef(historyEvents.length);
   historyLengthRef.current = historyEvents.length;
   const hasMoreHistory = historyOffset > 0;
   const refreshHistoryTail = useCallback(async () => {
-    if (!session?.id) return;
+    const currentSessionId = session?.id ?? null;
+    if (!currentSessionId) return;
     if (historyLengthRef.current > historyLimit && !isPinnedToBottom.current) return;
     try {
-      const response = await getSessionEventsPage(session.id, { tail: true, limit: historyLimit });
+      const response = await getSessionEventsPage(currentSessionId, {
+        tail: true,
+        limit: historyLimit,
+      });
+      if (sessionIdRef.current !== currentSessionId) return;
       setHistoryEvents(response.events);
       setHistoryOffset(response.offset);
       setHistoryRawEvents(
@@ -309,7 +319,8 @@ export function ChatView({
   }, [session?.id, historyLimit]);
 
   const loadMoreHistory = useCallback(async () => {
-    if (!session?.id || isLoadingMore || historyOffset === 0) return;
+    const currentSessionId = session?.id ?? null;
+    if (!currentSessionId || isLoadingMore || historyOffset === 0) return;
 
     const nextOffset = Math.max(0, historyOffset - historyLimit);
     const container = scrollContainerRef.current;
@@ -323,10 +334,11 @@ export function ChatView({
     setIsLoadingMore(true);
 
     try {
-      const response = await getSessionEventsPage(session.id, {
+      const response = await getSessionEventsPage(currentSessionId, {
         offset: nextOffset,
         limit: historyLimit,
       });
+      if (sessionIdRef.current !== currentSessionId) return;
       setHistoryEvents((prev) => [...response.events, ...prev]);
       setHistoryOffset(response.offset);
     } catch (error) {
@@ -795,10 +807,12 @@ export function ChatView({
         setShowModelSelector(true);
         return;
       }
-      setOptimisticMessages((prev) => ({
-        ...prev,
-        [session.id]: [...(prev[session.id] ?? []), queued.text],
-      }));
+      if (queued.text.trim().length > 0) {
+        setOptimisticMessages((prev) => ({
+          ...prev,
+          [session.id]: [...(prev[session.id] ?? []), queued.text],
+        }));
+      }
       setIsAwaitingResponse(true);
       let queuedImagePayload: ImageAttachment[] = [];
       if (queued.images.length > 0) {
