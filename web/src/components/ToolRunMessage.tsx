@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Wrench } from 'lucide-react';
 import { cn } from '../lib/cn';
 import {
   ReadToolCard,
@@ -9,6 +10,8 @@ import {
   GrepToolCard,
   TodoWriteToolCard,
   TaskToolCard,
+  WebSearchToolCard,
+  ToolCard,
   type ToolStatus,
 } from './tools';
 
@@ -40,6 +43,18 @@ function stringifyArgs(args: unknown): string {
   return typeof args === 'string' ? args : JSON.stringify(args, null, 2);
 }
 
+function extractQuery(args: Record<string, unknown>, rawArg: string): string | undefined {
+  const candidates = ['query', 'q', 'search', 'term', 'prompt', 'input'];
+  for (const key of candidates) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  const raw = rawArg.trim();
+  return raw.length > 0 ? raw : undefined;
+}
+
 export function ToolRunMessage({
   toolName,
   toolArgs,
@@ -51,14 +66,31 @@ export function ToolRunMessage({
   const rawArg = parsedArgs.raw ? String(parsedArgs.raw) : '';
   const content = output ?? '';
   const isSuccess = status !== 'error';
+  const normalizedToolName = toolName?.toLowerCase();
   let body: ReactNode = null;
 
   if (!toolName) {
-    body = content ? (
-      <pre className="rounded bg-surface-elevated p-2 text-xs text-text-muted overflow-x-auto max-h-64 overflow-y-auto">
-        {content}
-      </pre>
-    ) : null;
+    body = (
+      <ToolCard icon={<Wrench className="h-4 w-4" />} title="Tool output" status={status}>
+        {content ? (
+          <pre className="p-3 text-xs text-text-muted overflow-x-auto max-h-64 overflow-y-auto">
+            {content}
+          </pre>
+        ) : (
+          <div className="p-3 text-xs text-text-muted">No output</div>
+        )}
+      </ToolCard>
+    );
+  } else if (normalizedToolName === 'websearch' || normalizedToolName === 'web_search' || normalizedToolName === 'web-search') {
+    const query = extractQuery(parsedArgs, rawArg);
+    body = (
+      <WebSearchToolCard
+        status={status}
+        query={query}
+        content={isSuccess ? content : undefined}
+        error={!isSuccess ? content : undefined}
+      />
+    );
   } else {
     switch (toolName) {
       case 'Read': {
@@ -174,33 +206,41 @@ export function ToolRunMessage({
         break;
       }
       default: {
-        const statusStyles = isSuccess
-          ? { container: 'bg-emerald-500/10 border-emerald-500/30', text: 'text-emerald-400' }
-          : { container: 'bg-red-500/10 border-red-500/30', text: 'text-red-400' };
         const argsStr = stringifyArgs(toolArgs);
+        const hasArgs = argsStr.trim().length > 0;
+        const hasContent = content.trim().length > 0;
 
         body = (
-          <div className={cn('rounded-lg border p-3', statusStyles.container)}>
-            <p className={cn('text-xs font-medium mb-2', statusStyles.text)}>
-              {toolName}
-            </p>
-            {argsStr && (
-              <pre className="text-xs text-text-muted overflow-x-auto mb-2">{argsStr}</pre>
-            )}
-            {content && (
-              <pre
-                className={cn(
-                  'text-xs overflow-x-auto max-h-64 overflow-y-auto',
-                  isSuccess ? 'text-text-muted' : 'text-red-400'
+          <ToolCard icon={<Wrench className="h-4 w-4" />} title={toolName ?? 'Tool'} status={status}>
+            {hasArgs || hasContent ? (
+              <div className="space-y-3 p-3 text-xs text-text-muted">
+                {hasArgs && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-text-faint">Args</p>
+                    <pre className="mt-1 max-h-40 overflow-x-auto whitespace-pre-wrap">{argsStr}</pre>
+                  </div>
                 )}
-              >
-                {content}
-              </pre>
+                {hasContent && (
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-text-faint">Output</p>
+                    <pre
+                      className={cn(
+                        'mt-1 max-h-64 overflow-x-auto whitespace-pre-wrap',
+                        isSuccess ? 'text-text-muted' : 'text-red-400'
+                      )}
+                    >
+                      {content}
+                    </pre>
+                  </div>
+                )}
+                {exitCode !== undefined && exitCode !== null && exitCode !== 0 && (
+                  <p className="text-red-400">Exit code: {exitCode}</p>
+                )}
+              </div>
+            ) : (
+              <div className="p-3 text-xs text-text-muted">No output</div>
             )}
-            {exitCode !== undefined && exitCode !== null && exitCode !== 0 && (
-              <p className="mt-1 text-xs text-red-400">Exit code: {exitCode}</p>
-            )}
-          </div>
+          </ToolCard>
         );
         break;
       }

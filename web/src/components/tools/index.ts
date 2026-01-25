@@ -7,3 +7,4 @@ export { GlobToolCard } from './GlobToolCard';
 export { GrepToolCard } from './GrepToolCard';
 export { TodoWriteToolCard } from './TodoWriteToolCard';
 export { TaskToolCard } from './TaskToolCard';
+export { WebSearchToolCard } from './WebSearchToolCard';
