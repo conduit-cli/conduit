@@ -5,6 +5,7 @@
 mod app_state;
 mod database;
 mod fork_seed;
+mod migrations;
 mod models;
 mod repository;
 mod session_tab;
