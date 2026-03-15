@@ -228,13 +228,21 @@ impl ModelRegistry {
         vec![
             ModelInfo::new(
                 AgentType::Codex,
+                "gpt-5.4",
+                "GPT-5.4",
+                "gpt-5.4",
+                "Latest frontier agentic coding model",
+                Self::CODEX_CONTEXT_WINDOW,
+            )
+            .as_default(),
+            ModelInfo::new(
+                AgentType::Codex,
                 "gpt-5.3-codex",
                 "GPT-5.3-Codex",
                 "gpt-5.3-codex",
                 "Latest frontier agentic coding model",
                 Self::CODEX_GPT53_CONTEXT_WINDOW,
-            )
-            .as_default(),
+            ),
             ModelInfo::new(
                 AgentType::Codex,
                 "gpt-5.3-codex-spark",
@@ -348,7 +356,7 @@ impl ModelRegistry {
     pub fn default_model(agent_type: AgentType) -> String {
         match agent_type {
             AgentType::Claude => "opus".to_string(),
-            AgentType::Codex => "gpt-5.3-codex".to_string(),
+            AgentType::Codex => "gpt-5.4".to_string(),
             AgentType::Gemini => "gemini-2.5-pro".to_string(),
             AgentType::Opencode => Self::OPENCODE_DEFAULT_MODEL_ID.to_string(),
         }
@@ -417,5 +425,23 @@ impl ModelRegistry {
             AgentType::Gemini => Self::GEMINI_CONTEXT_WINDOW,
             AgentType::Opencode => Self::OPENCODE_CONTEXT_WINDOW,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_codex_models_include_gpt54_as_default() {
+        let models = ModelRegistry::codex_models();
+        let default_model = models
+            .iter()
+            .find(|model| model.is_default)
+            .expect("expected default Codex model");
+
+        assert_eq!(default_model.id, "gpt-5.4");
+        assert_eq!(ModelRegistry::default_model(AgentType::Codex), "gpt-5.4");
+        assert!(models.iter().any(|model| model.id == "gpt-5.3-codex"));
     }
 }

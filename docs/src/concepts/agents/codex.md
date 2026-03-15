@@ -6,13 +6,14 @@
 
 - **Full Automation** — Executes code autonomously
 - **272K Context** — Extended context window
-- **GPT-5.3-Codex** — Latest frontier agentic coding model
+- **GPT-5.4** — Latest frontier agentic coding model
 
 ## Models
 
 | Model | Best For |
 |-------|----------|
-| GPT-5.3-Codex | Latest frontier agentic coding model (default) |
+| GPT-5.4 | Latest frontier agentic coding model (default) |
+| GPT-5.3-Codex | Frontier Codex-optimized agentic coding model |
 | GPT-5.3-Codex-Spark | Ultra-fast coding model |
 | GPT-5.2-Codex | Frontier agentic coding model |
 | GPT-5.1-Codex-Max | Deep and fast reasoning |

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::io;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicI64, Ordering},
@@ -8,13 +7,11 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use base64::Engine;
 use codex_app_server_protocol::{
-    AddConversationListenerParams, ApplyPatchApprovalResponse, ClientInfo, ClientNotification,
-    ClientRequest, ExecCommandApprovalResponse, InitializeParams, InputItem, JSONRPCMessage,
-    JSONRPCResponse, NewConversationParams, NewConversationResponse, RequestId,
-    ResumeConversationParams, ResumeConversationResponse, SendUserMessageParams,
-    SendUserMessageResponse, ServerRequest,
+    ApplyPatchApprovalResponse, ClientInfo, ClientNotification, ClientRequest,
+    ExecCommandApprovalResponse, InitializeParams, JSONRPCError, JSONRPCMessage, JSONRPCResponse,
+    RequestId, ServerRequest, ThreadResumeParams, ThreadResumeResponse, ThreadStartParams,
+    ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::protocol::{AskForApproval, EventMsg, FileChange, ReviewDecision};
@@ -51,7 +48,7 @@ struct CodexNotificationParams {
 #[derive(Clone)]
 struct JsonRpcPeer {
     stdin: Arc<Mutex<ChildStdin>>,
-    pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<Value>>>>,
+    pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<io::Result<Value>>>>>,
     id_counter: Arc<AtomicI64>,
 }
 
@@ -79,10 +76,9 @@ impl JsonRpcPeer {
     async fn request<R: DeserializeOwned>(&self, request: &ClientRequest) -> io::Result<R> {
         let request_id = match request {
             ClientRequest::Initialize { request_id, .. }
-            | ClientRequest::NewConversation { request_id, .. }
-            | ClientRequest::ResumeConversation { request_id, .. }
-            | ClientRequest::AddConversationListener { request_id, .. }
-            | ClientRequest::SendUserMessage { request_id, .. } => request_id.clone(),
+            | ClientRequest::ThreadStart { request_id, .. }
+            | ClientRequest::ThreadResume { request_id, .. }
+            | ClientRequest::TurnStart { request_id, .. } => request_id.clone(),
             _ => return Err(io::Error::other("unsupported request type")),
         };
 
@@ -90,17 +86,43 @@ impl JsonRpcPeer {
         self.pending.lock().await.insert(request_id, tx);
         self.send(request).await?;
 
-        let value = rx.await.map_err(|_| io::Error::other("response dropped"))?;
+        let value = rx
+            .await
+            .map_err(|_| io::Error::other("response dropped"))??;
         serde_json::from_value(value).map_err(|e| io::Error::other(e.to_string()))
     }
 
     async fn resolve(&self, request_id: RequestId, value: Value) {
         if let Some(tx) = self.pending.lock().await.remove(&request_id) {
-            if tx.send(value).is_err() {
+            if tx.send(Ok(value)).is_err() {
                 tracing::debug!("Dropping JSON-RPC response; receiver already closed");
             }
         }
     }
+
+    async fn reject(&self, error: JSONRPCError) {
+        if let Some(tx) = self.pending.lock().await.remove(&error.id) {
+            let message = jsonrpc_error_message(&error);
+            if tx.send(Err(io::Error::other(message))).is_err() {
+                tracing::debug!("Dropping JSON-RPC response; receiver already closed");
+            }
+        }
+    }
+}
+
+fn jsonrpc_error_message(error: &JSONRPCError) -> String {
+    let mut message = format!("[Error {}] {}", error.error.code, error.error.message);
+    if let Some(data) = error.error.data.as_ref() {
+        let rendered = match data {
+            Value::String(text) => text.clone(),
+            _ => serde_json::to_string(data).unwrap_or_else(|_| "<unrenderable data>".to_string()),
+        };
+        if !rendered.is_empty() {
+            message.push_str(": ");
+            message.push_str(&rendered);
+        }
+    }
+    message
 }
 
 #[derive(Default)]
@@ -208,40 +230,19 @@ impl CodexCliRunner {
         cmd
     }
 
-    fn build_input_items(prompt: &str, images: &[PathBuf]) -> io::Result<Vec<InputItem>> {
+    fn build_user_inputs(prompt: &str, images: &[PathBuf]) -> Vec<UserInput> {
         let mut items = Vec::new();
         if !prompt.trim().is_empty() {
-            items.push(InputItem::Text {
+            items.push(UserInput::Text {
                 text: prompt.to_string(),
             });
         }
         for image in images {
-            let image_url = Self::encode_image_as_data_url(image)?;
-            items.push(InputItem::Image { image_url });
+            items.push(UserInput::LocalImage {
+                path: image.clone(),
+            });
         }
-        Ok(items)
-    }
-
-    fn encode_image_as_data_url(path: &Path) -> io::Result<String> {
-        let dyn_img = image::open(path).map_err(|err| {
-            io::Error::other(format!(
-                "Failed to decode image {}: {}",
-                path.display(),
-                err
-            ))
-        })?;
-        let mut png_bytes = Vec::new();
-        dyn_img
-            .write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
-            .map_err(|err| {
-                io::Error::other(format!(
-                    "Failed to encode image {}: {}",
-                    path.display(),
-                    err
-                ))
-            })?;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(png_bytes);
-        Ok(format!("data:image/png;base64,{}", encoded))
+        items
     }
 
     fn to_file_operation(change: &FileChange) -> FileOperation {
@@ -591,22 +592,29 @@ impl CodexCliRunner {
 
     async fn send_user_message(
         peer: &JsonRpcPeer,
-        conversation_id: codex_protocol::ThreadId,
+        thread_id: &str,
         prompt: &str,
         images: &[PathBuf],
     ) -> io::Result<()> {
-        let items = Self::build_input_items(prompt, images)?;
+        let items = Self::build_user_inputs(prompt, images);
         if items.is_empty() {
             return Ok(());
         }
-        let request = ClientRequest::SendUserMessage {
+        let request = ClientRequest::TurnStart {
             request_id: peer.next_request_id(),
-            params: SendUserMessageParams {
-                conversation_id,
-                items,
+            params: TurnStartParams {
+                thread_id: thread_id.to_string(),
+                input: items,
+                cwd: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                model: None,
+                effort: None,
+                summary: None,
+                output_schema: None,
             },
         };
-        let _: SendUserMessageResponse = peer.request(&request).await?;
+        let _: TurnStartResponse = peer.request(&request).await?;
         Ok(())
     }
 
@@ -746,8 +754,7 @@ impl AgentRunner for CodexCliRunner {
                                 }
                             }
                             Ok(JSONRPCMessage::Error(err)) => {
-                                let message =
-                                    format!("[Error {}] {}", err.error.code, err.error.message);
+                                let message = jsonrpc_error_message(&err);
                                 if let Err(err) = tx_for_events
                                     .send(AgentEvent::Error(ErrorEvent {
                                         message,
@@ -762,7 +769,7 @@ impl AgentRunner for CodexCliRunner {
                                         "Failed to forward JSON-RPC error event"
                                     );
                                 }
-                                reader_peer.resolve(err.id.clone(), Value::Null).await;
+                                reader_peer.reject(err).await;
                             }
                             Err(err) => {
                                 tracing::warn!(error = %err, "Non-JSON output from codex app-server");
@@ -791,67 +798,58 @@ impl AgentRunner for CodexCliRunner {
         let _: Value = peer.request(&init_request).await?;
         peer.send(&ClientNotification::Initialized).await?;
 
-        let mut conversation_id = None;
+        let mut thread_id = None;
         let mut session_model: Option<String> = None;
 
         if let Some(resume_session) = &config.resume_session {
-            let thread_id = codex_protocol::ThreadId::from_string(resume_session.as_str())
-                .map_err(|err| AgentError::Config(err.to_string()))?;
-            let request = ClientRequest::ResumeConversation {
+            let request = ClientRequest::ThreadResume {
                 request_id: peer.next_request_id(),
-                params: ResumeConversationParams {
-                    path: None,
-                    conversation_id: Some(thread_id),
+                params: ThreadResumeParams {
+                    thread_id: resume_session.as_str().to_string(),
                     history: None,
-                    overrides: Some(NewConversationParams {
-                        model: config.model.clone(),
-                        model_provider: None,
-                        profile: None,
-                        cwd: Some(config.working_dir.to_string_lossy().to_string()),
-                        approval_policy: Some(Self::approval_policy()),
-                        sandbox: Some(Self::sandbox_mode()),
-                        config: Self::conversation_config(&config),
-                        base_instructions: None,
-                        developer_instructions: None,
-                        compact_prompt: None,
-                        include_apply_patch_tool: None,
-                    }),
-                },
-            };
-            let response: ResumeConversationResponse = peer.request(&request).await?;
-            conversation_id = Some(response.conversation_id);
-            session_model = Some(response.model);
-        }
-
-        if conversation_id.is_none() {
-            let conv_request = ClientRequest::NewConversation {
-                request_id: peer.next_request_id(),
-                params: NewConversationParams {
+                    path: None,
                     model: config.model.clone(),
-                    profile: None,
+                    model_provider: None,
                     cwd: Some(config.working_dir.to_string_lossy().to_string()),
-                    approval_policy: Some(Self::approval_policy()),
-                    sandbox: Some(Self::sandbox_mode()),
+                    approval_policy: Some(Self::approval_policy().into()),
+                    sandbox: Some(Self::sandbox_mode().into()),
                     config: Self::conversation_config(&config),
                     base_instructions: None,
-                    include_apply_patch_tool: None,
-                    model_provider: None,
-                    compact_prompt: None,
                     developer_instructions: None,
                 },
             };
-            let response: NewConversationResponse = peer.request(&conv_request).await?;
-            conversation_id = Some(response.conversation_id);
+            let response: ThreadResumeResponse = peer.request(&request).await?;
+            thread_id = Some(response.thread.id);
             session_model = Some(response.model);
         }
 
-        let conversation_id = conversation_id.ok_or_else(|| {
+        if thread_id.is_none() {
+            let conv_request = ClientRequest::ThreadStart {
+                request_id: peer.next_request_id(),
+                params: ThreadStartParams {
+                    model: config.model.clone(),
+                    cwd: Some(config.working_dir.to_string_lossy().to_string()),
+                    approval_policy: Some(Self::approval_policy().into()),
+                    sandbox: Some(Self::sandbox_mode().into()),
+                    config: Self::conversation_config(&config),
+                    base_instructions: None,
+                    model_provider: None,
+                    experimental_raw_events: false,
+                    developer_instructions: None,
+                },
+            };
+            let response: ThreadStartResponse = peer.request(&conv_request).await?;
+            thread_id = Some(response.thread.id);
+            session_model = Some(response.model);
+        }
+
+        let thread_id = thread_id.ok_or_else(|| {
             AgentError::Config("Failed to establish Codex conversation".to_string())
         })?;
 
         if let Err(err) = tx
             .send(AgentEvent::SessionInit(SessionInitEvent {
-                session_id: SessionId::from_string(conversation_id.to_string()),
+                session_id: SessionId::from_string(thread_id.clone()),
                 model: session_model,
             }))
             .await
@@ -859,31 +857,17 @@ impl AgentRunner for CodexCliRunner {
             tracing::debug!(error = ?err, "Failed to send Codex SessionInit event");
         }
 
-        // Subscribe to conversation events
-        let listen_request = ClientRequest::AddConversationListener {
-            request_id: peer.next_request_id(),
-            params: AddConversationListenerParams {
-                conversation_id,
-                experimental_raw_events: false,
-            },
-        };
-        let _: Value = peer.request(&listen_request).await?;
-
         // Input channel for subsequent prompts
         let (input_tx, mut input_rx) = mpsc::channel::<AgentInput>(32);
         let input_peer = peer.clone();
-        let input_conversation_id = conversation_id;
+        let input_thread_id = thread_id.clone();
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
                 match input {
                     AgentInput::CodexPrompt { text, images, .. } => {
-                        if let Err(err) = Self::send_user_message(
-                            &input_peer,
-                            input_conversation_id,
-                            &text,
-                            &images,
-                        )
-                        .await
+                        if let Err(err) =
+                            Self::send_user_message(&input_peer, &input_thread_id, &text, &images)
+                                .await
                         {
                             tracing::warn!(error = %err, "Failed to send Codex prompt");
                         }
@@ -902,7 +886,7 @@ impl AgentRunner for CodexCliRunner {
 
         // Send initial prompt if present
         if !config.prompt.trim().is_empty() || !config.images.is_empty() {
-            Self::send_user_message(&peer, conversation_id, &config.prompt, &config.images).await?;
+            Self::send_user_message(&peer, &thread_id, &config.prompt, &config.images).await?;
         }
 
         // Monitor process and capture stderr on failure
@@ -1044,7 +1028,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_input_items_with_text_and_images() {
+    fn test_jsonrpc_error_message_includes_data() {
+        let error = JSONRPCError {
+            id: RequestId::Integer(1),
+            error: codex_app_server_protocol::JSONRPCErrorError {
+                code: 42,
+                message: "model not found".to_string(),
+                data: Some(serde_json::json!({
+                    "model": "gpt-5.4",
+                    "provider": "openai"
+                })),
+            },
+        };
+
+        assert_eq!(
+            jsonrpc_error_message(&error),
+            r#"[Error 42] model not found: {"model":"gpt-5.4","provider":"openai"}"#
+        );
+    }
+
+    #[test]
+    fn test_build_user_inputs_with_text_and_images() {
         let tmp = tempfile::Builder::new()
             .prefix("conduit-codex-image-")
             .suffix(".png")
@@ -1056,10 +1060,10 @@ mod tests {
             .save(&path)
             .expect("failed to write temp image");
 
-        let items = CodexCliRunner::build_input_items("hello", &[PathBuf::from(&path)]).unwrap();
+        let items = CodexCliRunner::build_user_inputs("hello", &[PathBuf::from(&path)]);
         assert_eq!(items.len(), 2);
-        assert!(matches!(items[0], InputItem::Text { .. }));
-        assert!(matches!(items[1], InputItem::Image { .. }));
+        assert!(matches!(items[0], UserInput::Text { .. }));
+        assert!(matches!(items[1], UserInput::LocalImage { .. }));
     }
 
     #[test]
