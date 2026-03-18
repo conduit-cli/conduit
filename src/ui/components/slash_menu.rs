@@ -273,7 +273,7 @@ impl SlashMenu {
             let prefix = if is_selected { "> " } else { "  " };
             let prefix_width = UnicodeWidthStr::width(prefix);
             let available_label_width = (content_width as usize).saturating_sub(prefix_width + 1);
-            let label = truncate_to_width(entry.label.as_str(), available_label_width.min(18));
+            let label = truncate_to_width(entry.label.as_str(), available_label_width);
             let mut description = entry.description.clone();
             if !entry.source_badge.is_empty() {
                 description.push_str(" [");

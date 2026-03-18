@@ -506,9 +506,13 @@ impl DiscoveryRegistry {
         target.entry(name).or_default().push(invocation);
     }
 
-    fn scan_codex_skills(&mut self, base: &Path, seen: &mut HashSet<PathBuf>) {
+    fn scan_codex_skills(
+        &mut self,
+        base: &Path,
+        seen: &mut HashSet<(ProviderArtifactSource, PathBuf)>,
+    ) {
         for path in skill_files(&base.join(".codex/skills")) {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Codex, path.clone())) {
                 continue;
             }
             let name = skill_name_from_path(&path);
@@ -521,9 +525,9 @@ impl DiscoveryRegistry {
         }
     }
 
-    fn scan_claude(&mut self, base: &Path, seen: &mut HashSet<PathBuf>) {
+    fn scan_claude(&mut self, base: &Path, seen: &mut HashSet<(ProviderArtifactSource, PathBuf)>) {
         for path in skill_files(&base.join(".claude/skills")) {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Claude, path.clone())) {
                 continue;
             }
             let name = skill_name_from_path(&path);
@@ -536,7 +540,7 @@ impl DiscoveryRegistry {
         }
 
         for path in markdown_command_files(&base.join(".claude/commands")) {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Claude, path.clone())) {
                 continue;
             }
             if let Some((name, description, prompt)) =
@@ -553,12 +557,12 @@ impl DiscoveryRegistry {
         }
     }
 
-    fn scan_gemini(&mut self, base: &Path, seen: &mut HashSet<PathBuf>) {
+    fn scan_gemini(&mut self, base: &Path, seen: &mut HashSet<(ProviderArtifactSource, PathBuf)>) {
         for path in skill_files(&base.join(".gemini/skills"))
             .into_iter()
             .chain(skill_files(&base.join(".agents/skills")))
         {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Gemini, path.clone())) {
                 continue;
             }
             let name = skill_name_from_path(&path);
@@ -571,7 +575,7 @@ impl DiscoveryRegistry {
         }
 
         for path in toml_command_files(&base.join(".gemini/commands")) {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Gemini, path.clone())) {
                 continue;
             }
             if let Some((name, description, prompt)) =
@@ -588,13 +592,17 @@ impl DiscoveryRegistry {
         }
     }
 
-    fn scan_opencode(&mut self, base: &Path, seen: &mut HashSet<PathBuf>) {
+    fn scan_opencode(
+        &mut self,
+        base: &Path,
+        seen: &mut HashSet<(ProviderArtifactSource, PathBuf)>,
+    ) {
         for path in skill_files(&base.join(".opencode/skills"))
             .into_iter()
             .chain(skill_files(&base.join(".agents/skills")))
             .chain(skill_files(&base.join(".claude/skills")))
         {
-            if !seen.insert(path.clone()) {
+            if !seen.insert((ProviderArtifactSource::Opencode, path.clone())) {
                 continue;
             }
             let name = skill_name_from_path(&path);
@@ -611,7 +619,7 @@ impl DiscoveryRegistry {
             base.join(".opencode/command"),
         ] {
             for path in markdown_command_files(&root) {
-                if !seen.insert(path.clone()) {
+                if !seen.insert((ProviderArtifactSource::Opencode, path.clone())) {
                     continue;
                 }
                 if let Some((name, description, prompt)) = load_markdown_command(&path, &root) {
@@ -687,11 +695,23 @@ fn toml_command_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn visit_files(root: &Path, visit: &mut impl FnMut(&Path)) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            tracing::warn!(path = %root.display(), error = %error, "Failed to read directory");
+            return;
+        }
     };
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(path = %root.display(), error = %error, "Failed to read directory entry");
+                continue;
+            }
+        };
         let path = entry.path();
         if path.is_dir() {
             visit_files(&path, visit);
@@ -710,35 +730,45 @@ fn skill_name_from_path(path: &Path) -> String {
 }
 
 fn skill_description(path: &Path) -> String {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| {
-            content
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty() && !line.starts_with('#'))
-                .map(|line| line.to_string())
-        })
-        .unwrap_or_else(|| "Reusable skill".to_string())
+    match fs::read_to_string(path) {
+        Ok(content) => content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| line.to_string())
+            .unwrap_or_else(|| "Reusable skill".to_string()),
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = %error, "Failed to read file");
+            "Reusable skill".to_string()
+        }
+    }
 }
 
 fn load_markdown_command(path: &Path, root: &Path) -> Option<(String, String, String)> {
-    let content = fs::read_to_string(path).ok()?;
-    let (description, body) = split_frontmatter(&content);
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = %error, "Failed to read file");
+            return None;
+        }
+    };
+    let (description, body) = split_frontmatter(path, &content);
     let name = command_name_from_path(path, root);
     let description = description.unwrap_or_else(|| "Prompt command".to_string());
     Some((name, description, body.trim().to_string()))
 }
 
-fn split_frontmatter(content: &str) -> (Option<String>, String) {
-    let trimmed = content.trim_start();
+fn split_frontmatter(path: &Path, content: &str) -> (Option<String>, String) {
+    let normalized = content.replace("\r\n", "\n");
+    let trimmed = normalized.trim_start();
     if !trimmed.starts_with("---\n") {
-        return (None, content.to_string());
+        return (None, normalized);
     }
 
     let rest = &trimmed[4..];
     let Some((frontmatter, body)) = rest.split_once("\n---\n") else {
-        return (None, content.to_string());
+        tracing::warn!(path = %path.display(), "Malformed frontmatter");
+        return (None, normalized);
     };
 
     #[derive(Deserialize)]
@@ -746,9 +776,13 @@ fn split_frontmatter(content: &str) -> (Option<String>, String) {
         description: Option<String>,
     }
 
-    let description = toml::from_str::<Frontmatter>(frontmatter)
-        .ok()
-        .and_then(|frontmatter| frontmatter.description);
+    let description = match toml::from_str::<Frontmatter>(frontmatter) {
+        Ok(frontmatter) => frontmatter.description,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = %error, "Invalid TOML syntax");
+            None
+        }
+    };
     (description, body.to_string())
 }
 
@@ -759,8 +793,20 @@ struct GeminiCommandFile {
 }
 
 fn load_gemini_command(path: &Path, root: &Path) -> Option<(String, String, String)> {
-    let content = fs::read_to_string(path).ok()?;
-    let parsed = toml::from_str::<GeminiCommandFile>(&content).ok()?;
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = %error, "Failed to read file");
+            return None;
+        }
+    };
+    let parsed = match toml::from_str::<GeminiCommandFile>(&content) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), error = %error, "Invalid TOML syntax");
+            return None;
+        }
+    };
     Some((
         command_name_from_path(path, root),
         parsed
@@ -861,5 +907,40 @@ mod tests {
 
         let entries = CommandResolver::menu_entries(root.path());
         assert!(entries.iter().any(|entry| entry.label == "/release:notes"));
+    }
+
+    #[test]
+    fn preserves_opencode_aliases_for_shared_skill_paths() {
+        let root = TempDir::new().unwrap();
+        let skill_dir = root.path().join(".agents/skills/ship");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# ship\nShared ship skill\n").unwrap();
+
+        let result = CommandResolver::resolve("/ship", root.path(), AgentType::Opencode);
+        let ResolveResult::ProviderPrompt(prompt) = result else {
+            panic!("expected provider prompt");
+        };
+        assert!(prompt
+            .agent_text
+            .contains("Use the skill \"ship\" from OpenCode"));
+    }
+
+    #[test]
+    fn split_frontmatter_accepts_crlf_delimiters() {
+        let root = TempDir::new().unwrap();
+        let command_dir = root.path().join(".claude/commands");
+        fs::create_dir_all(&command_dir).unwrap();
+        fs::write(
+            command_dir.join("ship.md"),
+            "---\r\ndescription = \"Ship it\"\r\n---\r\nDo the release\r\n",
+        )
+        .unwrap();
+
+        let entries = CommandResolver::menu_entries(root.path());
+        let entry = entries
+            .into_iter()
+            .find(|entry| entry.label == "/ship")
+            .expect("expected command entry");
+        assert_eq!(entry.description, "Ship it");
     }
 }

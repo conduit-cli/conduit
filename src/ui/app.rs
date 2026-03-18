@@ -1902,14 +1902,13 @@ impl App {
                         self.state.input_mode = InputMode::Normal;
                         match kind {
                             MenuEntryKind::ConduitCommand(command) => {
-                                if let Some(action) = Self::slash_command_action(command) {
-                                    effects.extend(
-                                        Box::pin(self.execute_action(action, terminal, guard))
-                                            .await?,
-                                    );
-                                } else if matches!(command, ConduitCommand::NewSession) {
-                                    self.start_new_session_in_place();
-                                }
+                                let active_tab_index = self.state.tab_manager.active_index();
+                                effects.extend(
+                                    self.execute_resolved_conduit_command(
+                                        active_tab_index,
+                                        command,
+                                    )?,
+                                );
                             }
                             MenuEntryKind::ProviderInvocation(_) => {
                                 if let Some(session) = self.state.tab_manager.active_session_mut() {
@@ -3116,7 +3115,12 @@ impl App {
         tab_index: usize,
         command: ConduitCommand,
     ) -> anyhow::Result<Vec<Effect>> {
-        let _ = tab_index;
+        if tab_index != self.state.tab_manager.active_index() {
+            self.state.tab_manager.switch_to(tab_index);
+            self.sync_input_mode_for_active_tab();
+            self.sync_sidebar_to_active_tab();
+            self.sync_footer_spinner();
+        }
         let mut effects = Vec::new();
         if let Some(action) = Self::slash_command_action(command) {
             self.handle_global_action(action, &mut effects);
@@ -11566,6 +11570,20 @@ mod tests {
             true,
         );
         assert!(result, "Slash should trigger menu on empty input");
+    }
+
+    #[test]
+    fn test_dollar_triggers_menu_on_empty_input() {
+        let result = App::should_trigger_slash_menu(
+            KeyCode::Char('$'),
+            KeyModifiers::NONE,
+            InputMode::Normal,
+            true,
+            false,
+            false,
+            true,
+        );
+        assert!(result, "Dollar should trigger menu on empty input");
     }
 
     #[test]

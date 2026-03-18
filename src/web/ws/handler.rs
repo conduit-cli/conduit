@@ -27,6 +27,7 @@ use super::messages::{ClientMessage, ImageAttachment, ServerMessage};
 /// Active session state tracked by the WebSocket handler.
 struct ActiveSession {
     agent_type: AgentType,
+    working_dir: PathBuf,
     /// Process ID for stopping the agent
     pid: Option<u32>,
     /// Sender to broadcast events to all subscribers
@@ -176,6 +177,7 @@ impl SessionManager {
         }
 
         // Build start config
+        let session_working_dir = working_dir.clone();
         let mut config = AgentStartConfig::new(prompt, working_dir);
         if let Some(m) = model {
             config = config.with_model(m);
@@ -243,6 +245,7 @@ impl SessionManager {
                     return Err(format!("Session {} is already running", session_id));
                 }
                 existing.agent_type = agent_type;
+                existing.working_dir = session_working_dir.clone();
                 existing.pid = Some(pid);
                 existing.input_tx = input_tx;
                 (existing.event_tx.clone(), existing.event_tx.subscribe())
@@ -252,6 +255,7 @@ impl SessionManager {
                     session_id,
                     ActiveSession {
                         agent_type,
+                        working_dir: session_working_dir,
                         pid: Some(pid),
                         event_tx: event_tx.clone(),
                         input_tx,
@@ -336,6 +340,7 @@ impl SessionManager {
             .map_err(|e| format!("Failed to get session {}: {}", session_id, e))?
             .ok_or_else(|| format!("Session {} not found", session_id))?;
 
+        let working_dir = self.core.read().await.config().working_dir.clone();
         let (event_tx, event_rx) = broadcast::channel(256);
         let mut sessions = self.sessions.write().await;
         // Another subscribe/start could have raced us.
@@ -347,6 +352,7 @@ impl SessionManager {
             session_id,
             ActiveSession {
                 agent_type: tab.agent_type,
+                working_dir,
                 pid: None,
                 event_tx,
                 input_tx: None,
@@ -427,7 +433,7 @@ impl SessionManager {
         model: Option<String>,
         skill: Option<SkillReference>,
     ) -> Result<(), String> {
-        let (input_tx, agent_type) = {
+        let (input_tx, agent_type, _working_dir) = {
             let sessions = self.sessions.read().await;
             let session = sessions
                 .get(&session_id)
@@ -436,7 +442,7 @@ impl SessionManager {
                 .input_tx
                 .clone()
                 .ok_or_else(|| "Session does not support input".to_string())?;
-            (input_tx, session.agent_type)
+            (input_tx, session.agent_type, session.working_dir.clone())
         };
 
         // Send as appropriate input type based on agent
@@ -1191,8 +1197,9 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     ResolveResult::Passthrough { text } => (text.clone(), text, None),
                 };
 
-                if agent_type == AgentType::Claude && stdin_payload.is_none() {
-                    match build_claude_prompt_jsonl(&prompt_for_agent, &[]) {
+                if agent_type == AgentType::Claude {
+                    let claude_images = if images.is_empty() { &[][..] } else { &images };
+                    match build_claude_prompt_jsonl(&prompt_for_agent, claude_images) {
                         Ok(payload) => {
                             input_format = Some("stream-json".to_string());
                             stdin_payload = Some(payload);
@@ -1385,14 +1392,20 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     continue;
                 }
                 let model = session_tab.model.clone();
-                let working_dir_path = core.config().working_dir.clone();
+                let working_dir_path = {
+                    let sessions = session_manager.sessions.read().await;
+                    sessions
+                        .get(&session_id)
+                        .map(|session| session.working_dir.clone())
+                        .unwrap_or_else(|| core.config().working_dir.clone())
+                };
                 drop(core);
                 let resolved_prompt = CommandResolver::resolve(
                     &input,
                     &working_dir_path,
                     agent_type.unwrap_or(AgentType::Claude),
                 );
-                let (resolved_input_text, skill) = match resolved_prompt {
+                let (resolved_input_text, history_text, skill) = match resolved_prompt {
                     ResolveResult::ConduitCommand { command, .. } => {
                         if let Err(send_err) = tx
                             .send(ServerMessage::session_error(
@@ -1428,9 +1441,9 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         continue;
                     }
                     ResolveResult::ProviderPrompt(prompt) => {
-                        (prompt.agent_text, prompt.codex_skill)
+                        (prompt.agent_text, prompt.history_text, prompt.codex_skill)
                     }
-                    ResolveResult::Passthrough { text } => (text, None),
+                    ResolveResult::Passthrough { text } => (text.clone(), text, None),
                 };
                 let mut input_payload = input.clone();
                 let image_paths = if images.is_empty() {
@@ -1565,7 +1578,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                         );
                     }
                     if let Err(error) =
-                        append_input_history(&session_manager.core, session_id, &input).await
+                        append_input_history(&session_manager.core, session_id, &history_text).await
                     {
                         tracing::warn!(
                             %session_id,

@@ -229,7 +229,7 @@ export function ChatInput({
           role="status"
           aria-live="polite"
         >
-          {notice ?? resolverHint}
+          {notice || resolverHint}
         </div>
       )}
       <div className="flex items-center gap-3">

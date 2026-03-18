@@ -993,6 +993,27 @@ impl CodexCliRunner {
         let child = cmd.spawn()?;
         Ok(child)
     }
+
+    async fn cleanup_startup_child(
+        child: &mut tokio::process::Child,
+        stage: &str,
+    ) -> Result<(), AgentError> {
+        match child.kill().await {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => {}
+            Err(error) => {
+                tracing::warn!(stage, error = %error, "Failed to kill Codex app-server");
+                return Err(AgentError::Io(error));
+            }
+        }
+
+        if let Err(error) = child.wait().await {
+            tracing::warn!(stage, error = %error, "Failed to wait for Codex app-server shutdown");
+            return Err(AgentError::Io(error));
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1175,8 +1196,14 @@ impl AgentRunner for CodexCliRunner {
                 },
             },
         };
-        let _: Value = peer.request(&init_request).await?;
-        peer.send(&ClientNotification::Initialized).await?;
+        if let Err(error) = peer.request::<Value>(&init_request).await {
+            Self::cleanup_startup_child(&mut child, "initialize").await?;
+            return Err(AgentError::Io(error));
+        }
+        if let Err(error) = peer.send(&ClientNotification::Initialized).await {
+            Self::cleanup_startup_child(&mut child, "initialized").await?;
+            return Err(AgentError::Io(error));
+        }
         tracing::debug!("Initialized Codex app-server");
 
         let mut thread_id = None;
@@ -1247,17 +1274,25 @@ impl AgentRunner for CodexCliRunner {
                 },
             };
             let response: ThreadStartResponse =
-                tokio::time::timeout(CODEX_THREAD_START_TIMEOUT, peer.request(&conv_request))
+                match tokio::time::timeout(CODEX_THREAD_START_TIMEOUT, peer.request(&conv_request))
                     .await
-                    .map_err(|_| {
-                        AgentError::Io(io::Error::new(
+                {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(error)) => {
+                        Self::cleanup_startup_child(&mut child, "thread_start").await?;
+                        return Err(AgentError::Io(error));
+                    }
+                    Err(_) => {
+                        Self::cleanup_startup_child(&mut child, "thread_start_timeout").await?;
+                        return Err(AgentError::Io(io::Error::new(
                             io::ErrorKind::TimedOut,
                             format!(
                                 "Codex thread start timed out after {}s",
                                 CODEX_THREAD_START_TIMEOUT.as_secs()
                             ),
-                        ))
-                    })??;
+                        )));
+                    }
+                };
             thread_id = Some(response.thread.id);
             session_model = Some(response.model);
             tracing::debug!(
@@ -1330,15 +1365,19 @@ impl AgentRunner for CodexCliRunner {
         });
 
         // Send initial prompt if present
-        if !config.prompt.trim().is_empty() || !config.images.is_empty() {
-            Self::send_user_message(
+        if !config.prompt.trim().is_empty() || !config.images.is_empty() || config.skill.is_some() {
+            if let Err(error) = Self::send_user_message(
                 &peer,
                 &thread_id,
                 &config.prompt,
                 &config.images,
                 config.skill.as_ref(),
             )
-            .await?;
+            .await
+            {
+                Self::cleanup_startup_child(&mut child, "initial_turn").await?;
+                return Err(AgentError::Io(error));
+            }
         }
 
         // Monitor process and capture stderr on failure
