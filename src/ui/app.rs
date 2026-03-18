@@ -485,7 +485,9 @@ impl App {
             if let Some(ref session_id_str) = tab.agent_session_id {
                 let session_id = SessionId::from_string(session_id_str.clone());
                 session.resume_session_id = Some(session_id.clone());
-                session.agent_session_id = Some(session_id.clone());
+                if tab.agent_type != AgentType::Codex {
+                    session.agent_session_id = Some(session_id.clone());
+                }
 
                 // Load chat history from agent files
                 match tab.agent_type {
@@ -3533,7 +3535,9 @@ impl App {
                 if let Some(ref session_id_str) = saved.agent_session_id {
                     let session_id = SessionId::from_string(session_id_str.clone());
                     session.resume_session_id = Some(session_id.clone());
-                    session.agent_session_id = Some(session_id);
+                    if saved.agent_type != AgentType::Codex {
+                        session.agent_session_id = Some(session_id);
+                    }
 
                     // Load chat history
                     match saved.agent_type {
@@ -4907,7 +4911,9 @@ impl App {
         // Set both resume and agent session IDs so the session can be restored after restart
         let session_id = SessionId::from_string(&session_id_str);
         session.resume_session_id = Some(session_id.clone());
-        session.agent_session_id = Some(session_id);
+        if agent_type != AgentType::Codex {
+            session.agent_session_id = Some(session_id);
+        }
 
         // Load history based on agent type
         match agent_type {
@@ -7959,13 +7965,30 @@ impl App {
             let model_invalid = session.model_invalid;
             // Use agent_session_id if available (set by agent after first prompt)
             // Fall back to resume_session_id (clone, don't take - we consume it later)
-            let session_id_to_use = session
-                .agent_session_id
-                .clone()
-                .or_else(|| session.resume_session_id.clone());
+            let session_id_to_use = if agent_type == AgentType::Codex
+                && session.agent_input_tx.is_none()
+                && session.agent_session_id.is_none()
+            {
+                None
+            } else {
+                session
+                    .agent_session_id
+                    .clone()
+                    .or_else(|| session.resume_session_id.clone())
+            };
             // Use session's working_dir if set, otherwise fall back to config
             let working_dir = session.working_dir.clone().unwrap_or(default_working_dir);
             let session_id = session.id;
+
+            tracing::debug!(
+                session_id = %session_id,
+                agent = %agent_type,
+                has_input_tx = session.agent_input_tx.is_some(),
+                agent_session_id = session.agent_session_id.as_ref().map(|id| id.as_str()),
+                resume_session_id = session.resume_session_id.as_ref().map(|id| id.as_str()),
+                selected_session_id = session_id_to_use.as_ref().map(|id| id.as_str()),
+                "submit_prompt_for_tab resolved session state"
+            );
 
             (
                 agent_type,
@@ -11200,8 +11223,8 @@ async fn generate_title_and_branch_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::events::{AssistantMessageEvent, ReasoningEvent};
-    use crate::agent::{AgentType, ModelRegistry, ReasoningEffort};
+    use crate::agent::events::{AssistantMessageEvent, ReasoningEvent, TurnCompletedEvent};
+    use crate::agent::{AgentType, ModelRegistry, ReasoningEffort, SessionId, TokenUsage};
     use crate::config::Config;
     use crate::data::{QueuedMessage, QueuedMessageMode};
     use crate::ui::components::MessageRole;
@@ -11980,6 +12003,124 @@ mod tests {
             assert!(session.chat_view.streaming_buffer().is_none());
             assert!(session.chat_view.messages().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn test_turn_completed_clears_codex_input_channel() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+
+        let (tx, _rx) = mpsc::channel(1);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Codex;
+            session.agent_input_tx = Some(tx);
+            session.start_processing();
+        }
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::TurnCompleted(TurnCompletedEvent {
+                usage: TokenUsage::default(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let session = app
+            .state
+            .tab_manager
+            .session_by_id_mut(session_id)
+            .expect("session missing");
+        assert!(session.agent_input_tx.is_none());
+        assert!(!session.is_processing);
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_does_not_resume_stale_codex_session_without_live_channel() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let saved_session = SessionId::from_string("codex-thread-123");
+        let default_model = app.config().default_model_for(AgentType::Codex);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Codex;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd.clone());
+            session.resume_session_id = Some(saved_session);
+            session.agent_input_tx = None;
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "hi".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Codex);
+        assert!(config.resume_session.is_none());
+        assert_eq!(config.prompt, "hi");
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_resumes_live_codex_session_after_turn_completion() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let live_session = SessionId::from_string("codex-thread-live");
+        let default_model = app.config().default_model_for(AgentType::Codex);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Codex;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd.clone());
+            session.agent_session_id = Some(live_session.clone());
+            session.resume_session_id = Some(SessionId::from_string("historic-session"));
+            session.agent_input_tx = None;
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "hi again".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Codex);
+        assert_eq!(config.resume_session.as_ref(), Some(&live_session));
+        assert_eq!(config.prompt, "hi again");
     }
 
     #[test]

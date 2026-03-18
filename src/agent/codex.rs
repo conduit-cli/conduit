@@ -5,6 +5,7 @@ use std::sync::{
     atomic::{AtomicI64, Ordering},
     Arc,
 };
+use std::time::Duration;
 
 use async_trait::async_trait;
 use codex_app_server_protocol::{
@@ -14,7 +15,9 @@ use codex_app_server_protocol::{
     ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
 use codex_protocol::config_types::SandboxMode;
-use codex_protocol::protocol::{AskForApproval, EventMsg, FileChange, ReviewDecision};
+use codex_protocol::protocol::{
+    AskForApproval, EventMsg, FileChange, HasLegacyEvent, ReviewDecision,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
@@ -33,6 +36,9 @@ use crate::agent::session::SessionId;
 
 const CODEX_NPX_PACKAGE: &str = "@openai/codex";
 const CODEX_NPX_VERSION_ENV: &str = "CODEX_NPX_VERSION";
+const CODEX_THREAD_RESUME_TIMEOUT: Duration = Duration::from_secs(5);
+const CODEX_THREAD_START_TIMEOUT: Duration = Duration::from_secs(15);
+const CODEX_TURN_START_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Notification params containing an EventMsg
 #[derive(Debug, Deserialize)]
@@ -280,6 +286,16 @@ impl CodexCliRunner {
 
     fn convert_event(event: &EventMsg, state: &mut CodexEventState) -> Vec<AgentEvent> {
         match event {
+            EventMsg::ItemStarted(item) => item
+                .as_legacy_events(false)
+                .into_iter()
+                .flat_map(|legacy| Self::convert_event(&legacy, state))
+                .collect(),
+            EventMsg::ItemCompleted(item) => item
+                .as_legacy_events(false)
+                .into_iter()
+                .flat_map(|legacy| Self::convert_event(&legacy, state))
+                .collect(),
             EventMsg::TurnStarted(_) => {
                 state.message_stream_source = None;
                 state.reasoning_stream_source = None;
@@ -614,6 +630,13 @@ impl CodexCliRunner {
         if items.is_empty() {
             return Ok(());
         }
+        tracing::debug!(
+            thread_id,
+            prompt_len = prompt.len(),
+            images = images.len(),
+            has_skill = skill.is_some(),
+            "Sending Codex turn/start request"
+        );
         let request = ClientRequest::TurnStart {
             request_id: peer.next_request_id(),
             params: TurnStartParams {
@@ -628,7 +651,18 @@ impl CodexCliRunner {
                 output_schema: None,
             },
         };
-        let _: TurnStartResponse = peer.request(&request).await?;
+        let _: TurnStartResponse =
+            tokio::time::timeout(CODEX_TURN_START_TIMEOUT, peer.request(&request))
+                .await
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "Codex turn start timed out after {}s",
+                            CODEX_TURN_START_TIMEOUT.as_secs()
+                        ),
+                    )
+                })??;
         Ok(())
     }
 
@@ -702,6 +736,10 @@ impl AgentRunner for CodexCliRunner {
                                             params,
                                         ) {
                                             Ok(codex_params) => {
+                                                tracing::debug!(
+                                                    event = ?codex_params.msg,
+                                                    "Received Codex event notification"
+                                                );
                                                 let events = Self::convert_event(
                                                     &codex_params.msg,
                                                     &mut state,
@@ -811,11 +849,16 @@ impl AgentRunner for CodexCliRunner {
         };
         let _: Value = peer.request(&init_request).await?;
         peer.send(&ClientNotification::Initialized).await?;
+        tracing::debug!("Initialized Codex app-server");
 
         let mut thread_id = None;
         let mut session_model: Option<String> = None;
 
         if let Some(resume_session) = &config.resume_session {
+            tracing::debug!(
+                resume_session = resume_session.as_str(),
+                "Attempting Codex thread resume"
+            );
             let request = ClientRequest::ThreadResume {
                 request_id: peer.next_request_id(),
                 params: ThreadResumeParams {
@@ -832,12 +875,35 @@ impl AgentRunner for CodexCliRunner {
                     developer_instructions: None,
                 },
             };
-            let response: ThreadResumeResponse = peer.request(&request).await?;
-            thread_id = Some(response.thread.id);
-            session_model = Some(response.model);
+            match tokio::time::timeout(CODEX_THREAD_RESUME_TIMEOUT, peer.request(&request)).await {
+                Ok(Ok(response)) => {
+                    let response: ThreadResumeResponse = response;
+                    thread_id = Some(response.thread.id);
+                    session_model = Some(response.model);
+                    tracing::debug!(
+                        thread_id = thread_id.as_deref(),
+                        "Codex thread resume succeeded"
+                    );
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        resume_session = resume_session.as_str(),
+                        error = %err,
+                        "Codex thread resume failed; starting a fresh thread"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        resume_session = resume_session.as_str(),
+                        timeout_secs = CODEX_THREAD_RESUME_TIMEOUT.as_secs(),
+                        "Codex thread resume timed out; starting a fresh thread"
+                    );
+                }
+            }
         }
 
         if thread_id.is_none() {
+            tracing::debug!("Starting fresh Codex thread");
             let conv_request = ClientRequest::ThreadStart {
                 request_id: peer.next_request_id(),
                 params: ThreadStartParams {
@@ -852,9 +918,24 @@ impl AgentRunner for CodexCliRunner {
                     developer_instructions: None,
                 },
             };
-            let response: ThreadStartResponse = peer.request(&conv_request).await?;
+            let response: ThreadStartResponse =
+                tokio::time::timeout(CODEX_THREAD_START_TIMEOUT, peer.request(&conv_request))
+                    .await
+                    .map_err(|_| {
+                        AgentError::Io(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            format!(
+                                "Codex thread start timed out after {}s",
+                                CODEX_THREAD_START_TIMEOUT.as_secs()
+                            ),
+                        ))
+                    })??;
             thread_id = Some(response.thread.id);
             session_model = Some(response.model);
+            tracing::debug!(
+                thread_id = thread_id.as_deref(),
+                "Codex thread start succeeded"
+            );
         }
 
         let thread_id = thread_id.ok_or_else(|| {
@@ -875,6 +956,7 @@ impl AgentRunner for CodexCliRunner {
         let (input_tx, mut input_rx) = mpsc::channel::<AgentInput>(32);
         let input_peer = peer.clone();
         let input_thread_id = thread_id.clone();
+        let tx_for_input = tx.clone();
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
                 match input {
@@ -894,6 +976,17 @@ impl AgentRunner for CodexCliRunner {
                         .await
                         {
                             tracing::warn!(error = %err, "Failed to send Codex prompt");
+                            if let Err(send_err) = tx_for_input
+                                .send(AgentEvent::TurnFailed(TurnFailedEvent {
+                                    error: format!("Codex prompt failed: {err}"),
+                                }))
+                                .await
+                            {
+                                tracing::debug!(
+                                    error = ?send_err,
+                                    "Failed to send Codex TurnFailed event after prompt error"
+                                );
+                            }
                         }
                     }
                     AgentInput::ClaudeJsonl(_) => {
@@ -1057,6 +1150,9 @@ impl Default for CodexCliRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::items::{AgentMessageContent, AgentMessageItem, TurnItem};
+    use codex_protocol::protocol::ItemCompletedEvent;
+    use codex_protocol::ThreadId;
 
     #[test]
     fn test_jsonrpc_error_message_includes_data() {
@@ -1107,5 +1203,30 @@ mod tests {
             values.get("model_reasoning_effort"),
             Some(&serde_json::Value::String("xhigh".to_string()))
         );
+    }
+
+    #[test]
+    fn test_convert_item_completed_agent_message_to_assistant_event() {
+        let mut state = CodexEventState::default();
+        let event = EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".to_string(),
+            item: TurnItem::AgentMessage(AgentMessageItem {
+                id: "item-1".to_string(),
+                content: vec![AgentMessageContent::Text {
+                    text: "hello from item completed".to_string(),
+                }],
+            }),
+        });
+
+        let converted = CodexCliRunner::convert_event(&event, &mut state);
+        assert_eq!(converted.len(), 1);
+        match &converted[0] {
+            AgentEvent::AssistantMessage(message) => {
+                assert_eq!(message.text, "hello from item completed");
+                assert!(message.is_final);
+            }
+            other => panic!("expected assistant message, got {other:?}"),
+        }
     }
 }
