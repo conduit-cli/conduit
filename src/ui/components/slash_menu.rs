@@ -1,4 +1,4 @@
-//! Slash command menu component.
+//! Slash and skill menu component.
 
 use ratatui::{
     buffer::Buffer,
@@ -10,58 +10,28 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::command_resolver::{MenuEntry, MenuEntryKind};
+
 use super::{
     accent_primary, bg_highlight, dialog_bg, ensure_contrast_bg, ensure_contrast_fg,
-    render_minimal_scrollbar, text_muted, text_primary, SearchableListState,
+    render_minimal_scrollbar, text_muted, text_primary, truncate_to_width, SearchableListState,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlashCommand {
-    Model,
-    Reasoning,
-    Providers,
-    NewSession,
-    Fork,
-    Handoff,
-}
-
-impl SlashCommand {
-    pub fn label(&self) -> &'static str {
-        match self {
-            SlashCommand::Model => "/model",
-            SlashCommand::Reasoning => "/reasoning",
-            SlashCommand::Providers => "/providers",
-            SlashCommand::NewSession => "/new",
-            SlashCommand::Fork => "/fork",
-            SlashCommand::Handoff => "/handoff",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            SlashCommand::Model => "Select model",
-            SlashCommand::Reasoning => "Set reasoning effort",
-            SlashCommand::Providers => "Select enabled providers",
-            SlashCommand::NewSession => "Start a new session",
-            SlashCommand::Fork => "Fork current session",
-            SlashCommand::Handoff => "Handoff current session",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct SlashCommandEntry {
-    pub command: SlashCommand,
-    pub label: &'static str,
-    pub description: &'static str,
+pub struct SlashMenuEntry {
+    pub label: String,
+    pub description: String,
+    pub source_badge: String,
+    pub kind: MenuEntryKind,
 }
 
-impl SlashCommandEntry {
-    fn new(command: SlashCommand) -> Self {
+impl SlashMenuEntry {
+    fn from_resolved(entry: MenuEntry) -> Self {
         Self {
-            command,
-            label: command.label(),
-            description: command.description(),
+            label: entry.label,
+            description: entry.description,
+            source_badge: entry.source_badge,
+            kind: entry.kind,
         }
     }
 }
@@ -69,7 +39,8 @@ impl SlashCommandEntry {
 #[derive(Debug, Clone)]
 pub struct SlashMenuState {
     pub visible: bool,
-    pub commands: Vec<SlashCommandEntry>,
+    pub prompt_prefix: char,
+    pub commands: Vec<SlashMenuEntry>,
     pub list: SearchableListState,
 }
 
@@ -77,14 +48,20 @@ impl SlashMenuState {
     pub fn new() -> Self {
         Self {
             visible: false,
+            prompt_prefix: '/',
             commands: Vec::new(),
-            list: SearchableListState::new(6),
+            list: SearchableListState::new(8),
         }
     }
 
-    pub fn show(&mut self) {
+    pub fn show_with_entries(&mut self, prompt_prefix: char, entries: Vec<MenuEntry>) {
         self.visible = true;
-        self.commands = Self::build_commands();
+        self.prompt_prefix = prompt_prefix;
+        self.commands = entries
+            .into_iter()
+            .filter(|entry| entry.trigger == prompt_prefix)
+            .map(SlashMenuEntry::from_resolved)
+            .collect();
         self.list.reset();
         self.list.filtered = (0..self.commands.len()).collect();
     }
@@ -138,23 +115,12 @@ impl SlashMenuState {
         self.list.select_prev();
     }
 
-    pub fn selected_entry(&self) -> Option<&SlashCommandEntry> {
+    pub fn selected_entry(&self) -> Option<&SlashMenuEntry> {
         if self.list.filtered.is_empty() {
             return None;
         }
         let idx = self.list.filtered.get(self.list.selected)?;
         self.commands.get(*idx)
-    }
-
-    fn build_commands() -> Vec<SlashCommandEntry> {
-        vec![
-            SlashCommandEntry::new(SlashCommand::Model),
-            SlashCommandEntry::new(SlashCommand::Reasoning),
-            SlashCommandEntry::new(SlashCommand::Providers),
-            SlashCommandEntry::new(SlashCommand::NewSession),
-            SlashCommandEntry::new(SlashCommand::Fork),
-            SlashCommandEntry::new(SlashCommand::Handoff),
-        ]
     }
 
     fn filter(&mut self) {
@@ -169,6 +135,7 @@ impl SlashMenuState {
                 }
                 cmd.label.to_lowercase().contains(&query)
                     || cmd.description.to_lowercase().contains(&query)
+                    || cmd.source_badge.to_lowercase().contains(&query)
             })
             .map(|(i, _)| i)
             .collect();
@@ -226,22 +193,22 @@ impl SlashMenu {
     }
 
     fn render_search(&self, area: Rect, buf: &mut Buffer, state: &SlashMenuState) {
-        let prompt = "/";
+        let prompt = state.prompt_prefix.to_string();
         let input = state.list.search.value();
 
         if input.is_empty() {
-            Paragraph::new("/ Type a command...")
+            Paragraph::new(format!("{} Type a command...", state.prompt_prefix))
                 .style(Style::default().fg(text_muted()))
                 .render(area, buf);
         } else {
             let line = Line::from(vec![
-                Span::styled(prompt, Style::default().fg(accent_primary())),
+                Span::styled(prompt.as_str(), Style::default().fg(accent_primary())),
                 Span::styled(input, Style::default().fg(text_primary())),
             ]);
             Paragraph::new(line).render(area, buf);
         }
 
-        let prompt_width = UnicodeWidthStr::width(prompt) as u16;
+        let prompt_width = UnicodeWidthStr::width(prompt.as_str()) as u16;
         let cursor_offset = input
             .chars()
             .take(state.list.search.cursor)
@@ -291,7 +258,6 @@ impl SlashMenu {
         let selected_bg = ensure_contrast_bg(bg_highlight(), dialog_bg(), 2.0);
         let selected_fg = ensure_contrast_fg(text_primary(), selected_bg, 4.5);
         let selected_muted = ensure_contrast_fg(text_muted(), selected_bg, 3.0);
-        let selected_accent = ensure_contrast_fg(accent_primary(), selected_bg, 3.0);
 
         for (i, &cmd_idx) in state
             .list
@@ -304,25 +270,23 @@ impl SlashMenu {
             let entry = &state.commands[cmd_idx];
             let is_selected = state.list.scroll_offset + i == state.list.selected;
             let y = area.y + i as u16;
-
             let prefix = if is_selected { "> " } else { "  " };
             let prefix_width = UnicodeWidthStr::width(prefix);
-            let available_cmd_width = (content_width as usize).saturating_sub(prefix_width);
-            let cmd_display = truncate_to_width(entry.label, available_cmd_width);
-            let cmd_width = UnicodeWidthStr::width(cmd_display.as_str());
-            let has_desc = !entry.description.is_empty();
-            let gap = if has_desc { 3 } else { 0 };
-            let available_desc_width =
-                (content_width as usize).saturating_sub(prefix_width + cmd_width + gap);
-            let desc_display = if has_desc && available_desc_width > 0 {
-                truncate_to_width(entry.description, available_desc_width)
-            } else {
-                String::new()
-            };
+            let available_label_width = (content_width as usize).saturating_sub(prefix_width + 1);
+            let label = truncate_to_width(entry.label.as_str(), available_label_width.min(18));
+            let mut description = entry.description.clone();
+            if !entry.source_badge.is_empty() {
+                description.push_str(" [");
+                description.push_str(&entry.source_badge);
+                description.push(']');
+            }
+            let desc_width = (content_width as usize)
+                .saturating_sub(prefix_width + UnicodeWidthStr::width(label.as_str()) + 3);
+            let desc_display = truncate_to_width(description.as_str(), desc_width);
 
-            let (prefix_style, cmd_style, desc_style) = if is_selected {
+            let (prefix_style, label_style, desc_style) = if is_selected {
                 (
-                    Style::default().fg(selected_accent).bg(selected_bg),
+                    Style::default().fg(selected_muted).bg(selected_bg),
                     Style::default().fg(selected_fg).bg(selected_bg),
                     Style::default().fg(selected_muted).bg(selected_bg),
                 )
@@ -340,33 +304,34 @@ impl SlashMenu {
                 }
             }
 
-            let mut spans = Vec::new();
-            spans.push(Span::styled(prefix, prefix_style));
-            spans.push(Span::styled(cmd_display, cmd_style));
+            let mut spans = vec![
+                Span::styled(prefix, prefix_style),
+                Span::styled(label, label_style),
+            ];
             if !desc_display.is_empty() {
                 spans.push(Span::styled(" - ", desc_style));
                 spans.push(Span::styled(desc_display, desc_style));
             }
 
-            let line = Line::from(spans);
-            let line_area = Rect {
-                x: area.x,
-                y,
-                width: content_width,
-                height: 1,
-            };
-            Paragraph::new(line).render(line_area, buf);
+            Paragraph::new(Line::from(spans)).render(
+                Rect {
+                    x: area.x,
+                    y,
+                    width: content_width,
+                    height: 1,
+                },
+                buf,
+            );
         }
 
         if has_scrollbar {
-            let scrollbar_area = Rect {
-                x: area.x + area.width - 1,
-                y: area.y,
-                width: 1,
-                height: area.height,
-            };
             render_minimal_scrollbar(
-                scrollbar_area,
+                Rect {
+                    x: area.x + area.width - 1,
+                    y: area.y,
+                    width: 1,
+                    height: area.height,
+                },
                 buf,
                 state.list.filtered.len(),
                 visible_count,
@@ -375,8 +340,6 @@ impl SlashMenu {
         }
     }
 }
-
-use super::truncate_to_width;
 
 impl Default for SlashMenu {
     fn default() -> Self {
@@ -387,77 +350,50 @@ impl Default for SlashMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command_resolver::{
+        ConduitCommand, MenuEntryKind, ProviderArtifactSource, ProviderInvocation,
+    };
+    use std::path::PathBuf;
 
-    #[test]
-    fn test_slash_menu_filters_by_label() {
-        let mut state = SlashMenuState::new();
-        state.show();
-        state.insert_char('m');
-
-        let entry = state.selected_entry().expect("Should have a match");
-        assert_eq!(entry.command, SlashCommand::Model);
+    fn sample_entries() -> Vec<MenuEntry> {
+        vec![
+            MenuEntry {
+                label: "/model".to_string(),
+                description: "Select model".to_string(),
+                source_badge: "Conduit".to_string(),
+                trigger: '/',
+                kind: MenuEntryKind::ConduitCommand(ConduitCommand::Model),
+            },
+            MenuEntry {
+                label: "$ship".to_string(),
+                description: "Ship the project".to_string(),
+                source_badge: "Codex skill".to_string(),
+                trigger: '$',
+                kind: MenuEntryKind::ProviderInvocation(ProviderInvocation::Skill {
+                    source: ProviderArtifactSource::Codex,
+                    name: "ship".to_string(),
+                    description: "Ship the project".to_string(),
+                    path: PathBuf::from("/tmp/ship/SKILL.md"),
+                }),
+            },
+        ]
     }
 
     #[test]
-    fn test_slash_menu_filters_by_description() {
+    fn filters_by_trigger() {
         let mut state = SlashMenuState::new();
-        state.show();
-        state.insert_char('s');
-        state.insert_char('e');
-        state.insert_char('l');
-
-        let entry = state.selected_entry().expect("Should have a match");
-        assert_eq!(entry.command, SlashCommand::Model);
+        state.show_with_entries('$', sample_entries());
+        assert_eq!(state.commands.len(), 1);
+        assert_eq!(state.commands[0].label, "$ship");
     }
 
     #[test]
-    fn test_slash_menu_includes_fork_command() {
+    fn supports_searching_source_badge() {
         let mut state = SlashMenuState::new();
-        state.show();
-
-        assert!(state
-            .commands
-            .iter()
-            .any(|entry| entry.command == SlashCommand::Fork && entry.label == "/fork"));
-    }
-
-    #[test]
-    fn test_slash_menu_filters_fork_command() {
-        let mut state = SlashMenuState::new();
-        state.show();
-        state.insert_char('f');
+        state.show_with_entries('$', sample_entries());
+        state.insert_char('c');
         state.insert_char('o');
-        state.insert_char('r');
-        state.insert_char('k');
-
-        let entry = state.selected_entry().expect("Should match /fork");
-        assert_eq!(entry.command, SlashCommand::Fork);
-    }
-
-    #[test]
-    fn test_slash_menu_includes_handoff_command() {
-        let mut state = SlashMenuState::new();
-        state.show();
-
-        assert!(state
-            .commands
-            .iter()
-            .any(|entry| entry.command == SlashCommand::Handoff && entry.label == "/handoff"));
-    }
-
-    #[test]
-    fn test_slash_menu_filters_handoff_command() {
-        let mut state = SlashMenuState::new();
-        state.show();
-        state.insert_char('h');
-        state.insert_char('a');
-        state.insert_char('n');
         state.insert_char('d');
-        state.insert_char('o');
-        state.insert_char('f');
-        state.insert_char('f');
-
-        let entry = state.selected_entry().expect("Should match /handoff");
-        assert_eq!(entry.command, SlashCommand::Handoff);
+        assert_eq!(state.filtered_len(), 1);
     }
 }

@@ -35,6 +35,9 @@ use crate::agent::{
     CodexCliRunner, GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry,
     OpencodeRunner, SessionId,
 };
+use crate::command_resolver::{
+    CommandResolver, ConduitCommand, MenuEntryKind, ResolveResult, ResolvedPrompt,
+};
 use crate::config::{parse_action, parse_key_notation, Config, KeyContext, COMMAND_NAMES};
 use crate::core::resolve_repo_workspace_settings;
 use crate::core::services::ContextWindowService;
@@ -58,9 +61,9 @@ use crate::ui::components::{
     EventDirection, GlobalFooter, HelpDialog, InlinePromptState, InlinePromptType, MessageRole,
     MissingToolDialog, ModelSelector, ProcessingState, ProjectEntry, ProjectPicker, PromptAnswer,
     ProviderSelector, RawEventsClick, ReasoningSelector, SessionHeader, SessionImportPicker,
-    SettingsMenu, SettingsMenuEntry, SettingsMenuEntryId, Sidebar, SidebarData, SlashCommand,
-    SlashMenu, TabBar, TabBarHitTarget, ThemePicker, WorkspaceDefaultsDialog,
-    WorkspaceDefaultsDraft, SIDEBAR_HEADER_ROWS,
+    SettingsMenu, SettingsMenuEntry, SettingsMenuEntryId, Sidebar, SidebarData, SlashMenu, TabBar,
+    TabBarHitTarget, ThemePicker, WorkspaceDefaultsDialog, WorkspaceDefaultsDraft,
+    SIDEBAR_HEADER_ROWS,
 };
 use crate::ui::effect::Effect;
 use crate::ui::events::{
@@ -1891,15 +1894,27 @@ impl App {
 
                 if self.state.input_mode == InputMode::SlashMenu {
                     if let Some(entry) = self.state.slash_menu_state.selected_entry() {
-                        let command = entry.command;
+                        let kind = entry.kind.clone();
+                        let label = entry.label.clone();
                         self.state.slash_menu_state.hide();
                         self.state.input_mode = InputMode::Normal;
-                        if let Some(action) = Self::slash_command_action(command) {
-                            effects.extend(
-                                Box::pin(self.execute_action(action, terminal, guard)).await?,
-                            );
-                        } else if matches!(command, SlashCommand::NewSession) {
-                            self.start_new_session_in_place();
+                        match kind {
+                            MenuEntryKind::ConduitCommand(command) => {
+                                if let Some(action) = Self::slash_command_action(command) {
+                                    effects.extend(
+                                        Box::pin(self.execute_action(action, terminal, guard))
+                                            .await?,
+                                    );
+                                } else if matches!(command, ConduitCommand::NewSession) {
+                                    self.start_new_session_in_place();
+                                }
+                            }
+                            MenuEntryKind::ProviderInvocation(_) => {
+                                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                                    session.input_box.clear();
+                                    session.input_box.insert_str(&label);
+                                }
+                            }
                         }
                     }
                 } else if self.state.input_mode == InputMode::CommandPalette {
@@ -3048,7 +3063,7 @@ impl App {
             )
     }
 
-    /// Helper to check if a slash keypress should trigger the slash menu.
+    /// Helper to check if a slash or skill keypress should trigger the resolver menu.
     fn should_trigger_slash_menu(
         key_code: KeyCode,
         key_modifiers: KeyModifiers,
@@ -3058,7 +3073,7 @@ impl App {
         has_inline_prompt: bool,
         has_active_session: bool,
     ) -> bool {
-        key_code == KeyCode::Char('/')
+        matches!(key_code, KeyCode::Char('/') | KeyCode::Char('$'))
             && key_modifiers.is_empty()
             && input_is_empty
             && has_active_session
@@ -3067,14 +3082,48 @@ impl App {
             && input_mode == InputMode::Normal
     }
 
-    fn slash_command_action(command: SlashCommand) -> Option<Action> {
+    fn open_resolver_menu(&mut self, trigger: char) {
+        let default_working_dir = self.config().working_dir.clone();
+        let working_dir = self
+            .state
+            .tab_manager
+            .active_session()
+            .and_then(|session| session.working_dir.clone())
+            .unwrap_or(default_working_dir);
+        let entries = CommandResolver::menu_entries(&working_dir);
+        self.state.close_overlays();
+        self.state
+            .slash_menu_state
+            .show_with_entries(trigger, entries);
+        self.state.input_mode = InputMode::SlashMenu;
+    }
+
+    fn slash_command_action(command: ConduitCommand) -> Option<Action> {
         match command {
-            SlashCommand::Model => Some(Action::ShowModelSelector),
-            SlashCommand::Reasoning => Some(Action::ShowReasoningSelector),
-            SlashCommand::Providers => Some(Action::ShowProvidersSelector),
-            SlashCommand::Fork => Some(Action::ForkSession),
-            SlashCommand::Handoff => Some(Action::HandoffSession),
-            SlashCommand::NewSession => None,
+            ConduitCommand::Model => Some(Action::ShowModelSelector),
+            ConduitCommand::Reasoning => Some(Action::ShowReasoningSelector),
+            ConduitCommand::Providers => Some(Action::ShowProvidersSelector),
+            ConduitCommand::Fork => Some(Action::ForkSession),
+            ConduitCommand::Handoff => Some(Action::HandoffSession),
+            ConduitCommand::NewSession => None,
+        }
+    }
+
+    fn execute_resolved_conduit_command(
+        &mut self,
+        tab_index: usize,
+        command: ConduitCommand,
+    ) -> anyhow::Result<Vec<Effect>> {
+        let _ = tab_index;
+        let mut effects = Vec::new();
+        if let Some(action) = Self::slash_command_action(command) {
+            self.handle_global_action(action, &mut effects);
+            Ok(effects)
+        } else if matches!(command, ConduitCommand::NewSession) {
+            self.start_new_session_in_place();
+            Ok(Vec::new())
+        } else {
+            Ok(Vec::new())
         }
     }
 
@@ -7931,10 +7980,33 @@ impl App {
             )
         };
 
+        let resolved_input = CommandResolver::resolve(&prompt, &working_dir, agent_type);
+        match &resolved_input {
+            ResolveResult::ConduitCommand { command, .. } => {
+                return self.execute_resolved_conduit_command(tab_index, *command);
+            }
+            ResolveResult::ListRequest { trigger } => {
+                self.open_resolver_menu(*trigger);
+                return Ok(effects);
+            }
+            _ => {}
+        }
+
         let display_prompt = prompt;
         let mut agent_prompt = display_prompt.clone();
+        let mut codex_skill = None;
         let mut stdin_payload = stdin_payload;
         let use_inline_plan_prompt = Self::plan_prompt_inline_enabled();
+
+        if let ResolveResult::ProviderPrompt(ResolvedPrompt {
+            agent_text,
+            codex_skill: resolved_skill,
+            ..
+        }) = resolved_input
+        {
+            agent_prompt = agent_text;
+            codex_skill = resolved_skill;
+        }
 
         // Validate working directory exists before showing user message
         if !working_dir.exists() {
@@ -8119,6 +8191,7 @@ impl App {
                             text: prompt_to_send,
                             images: images_to_send,
                             model: model.clone(),
+                            skill: codex_skill.clone(),
                         };
                         if let Err(err) = input_tx.send(input).await {
                             tracing::warn!("Failed to send prompt: {}", err);
@@ -8145,6 +8218,10 @@ impl App {
             .with_tools(self.config().claude_allowed_tools.clone())
             .with_images(images)
             .with_agent_mode(agent_mode);
+
+        if let Some(skill) = codex_skill {
+            config = config.with_skill(skill);
+        }
 
         // Add model if specified
         if let Some(model_id) = model {
@@ -11505,7 +11582,7 @@ mod tests {
     #[test]
     fn test_slash_command_action_maps_fork_to_fork_session() {
         assert_eq!(
-            App::slash_command_action(SlashCommand::Fork),
+            App::slash_command_action(ConduitCommand::Fork),
             Some(Action::ForkSession)
         );
     }
@@ -11513,7 +11590,8 @@ mod tests {
     #[test]
     fn test_slash_command_action_maps_handoff_when_present() {
         let mut slash_state = crate::ui::components::SlashMenuState::new();
-        slash_state.show();
+        let entries = CommandResolver::menu_entries(std::path::Path::new("."));
+        slash_state.show_with_entries('/', entries);
 
         let entry = slash_state
             .commands
@@ -11521,7 +11599,10 @@ mod tests {
             .find(|entry| entry.label == "/handoff")
             .expect("Expected /handoff command to be present");
         assert_eq!(
-            App::slash_command_action(entry.command),
+            App::slash_command_action(match entry.kind {
+                MenuEntryKind::ConduitCommand(command) => command,
+                _ => panic!("expected conduit command"),
+            }),
             Some(Action::HandoffSession)
         );
     }

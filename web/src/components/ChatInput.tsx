@@ -75,6 +75,19 @@ export function ChatInput({
   const effectiveQueueDisabled = queueDisabled ?? disabled;
   const hasAttachments = attachments.length > 0;
   const effectiveCanStop = canStop && !!onStop;
+  const trimmedValue = value.trim();
+  const resolverHint = (() => {
+    if (trimmedValue === '/model') return 'Use the model picker in the web UI for /model.';
+    if (trimmedValue === '/reasoning') return 'Use the mode and reasoning controls in the web UI for /reasoning.';
+    if (trimmedValue === '/providers') return 'Use Settings in the web UI for /providers.';
+    if (trimmedValue === '/new') return 'Create a new session from the web UI for /new.';
+    if (trimmedValue === '$') return 'Bare $ opens the skills picker in the TUI. In web, type a full skill name.';
+    if (trimmedValue.startsWith('/') || trimmedValue.startsWith('$')) {
+      const providerLabel = agentType ? agentType.toUpperCase() : 'provider';
+      return `This input will be resolved as a command or skill for ${providerLabel} when you send it.`;
+    }
+    return null;
+  })();
 
   // Responsive check for status bar - switch to compact mode when space is tight
   useEffect(() => {
@@ -210,13 +223,13 @@ export function ChatInput({
 
   return (
     <div className="border-t border-border bg-surface p-4">
-      {notice && (
+      {(notice || resolverHint) && (
         <div
           className="mb-2 text-xs text-text-muted"
           role="status"
           aria-live="polite"
         >
-          {notice}
+          {notice ?? resolverHint}
         </div>
       )}
       <div className="flex items-center gap-3">

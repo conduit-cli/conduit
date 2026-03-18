@@ -444,9 +444,11 @@ impl App {
             has_inline_prompt,
             has_active_session,
         ) {
-            self.state.close_overlays();
-            self.state.slash_menu_state.show();
-            self.state.input_mode = InputMode::SlashMenu;
+            let trigger = match key.code {
+                KeyCode::Char('$') => '$',
+                _ => '/',
+            };
+            self.open_resolver_menu(trigger);
             return Ok(Vec::new());
         }
 

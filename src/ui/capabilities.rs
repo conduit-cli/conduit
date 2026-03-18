@@ -6,6 +6,10 @@ pub struct AgentCapabilities {
     pub supports_interactive_input: bool,
     pub supports_steer: bool,
     pub supports_follow_up: bool,
+    pub supports_native_slash_commands: bool,
+    pub supports_direct_user_skill_invocation: bool,
+    pub supports_native_skill_tool: bool,
+    pub supports_command_template_expansion: bool,
 }
 
 impl AgentCapabilities {
@@ -15,6 +19,19 @@ impl AgentCapabilities {
             supports_interactive_input: false,
             supports_steer: false,
             supports_follow_up: false,
+            supports_native_slash_commands: matches!(
+                agent_type,
+                AgentType::Claude | AgentType::Gemini | AgentType::Opencode
+            ),
+            supports_direct_user_skill_invocation: matches!(
+                agent_type,
+                AgentType::Codex | AgentType::Claude
+            ),
+            supports_native_skill_tool: matches!(
+                agent_type,
+                AgentType::Gemini | AgentType::Opencode
+            ),
+            supports_command_template_expansion: true,
         }
     }
 }

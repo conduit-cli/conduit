@@ -91,7 +91,7 @@ pub use session_header::SessionHeader;
 pub use session_import_picker::{AgentFilter, SessionImportPicker, SessionImportPickerState};
 pub use settings_menu::{SettingsMenu, SettingsMenuEntry, SettingsMenuEntryId, SettingsMenuState};
 pub use sidebar::{Sidebar, SidebarState, SIDEBAR_HEADER_ROWS};
-pub use slash_menu::{SlashCommand, SlashCommandEntry, SlashMenu, SlashMenuState};
+pub use slash_menu::{SlashMenu, SlashMenuEntry, SlashMenuState};
 pub use spinner::Spinner;
 pub use status_bar::StatusBar;
 pub use tab_bar::{TabBar, TabBarHitTarget};

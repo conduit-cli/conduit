@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use crate::agent::error::AgentError;
 use crate::agent::events::AgentEvent;
 use crate::agent::session::SessionId;
+use crate::command_resolver::SkillReference;
 
 /// Agent type identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -197,6 +198,8 @@ pub struct AgentStartConfig {
     pub input_format: Option<String>,
     /// Optional stdin payload for structured input (e.g. JSONL)
     pub stdin_payload: Option<String>,
+    /// Optional structured skill reference for providers that support it.
+    pub skill: Option<SkillReference>,
 }
 
 impl AgentStartConfig {
@@ -214,6 +217,7 @@ impl AgentStartConfig {
             agent_mode: AgentMode::default(),
             input_format: None,
             stdin_payload: None,
+            skill: None,
         }
     }
 
@@ -261,6 +265,11 @@ impl AgentStartConfig {
         self.stdin_payload = Some(payload.into());
         self
     }
+
+    pub fn with_skill(mut self, skill: SkillReference) -> Self {
+        self.skill = Some(skill);
+        self
+    }
 }
 
 /// Input payload for running agents.
@@ -273,6 +282,7 @@ pub enum AgentInput {
         text: String,
         images: Vec<PathBuf>,
         model: Option<String>,
+        skill: Option<SkillReference>,
     },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {

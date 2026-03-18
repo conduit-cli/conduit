@@ -233,8 +233,18 @@ impl CodexCliRunner {
         cmd
     }
 
-    fn build_user_inputs(prompt: &str, images: &[PathBuf]) -> Vec<UserInput> {
+    fn build_user_inputs(
+        prompt: &str,
+        images: &[PathBuf],
+        skill: Option<&crate::command_resolver::SkillReference>,
+    ) -> Vec<UserInput> {
         let mut items = Vec::new();
+        if let Some(skill) = skill {
+            items.push(UserInput::Skill {
+                name: skill.name.clone(),
+                path: skill.path.clone(),
+            });
+        }
         if !prompt.trim().is_empty() {
             items.push(UserInput::Text {
                 text: prompt.to_string(),
@@ -598,8 +608,9 @@ impl CodexCliRunner {
         thread_id: &str,
         prompt: &str,
         images: &[PathBuf],
+        skill: Option<&crate::command_resolver::SkillReference>,
     ) -> io::Result<()> {
-        let items = Self::build_user_inputs(prompt, images);
+        let items = Self::build_user_inputs(prompt, images, skill);
         if items.is_empty() {
             return Ok(());
         }
@@ -867,10 +878,20 @@ impl AgentRunner for CodexCliRunner {
         tokio::spawn(async move {
             while let Some(input) = input_rx.recv().await {
                 match input {
-                    AgentInput::CodexPrompt { text, images, .. } => {
-                        if let Err(err) =
-                            Self::send_user_message(&input_peer, &input_thread_id, &text, &images)
-                                .await
+                    AgentInput::CodexPrompt {
+                        text,
+                        images,
+                        skill,
+                        ..
+                    } => {
+                        if let Err(err) = Self::send_user_message(
+                            &input_peer,
+                            &input_thread_id,
+                            &text,
+                            &images,
+                            skill.as_ref(),
+                        )
+                        .await
                         {
                             tracing::warn!(error = %err, "Failed to send Codex prompt");
                         }
@@ -889,7 +910,14 @@ impl AgentRunner for CodexCliRunner {
 
         // Send initial prompt if present
         if !config.prompt.trim().is_empty() || !config.images.is_empty() {
-            Self::send_user_message(&peer, &thread_id, &config.prompt, &config.images).await?;
+            Self::send_user_message(
+                &peer,
+                &thread_id,
+                &config.prompt,
+                &config.images,
+                config.skill.as_ref(),
+            )
+            .await?;
         }
 
         // Monitor process and capture stderr on failure
@@ -1063,7 +1091,7 @@ mod tests {
             .save(&path)
             .expect("failed to write temp image");
 
-        let items = CodexCliRunner::build_user_inputs("hello", &[PathBuf::from(&path)]);
+        let items = CodexCliRunner::build_user_inputs("hello", &[PathBuf::from(&path)], None);
         assert_eq!(items.len(), 2);
         assert!(matches!(items[0], UserInput::Text { .. }));
         assert!(matches!(items[1], UserInput::LocalImage { .. }));

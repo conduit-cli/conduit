@@ -2129,6 +2129,7 @@ impl AgentRunner for OpencodeRunner {
                             text,
                             images,
                             model,
+                            ..
                         } => {
                             if !images.is_empty()
                                 && !send_event_or_log(

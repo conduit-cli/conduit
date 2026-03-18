@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod command_resolver;
 pub mod config;
 pub mod core;
 pub mod data;
@@ -13,6 +14,10 @@ pub use agent::{
     ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, MockAgentRunner, MockConfig,
     MockEventBuilder, MockStartError, ModelInfo, ModelRegistry, OpencodeRunner, SessionId,
     SessionMetadata, SessionStatus,
+};
+pub use command_resolver::{
+    CommandResolver, ConduitCommand, MenuEntry as ResolvedMenuEntry, MenuEntryKind,
+    ProviderInvocation, ResolveResult, ResolvedPrompt, SkillReference,
 };
 pub use config::Config;
 pub use core::ConduitCore;
