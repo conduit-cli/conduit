@@ -147,6 +147,17 @@ export function ChatInput({
     fileInputRef.current?.click();
   };
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onAttachImages) return;
+    const files = Array.from(e.clipboardData.files).filter((f) =>
+      f.type.startsWith('image/')
+    );
+    if (files.length > 0) {
+      e.preventDefault();
+      onAttachImages(files);
+    }
+  };
+
   const handleFilesSelected = (files: FileList | null) => {
     if (!files || !onAttachImages) return;
     const nextFiles = Array.from(files);
@@ -239,6 +250,7 @@ export function ChatInput({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             data-chat-input="true"
             placeholder={placeholder}
             disabled={effectiveInputDisabled}
