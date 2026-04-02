@@ -384,6 +384,11 @@ impl AgentRunner for ClaudeCodeRunner {
                             AgentInput::CodexPrompt { .. } => {
                                 tracing::warn!("Ignored Codex prompt sent to Claude input channel");
                             }
+                            AgentInput::PiSetThinkingLevel { .. } => {
+                                tracing::warn!(
+                                    "Ignored Pi thinking level update sent to Claude input channel"
+                                );
+                            }
                             AgentInput::OpencodeQuestion { .. } => {
                                 tracing::warn!(
                                     "Ignored OpenCode question response sent to Claude input channel"

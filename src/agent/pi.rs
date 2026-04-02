@@ -554,6 +554,27 @@ impl AgentRunner for PiRunner {
                             }
                         }
                     }
+                    AgentInput::PiSetThinkingLevel { level } => {
+                        if let Err(err) = Self::write_command_line(
+                            &input_stdin,
+                            json!({ "type": "set_thinking_level", "level": level.as_str() }),
+                        )
+                        .await
+                        {
+                            if input_event_tx
+                                .send(AgentEvent::Error(ErrorEvent {
+                                    message: err.to_string(),
+                                    is_fatal: true,
+                                    code: Some("pi_set_thinking_level".to_string()),
+                                    details: None,
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
                     AgentInput::ClaudeJsonl(_) | AgentInput::OpencodeQuestion { .. } => {
                         if input_event_tx
                             .send(AgentEvent::Error(ErrorEvent {

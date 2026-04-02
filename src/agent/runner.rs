@@ -283,13 +283,15 @@ impl AgentStartConfig {
 pub enum AgentInput {
     /// Raw JSONL payload for Claude streaming input.
     ClaudeJsonl(String),
-    /// Codex prompt with optional local images and model override.
+    /// Codex-style prompt with optional local images and model override.
     CodexPrompt {
         text: String,
         images: Vec<PathBuf>,
         model: Option<String>,
         skill: Option<SkillReference>,
     },
+    /// Pi-specific thinking level update for a live session.
+    PiSetThinkingLevel { level: ReasoningEffort },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {
         request_id: String,

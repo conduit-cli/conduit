@@ -13466,6 +13466,51 @@ mod tests {
             .contains("Changing reasoning effort after a session has started"));
     }
 
+    #[tokio::test]
+    async fn test_handle_confirm_action_selecting_reasoning_updates_live_pi_session() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.turn_count = 1;
+            session.agent_input_tx = Some(tx);
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
+        app.state.reasoning_selector_state.insert_str("high");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(!app.state.reasoning_selector_state.is_visible());
+        assert!(effects.is_empty());
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::High));
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for Pi reasoning update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetThinkingLevel {
+                level: ReasoningEffort::High
+            }
+        ));
+    }
+
     #[test]
     fn test_handle_confirm_action_blocks_cross_agent_switch_after_session_started() {
         let session_id = Uuid::new_v4();
