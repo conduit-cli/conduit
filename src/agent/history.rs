@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::display::MessageDisplay;
+use crate::agent::ReasoningEffort;
 use crate::ui::components::{ChatMessage, MessageRole, TurnSummary};
 
 /// Info extracted from a function_call entry for later lookup
@@ -2126,6 +2127,64 @@ fn pi_message_to_chat_message(message: &Value) -> Option<ChatMessage> {
     }
 }
 
+fn pi_reasoning_effort_from_level(level: &str) -> Option<ReasoningEffort> {
+    match level {
+        "minimal" => Some(ReasoningEffort::Minimal),
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        "xhigh" => Some(ReasoningEffort::XHigh),
+        _ => None,
+    }
+}
+
+pub fn load_pi_reasoning_effort(
+    session_ref: &str,
+) -> Result<Option<ReasoningEffort>, HistoryError> {
+    let session_file = find_pi_session_file(session_ref)?;
+    let file = File::open(&session_file)?;
+    let reader = BufReader::new(file);
+
+    let mut all_entries: HashMap<String, Value> = HashMap::new();
+    let mut last_entry_id: Option<String> = None;
+
+    for (line_number, line) in reader.lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&line)
+            .map_err(|err| HistoryError::ParseError(format!("line {}: {err}", line_number + 1)))?;
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            last_entry_id = Some(id.to_string());
+            all_entries.insert(id.to_string(), value);
+        }
+    }
+
+    let Some(mut current_id) = last_entry_id else {
+        return Ok(None);
+    };
+
+    while let Some(entry) = all_entries.get(&current_id) {
+        if entry.get("type").and_then(Value::as_str) == Some("thinking_level_change") {
+            let effort = entry
+                .get("thinkingLevel")
+                .and_then(Value::as_str)
+                .and_then(pi_reasoning_effort_from_level);
+            return Ok(effort);
+        }
+        let Some(parent) = entry.get("parentId").and_then(Value::as_str) else {
+            break;
+        };
+        if !all_entries.contains_key(parent) {
+            break;
+        }
+        current_id = parent.to_string();
+    }
+
+    Ok(None)
+}
+
 /// Load Pi history from a session file path or session id.
 pub fn load_pi_history_with_debug(
     session_ref: &str,
@@ -3014,6 +3073,62 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, MessageRole::Error);
         assert!(messages[0].content.contains("Model missing"));
+    }
+
+    #[test]
+    fn test_load_pi_reasoning_effort_uses_latest_branch_change() {
+        let temp = TempDir::new().unwrap();
+        let session_file = temp.path().join("pi-session.jsonl");
+        fs::write(
+            &session_file,
+            [
+                serde_json::json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": "pi-session-id",
+                    "timestamp": "2026-04-02T10:00:00.000Z",
+                    "cwd": "/tmp/pi-demo"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a1",
+                    "parentId": null,
+                    "timestamp": "2026-04-02T10:00:01.000Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "thinking_level_change",
+                    "id": "a2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:02.000Z",
+                    "thinkingLevel": "low"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "b2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:03.000Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "New branch"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "thinking_level_change",
+                    "id": "b3",
+                    "parentId": "b2",
+                    "timestamp": "2026-04-02T10:00:04.000Z",
+                    "thinkingLevel": "high"
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let effort = load_pi_reasoning_effort(session_file.to_str().unwrap()).unwrap();
+        assert_eq!(effort, Some(ReasoningEffort::High));
     }
 
     #[test]

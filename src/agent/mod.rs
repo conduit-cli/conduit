@@ -22,7 +22,7 @@ pub use gemini::GeminiCliRunner;
 pub use history::{
     load_claude_history_with_debug, load_codex_history_with_debug,
     load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug,
-    load_pi_history_with_debug, HistoryDebugEntry, HistoryError,
+    load_pi_history_with_debug, load_pi_reasoning_effort, HistoryDebugEntry, HistoryError,
 };
 pub use mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
 pub use models::{ModelInfo, ModelRegistry};

@@ -31,9 +31,9 @@ use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug,
     load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug,
-    load_pi_history_with_debug, AgentEvent, AgentInput, AgentMode, AgentRunner, AgentStartConfig,
-    AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, HistoryDebugEntry,
-    MessageDisplay, ModelRegistry, OpencodeRunner, PiRunner, SessionId,
+    load_pi_history_with_debug, load_pi_reasoning_effort, AgentEvent, AgentInput, AgentMode,
+    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
+    HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, PiRunner, SessionId,
 };
 use crate::command_resolver::{
     CommandResolver, ConduitCommand, MenuEntryKind, ResolveResult, ResolvedPrompt,
@@ -3617,6 +3617,8 @@ impl App {
                                     session.chat_view.push(msg);
                                 }
                             }
+                            session.reasoning_effort =
+                                load_pi_reasoning_effort(session_id_str).ok().flatten();
                         }
                         AgentType::Opencode => {
                             if let Ok((msgs, debug_entries, file_path)) =
@@ -5014,6 +5016,7 @@ impl App {
                         session.chat_view.push(msg);
                     }
                 }
+                session.reasoning_effort = load_pi_reasoning_effort(&session_ref).ok().flatten();
             }
             AgentType::Opencode => {
                 if let Ok((msgs, debug_entries, file_path)) =
@@ -12420,6 +12423,55 @@ mod tests {
         assert_eq!(*agent_type, AgentType::Pi);
         assert_eq!(config.images, vec![image_path]);
         assert_eq!(config.prompt, "describe image");
+    }
+
+    #[tokio::test]
+    async fn test_create_imported_session_tab_restores_pi_reasoning_effort() {
+        let mut app = build_test_app_with_sessions(&[]);
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let session_file = temp.path().join("pi-session.jsonl");
+        std::fs::write(
+            &session_file,
+            [
+                serde_json::json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": "pi-session-id",
+                    "timestamp": "2026-04-02T10:00:00.000Z",
+                    "cwd": temp.path()
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a1",
+                    "parentId": null,
+                    "timestamp": "2026-04-02T10:00:01.000Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "thinking_level_change",
+                    "id": "a2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:02.000Z",
+                    "thinkingLevel": "high"
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write session file");
+
+        app.create_imported_session_tab(AgentType::Pi, session_file, temp.path().to_path_buf())
+            .await
+            .expect("import should succeed");
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::High));
     }
 
     #[test]
