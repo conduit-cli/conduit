@@ -389,6 +389,9 @@ impl AgentRunner for ClaudeCodeRunner {
                                     "Ignored Pi thinking level update sent to Claude input channel"
                                 );
                             }
+                            AgentInput::PiFollowUp { .. } => {
+                                tracing::warn!("Ignored Pi follow-up sent to Claude input channel");
+                            }
                             AgentInput::OpencodeQuestion { .. } => {
                                 tracing::warn!(
                                     "Ignored OpenCode question response sent to Claude input channel"

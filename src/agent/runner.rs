@@ -292,6 +292,8 @@ pub enum AgentInput {
     },
     /// Pi-specific thinking level update for a live session.
     PiSetThinkingLevel { level: ReasoningEffort },
+    /// Pi-native follow-up message for a live session.
+    PiFollowUp { text: String, images: Vec<PathBuf> },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {
         request_id: String,

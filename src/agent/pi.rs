@@ -375,12 +375,11 @@ impl PiRunner {
         }))
     }
 
-    fn build_prompt_payload(
+    fn build_message_payload(
+        command_type: &str,
         text: String,
         images: &[PathBuf],
-        busy: bool,
     ) -> Result<Value, AgentError> {
-        let command_type = if busy { "steer" } else { "prompt" };
         if images.is_empty() {
             return Ok(json!({ "type": command_type, "message": text }));
         }
@@ -396,6 +395,15 @@ impl PiRunner {
         }))
     }
 
+    fn build_prompt_payload(
+        text: String,
+        images: &[PathBuf],
+        busy: bool,
+    ) -> Result<Value, AgentError> {
+        let command_type = if busy { "steer" } else { "prompt" };
+        Self::build_message_payload(command_type, text, images)
+    }
+
     async fn send_prompt(
         stdin: &Arc<Mutex<tokio::process::ChildStdin>>,
         text: String,
@@ -403,6 +411,15 @@ impl PiRunner {
         busy: &Arc<AtomicBool>,
     ) -> Result<(), AgentError> {
         let payload = Self::build_prompt_payload(text, images, busy.load(Ordering::SeqCst))?;
+        Self::write_command_line(stdin, payload).await
+    }
+
+    async fn send_follow_up(
+        stdin: &Arc<Mutex<tokio::process::ChildStdin>>,
+        text: String,
+        images: &[PathBuf],
+    ) -> Result<(), AgentError> {
+        let payload = Self::build_message_payload("follow_up", text, images)?;
         Self::write_command_line(stdin, payload).await
     }
 
@@ -566,6 +583,22 @@ impl AgentRunner for PiRunner {
                                     message: err.to_string(),
                                     is_fatal: true,
                                     code: Some("pi_set_thinking_level".to_string()),
+                                    details: None,
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    AgentInput::PiFollowUp { text, images } => {
+                        if let Err(err) = Self::send_follow_up(&input_stdin, text, &images).await {
+                            if input_event_tx
+                                .send(AgentEvent::Error(ErrorEvent {
+                                    message: err.to_string(),
+                                    is_fatal: true,
+                                    code: Some("pi_follow_up".to_string()),
                                     details: None,
                                 }))
                                 .await
@@ -742,6 +775,16 @@ mod tests {
         assert!(payload["images"][0]["data"]
             .as_str()
             .is_some_and(|data| !data.is_empty()));
+    }
+
+    #[test]
+    fn build_message_payload_supports_follow_up() {
+        let payload = PiRunner::build_message_payload("follow_up", "later".to_string(), &[])
+            .expect("payload should build");
+
+        assert_eq!(payload["type"], "follow_up");
+        assert_eq!(payload["message"], "later");
+        assert!(payload.get("images").is_none());
     }
 
     #[test]

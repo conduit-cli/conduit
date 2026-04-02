@@ -9862,6 +9862,41 @@ impl App {
             return Ok(effects);
         }
 
+        if queued.len() == 1 && queued[0].mode == QueuedMessageMode::FollowUp {
+            let (text, images, placeholders) = app_queue::queued_to_submission(&queued[0]);
+            let is_active_tab = self.state.tab_manager.active_index() == tab_index;
+            let mut sent_pi_follow_up = false;
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                if session.agent_type == AgentType::Pi {
+                    if let Some(input_tx) = session.agent_input_tx.clone() {
+                        tokio::spawn(async move {
+                            if let Err(err) =
+                                input_tx.send(AgentInput::PiFollowUp { text, images }).await
+                            {
+                                tracing::warn!("Failed to send Pi follow-up: {}", err);
+                            }
+                        });
+                        session.start_processing();
+                        session.set_processing_state(ProcessingState::Thinking);
+                        if !placeholders.is_empty() {
+                            session.record_raw_event(
+                                EventDirection::Sent,
+                                "QueuedFollowUp",
+                                serde_json::json!({ "agent_type": "pi", "images": placeholders }),
+                            );
+                        }
+                        sent_pi_follow_up = true;
+                    }
+                }
+            }
+            if sent_pi_follow_up {
+                if is_active_tab {
+                    self.state.start_footer_spinner(None);
+                }
+                return Ok(effects);
+            }
+        }
+
         let (prompt, images, placeholders) =
             app_queue::build_queued_submission(&queued, queue_delivery);
         effects.extend(self.submit_prompt_for_tab(
@@ -11923,6 +11958,46 @@ mod tests {
         assert_eq!(concat, "First\n\nSecond");
         assert!(separate.contains("[Queued 1 of 2]"));
         assert!(separate.contains("[Queued 2 of 2]"));
+    }
+
+    #[tokio::test]
+    async fn test_drain_queue_for_tab_sends_pi_follow_up_input() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.agent_input_tx = Some(tx);
+            session.is_processing = true;
+            session.queue_message(QueuedMessage {
+                id: Uuid::new_v4(),
+                mode: QueuedMessageMode::FollowUp,
+                text: "after this".to_string(),
+                images: Vec::new(),
+                created_at: Utc::now(),
+            });
+        }
+
+        let effects = app.drain_queue_for_tab(0).expect("drain should succeed");
+        assert!(effects.is_empty());
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for Pi follow-up")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiFollowUp {
+                text,
+                images
+            } if text == "after this" && images.is_empty()
+        ));
     }
 
     #[test]
