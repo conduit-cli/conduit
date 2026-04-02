@@ -1102,7 +1102,8 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     Vec::new()
                 } else {
                     match agent_type {
-                        AgentType::Codex => match decode_image_attachments(&images) {
+                        AgentType::Codex | AgentType::Pi => match decode_image_attachments(&images)
+                        {
                             Ok(paths) => paths,
                             Err(error) => {
                                 if let Err(send_err) = tx
@@ -1164,23 +1165,6 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
-                        AgentType::Pi => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Pi sessions",
                                 ))
                                 .await
                             {
@@ -1492,23 +1476,25 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     Vec::new()
                 } else {
                     match agent_type {
-                        Some(AgentType::Codex) => match decode_image_attachments(&images) {
-                            Ok(paths) => paths,
-                            Err(error) => {
-                                if let Err(send_err) = tx
-                                    .send(ServerMessage::session_error(session_id, error))
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        %session_id,
-                                        error = ?send_err,
-                                        "Failed to send session error"
-                                    );
-                                    break 'ws_loop;
+                        Some(AgentType::Codex) | Some(AgentType::Pi) => {
+                            match decode_image_attachments(&images) {
+                                Ok(paths) => paths,
+                                Err(error) => {
+                                    if let Err(send_err) = tx
+                                        .send(ServerMessage::session_error(session_id, error))
+                                        .await
+                                    {
+                                        tracing::debug!(
+                                            %session_id,
+                                            error = ?send_err,
+                                            "Failed to send session error"
+                                        );
+                                        break 'ws_loop;
+                                    }
+                                    continue;
                                 }
-                                continue;
                             }
-                        },
+                        }
                         Some(AgentType::Claude) => {
                             match build_claude_prompt_jsonl(&resolved_input_text, &images) {
                                 Ok(payload) => {
@@ -1553,23 +1539,6 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
-                        Some(AgentType::Pi) => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Pi sessions",
                                 ))
                                 .await
                             {

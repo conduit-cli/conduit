@@ -8139,11 +8139,7 @@ impl App {
         }
 
         // Start agent
-        if matches!(
-            agent_type,
-            AgentType::Gemini | AgentType::Opencode | AgentType::Pi
-        ) && !images.is_empty()
-        {
+        if matches!(agent_type, AgentType::Gemini | AgentType::Opencode) && !images.is_empty() {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 session.stop_processing();
                 session.pending_user_message = None;
@@ -8174,7 +8170,11 @@ impl App {
         // Strip placeholders for agents that send images out-of-band.
         if matches!(
             agent_type,
-            AgentType::Codex | AgentType::Claude | AgentType::Gemini | AgentType::Opencode
+            AgentType::Codex
+                | AgentType::Claude
+                | AgentType::Gemini
+                | AgentType::Opencode
+                | AgentType::Pi
         ) {
             agent_prompt = Self::strip_image_placeholders(agent_prompt, &image_placeholders);
         }
@@ -12290,6 +12290,61 @@ mod tests {
         assert_eq!(*agent_type, AgentType::Pi);
         assert_eq!(config.resume_session.as_ref(), Some(&saved_session));
         assert_eq!(config.prompt, "resume pi");
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_allows_pi_images() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+        let tmp = tempfile::Builder::new()
+            .prefix("conduit-pi-image-")
+            .suffix(".png")
+            .tempfile()
+            .expect("failed to create temp image");
+        let image_path = tmp.path().to_path_buf();
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .save(&image_path)
+            .expect("failed to write temp image");
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(
+                0,
+                "describe image".to_string(),
+                vec![image_path.clone()],
+                vec!["@image.png".to_string()],
+                false,
+                None,
+            )
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Pi);
+        assert_eq!(config.images, vec![image_path]);
+        assert_eq!(config.prompt, "describe image");
     }
 
     #[test]

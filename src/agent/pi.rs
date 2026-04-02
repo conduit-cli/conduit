@@ -6,6 +6,8 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -360,16 +362,47 @@ impl PiRunner {
         Ok(())
     }
 
+    fn image_payload(image: &PathBuf) -> Result<Value, AgentError> {
+        let bytes = std::fs::read(image)?;
+        let mime_type = mime_guess::from_path(image)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_string();
+        Ok(json!({
+            "type": "image",
+            "data": BASE64_STANDARD.encode(bytes),
+            "mimeType": mime_type,
+        }))
+    }
+
+    fn build_prompt_payload(
+        text: String,
+        images: &[PathBuf],
+        busy: bool,
+    ) -> Result<Value, AgentError> {
+        let command_type = if busy { "steer" } else { "prompt" };
+        if images.is_empty() {
+            return Ok(json!({ "type": command_type, "message": text }));
+        }
+
+        let images = images
+            .iter()
+            .map(Self::image_payload)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(json!({
+            "type": command_type,
+            "message": text,
+            "images": images,
+        }))
+    }
+
     async fn send_prompt(
         stdin: &Arc<Mutex<tokio::process::ChildStdin>>,
         text: String,
+        images: &[PathBuf],
         busy: &Arc<AtomicBool>,
     ) -> Result<(), AgentError> {
-        let payload = if busy.load(Ordering::SeqCst) {
-            json!({ "type": "steer", "message": text })
-        } else {
-            json!({ "type": "prompt", "message": text })
-        };
+        let payload = Self::build_prompt_payload(text, images, busy.load(Ordering::SeqCst))?;
         Self::write_command_line(stdin, payload).await
     }
 
@@ -406,8 +439,8 @@ impl AgentRunner for PiRunner {
         let (input_tx, mut input_rx) = mpsc::channel(32);
 
         Self::write_command_line(&stdin, json!({ "id": "state-1", "type": "get_state" })).await?;
-        if !config.prompt.trim().is_empty() {
-            Self::send_prompt(&stdin, config.prompt.clone(), &busy).await?;
+        if !config.prompt.trim().is_empty() || !config.images.is_empty() {
+            Self::send_prompt(&stdin, config.prompt.clone(), &config.images, &busy).await?;
         }
 
         let stdout_busy = busy.clone();
@@ -504,23 +537,9 @@ impl AgentRunner for PiRunner {
             while let Some(input) = input_rx.recv().await {
                 match input {
                     AgentInput::CodexPrompt { text, images, .. } => {
-                        if !images.is_empty() {
-                            if input_event_tx
-                                .send(AgentEvent::Error(ErrorEvent {
-                                    message: "Image attachments are not supported for Pi sessions"
-                                        .to_string(),
-                                    is_fatal: false,
-                                    code: Some("pi_images_unsupported".to_string()),
-                                    details: None,
-                                }))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            continue;
-                        }
-                        if let Err(err) = Self::send_prompt(&input_stdin, text, &input_busy).await {
+                        if let Err(err) =
+                            Self::send_prompt(&input_stdin, text, &images, &input_busy).await
+                        {
                             if input_event_tx
                                 .send(AgentEvent::Error(ErrorEvent {
                                     message: err.to_string(),
@@ -676,6 +695,32 @@ mod tests {
                 "bash,read",
             ]
         );
+    }
+
+    #[test]
+    fn build_prompt_payload_includes_images() {
+        let tmp = tempfile::Builder::new()
+            .prefix("conduit-pi-image-")
+            .suffix(".png")
+            .tempfile()
+            .expect("failed to create temp image");
+        let path = tmp.path().to_path_buf();
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .save(&path)
+            .expect("failed to write temp image");
+
+        let payload = PiRunner::build_prompt_payload("describe".to_string(), &[path], false)
+            .expect("payload should build");
+
+        assert_eq!(payload["type"], "prompt");
+        assert_eq!(payload["message"], "describe");
+        assert_eq!(payload["images"].as_array().map(Vec::len), Some(1));
+        assert_eq!(payload["images"][0]["type"], "image");
+        assert_eq!(payload["images"][0]["mimeType"], "image/png");
+        assert!(payload["images"][0]["data"]
+            .as_str()
+            .is_some_and(|data| !data.is_empty()));
     }
 
     #[test]
