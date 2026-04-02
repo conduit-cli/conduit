@@ -3730,7 +3730,10 @@ impl App {
     }
 
     fn reasoning_supported(agent_type: AgentType) -> bool {
-        matches!(agent_type, AgentType::Claude | AgentType::Codex)
+        matches!(
+            agent_type,
+            AgentType::Claude | AgentType::Codex | AgentType::Pi
+        )
     }
 
     fn session_started(session: &AgentSession) -> bool {
@@ -13285,6 +13288,37 @@ mod tests {
         app.state
             .reasoning_selector_state
             .show(AgentType::Codex, None);
+        app.state.reasoning_selector_state.insert_str("xhigh");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(!app.state.reasoning_selector_state.is_visible());
+        assert!(effects.is_empty());
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::XHigh));
+    }
+
+    #[test]
+    fn test_handle_confirm_action_selecting_reasoning_sets_pi_effort() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
         app.state.reasoning_selector_state.insert_str("xhigh");
         app.state.input_mode = InputMode::SelectingReasoning;
 

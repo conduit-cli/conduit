@@ -183,7 +183,7 @@ impl ReasoningSelectorState {
                     description: "Best quality, slower and costlier",
                 });
             }
-            AgentType::Codex => {
+            AgentType::Codex | AgentType::Pi => {
                 options.push(ReasoningOption {
                     effort: Some(ReasoningEffort::Minimal),
                     label: "Minimal",
@@ -210,7 +210,7 @@ impl ReasoningSelectorState {
                     description: "Maximum reasoning budget",
                 });
             }
-            AgentType::Gemini | AgentType::Opencode | AgentType::Pi => {}
+            AgentType::Gemini | AgentType::Opencode => {}
         }
         options
     }
@@ -387,7 +387,8 @@ impl ReasoningSelector {
         let hint = match state.agent_type {
             Some(AgentType::Claude) => "Claude supports: auto, low, medium, high",
             Some(AgentType::Codex) => "Codex supports: auto, minimal, low, medium, high, xhigh",
-            Some(AgentType::Gemini) | Some(AgentType::Opencode) | Some(AgentType::Pi) | None => {
+            Some(AgentType::Pi) => "Pi supports: auto, minimal, low, medium, high, xhigh",
+            Some(AgentType::Gemini) | Some(AgentType::Opencode) | None => {
                 "Reasoning effort is not available for this agent"
             }
         };
@@ -400,5 +401,29 @@ impl ReasoningSelector {
 impl Default for ReasoningSelector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pi_reasoning_options_include_full_thinking_range() {
+        let options = ReasoningSelectorState::build_options(AgentType::Pi);
+
+        let efforts: Vec<Option<ReasoningEffort>> =
+            options.iter().map(|option| option.effort).collect();
+        assert_eq!(
+            efforts,
+            vec![
+                None,
+                Some(ReasoningEffort::Minimal),
+                Some(ReasoningEffort::Low),
+                Some(ReasoningEffort::Medium),
+                Some(ReasoningEffort::High),
+                Some(ReasoningEffort::XHigh),
+            ]
+        );
     }
 }
