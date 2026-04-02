@@ -8117,7 +8117,11 @@ impl App {
         }
 
         // Start agent
-        if matches!(agent_type, AgentType::Gemini | AgentType::Opencode) && !images.is_empty() {
+        if matches!(
+            agent_type,
+            AgentType::Gemini | AgentType::Opencode | AgentType::Pi
+        ) && !images.is_empty()
+        {
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 session.stop_processing();
                 session.pending_user_message = None;
@@ -8130,6 +8134,9 @@ impl App {
                         AgentType::Opencode => {
                             "Image attachments aren't supported for OpenCode in Conduit yet."
                                 .to_string()
+                        }
+                        AgentType::Pi => {
+                            "Image attachments aren't supported for Pi in Conduit yet.".to_string()
                         }
                         _ => "Image attachments aren't supported for this agent.".to_string(),
                     },
@@ -8240,7 +8247,10 @@ impl App {
             }
         }
 
-        if matches!(agent_type, AgentType::Codex | AgentType::Opencode) {
+        if matches!(
+            agent_type,
+            AgentType::Codex | AgentType::Opencode | AgentType::Pi
+        ) {
             let is_active_tab = self.state.tab_manager.active_index() == tab_index;
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 if let Some(ref input_tx) = session.agent_input_tx {
@@ -12173,6 +12183,91 @@ mod tests {
         assert_eq!(*agent_type, AgentType::Codex);
         assert_eq!(config.resume_session.as_ref(), Some(&live_session));
         assert_eq!(config.prompt, "hi again");
+    }
+
+    #[tokio::test]
+    async fn test_submit_prompt_for_tab_uses_live_pi_input_channel() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let live_session = SessionId::from_string("/tmp/pi-session.jsonl");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+            session.agent_session_id = Some(live_session);
+            session.agent_input_tx = Some(tx);
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "hi from pi".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StartAgent { .. })),
+            "live Pi sessions should reuse the existing input channel"
+        );
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for pi input")
+            .expect("input channel closed");
+        match input {
+            AgentInput::CodexPrompt { text, .. } => assert_eq!(text, "hi from pi"),
+            other => panic!("unexpected input: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_resumes_saved_pi_session() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let saved_session = SessionId::from_string("/tmp/pi-history.jsonl");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+            session.resume_session_id = Some(saved_session.clone());
+            session.agent_input_tx = None;
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "resume pi".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Pi);
+        assert_eq!(config.resume_session.as_ref(), Some(&saved_session));
+        assert_eq!(config.prompt, "resume pi");
     }
 
     #[test]
