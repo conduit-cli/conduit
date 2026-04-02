@@ -30,10 +30,10 @@ use uuid::Uuid;
 use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug,
-    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug, AgentEvent,
-    AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner,
-    CodexCliRunner, GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry,
-    OpencodeRunner, PiRunner, SessionId,
+    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug,
+    load_pi_history_with_debug, AgentEvent, AgentInput, AgentMode, AgentRunner, AgentStartConfig,
+    AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, HistoryDebugEntry,
+    MessageDisplay, ModelRegistry, OpencodeRunner, PiRunner, SessionId,
 };
 use crate::command_resolver::{
     CommandResolver, ConduitCommand, MenuEntryKind, ResolveResult, ResolvedPrompt,
@@ -536,12 +536,18 @@ impl App {
                         );
                     }
                     AgentType::Pi => {
-                        session.chat_view.push(
-                            MessageDisplay::System {
-                                content: "Pi history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                        if let Ok((msgs, debug_entries, file_path)) =
+                            load_pi_history_with_debug(session_id_str)
+                        {
+                            Self::populate_debug_from_history(
+                                &mut session.raw_events_view,
+                                &debug_entries,
+                                &file_path,
+                            );
+                            for msg in msgs {
+                                session.chat_view.push(msg);
                             }
-                            .to_chat_message(),
-                        );
+                        }
                     }
                     AgentType::Opencode => {
                         if let Ok((msgs, debug_entries, file_path)) =
@@ -3599,12 +3605,18 @@ impl App {
                             );
                         }
                         AgentType::Pi => {
-                            session.chat_view.push(
-                                MessageDisplay::System {
-                                    content: "Pi history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                            if let Ok((msgs, debug_entries, file_path)) =
+                                load_pi_history_with_debug(session_id_str)
+                            {
+                                Self::populate_debug_from_history(
+                                    &mut session.raw_events_view,
+                                    &debug_entries,
+                                    &file_path,
+                                );
+                                for msg in msgs {
+                                    session.chat_view.push(msg);
                                 }
-                                .to_chat_message(),
-                            );
+                            }
                         }
                         AgentType::Opencode => {
                             if let Ok((msgs, debug_entries, file_path)) =
@@ -4927,17 +4939,20 @@ impl App {
         session_file: std::path::PathBuf,
         working_dir: std::path::PathBuf,
     ) -> anyhow::Result<()> {
-        // Extract session ID from the file path
-        let session_id_str = session_file
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let session_ref = if agent_type == AgentType::Pi {
+            session_file.to_string_lossy().to_string()
+        } else {
+            session_file
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        };
 
         // Create a new session with working directory
         let mut session = AgentSession::with_working_dir(agent_type, working_dir);
         // Set both resume and agent session IDs so the session can be restored after restart
-        let session_id = SessionId::from_string(&session_id_str);
+        let session_id = SessionId::from_string(&session_ref);
         session.resume_session_id = Some(session_id.clone());
         if agent_type != AgentType::Codex {
             session.agent_session_id = Some(session_id);
@@ -4947,7 +4962,7 @@ impl App {
         match agent_type {
             AgentType::Claude => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_claude_history_with_debug(&session_id_str)
+                    load_claude_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,
@@ -4961,7 +4976,7 @@ impl App {
             }
             AgentType::Codex => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_codex_history_with_debug(&session_id_str)
+                    load_codex_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,
@@ -4984,18 +4999,22 @@ impl App {
                 );
             }
             AgentType::Pi => {
-                session.resume_session_id = None;
-                session.agent_session_id = None;
-                session.chat_view.push(
-                    MessageDisplay::System {
-                        content: "Pi session import isn't supported yet.".to_string(),
+                if let Ok((msgs, debug_entries, file_path)) =
+                    load_pi_history_with_debug(&session_ref)
+                {
+                    Self::populate_debug_from_history(
+                        &mut session.raw_events_view,
+                        &debug_entries,
+                        &file_path,
+                    );
+                    for msg in msgs {
+                        session.chat_view.push(msg);
                     }
-                    .to_chat_message(),
-                );
+                }
             }
             AgentType::Opencode => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_opencode_history_with_debug(&session_id_str)
+                    load_opencode_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,

@@ -1987,6 +1987,232 @@ pub fn load_opencode_history_for_dir_with_debug(
     Ok((session_id, messages, debug_entries, session_file))
 }
 
+fn pi_sessions_root() -> Result<PathBuf, HistoryError> {
+    let home = dirs::home_dir().ok_or(HistoryError::HomeNotFound)?;
+    Ok(home.join(".pi").join("agent").join("sessions"))
+}
+
+fn find_pi_session_file(session_ref: &str) -> Result<PathBuf, HistoryError> {
+    let path = PathBuf::from(session_ref);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let root = pi_sessions_root()?;
+    if !root.exists() {
+        return Err(HistoryError::SessionNotFound(session_ref.to_string()));
+    }
+
+    for dir_entry in fs::read_dir(&root)? {
+        let dir_entry = match dir_entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let project_dir = dir_entry.path();
+        if !project_dir.is_dir() {
+            continue;
+        }
+        for file_entry in fs::read_dir(&project_dir)? {
+            let file_entry = match file_entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let file_path = file_entry.path();
+            if file_path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if file_path.file_stem().and_then(|stem| stem.to_str()) == Some(session_ref) {
+                return Ok(file_path);
+            }
+            let file = match File::open(&file_path) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(file);
+            let mut header = String::new();
+            if reader.read_line(&mut header).is_ok()
+                && serde_json::from_str::<Value>(&header)
+                    .ok()
+                    .and_then(|value| value.get("id").and_then(Value::as_str).map(str::to_string))
+                    .as_deref()
+                    == Some(session_ref)
+            {
+                return Ok(file_path);
+            }
+        }
+    }
+
+    Err(HistoryError::SessionNotFound(session_ref.to_string()))
+}
+
+fn pi_message_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|block| {
+                let block_type = block.get("type").and_then(Value::as_str)?;
+                match block_type {
+                    "text" => block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn pi_message_to_chat_message(message: &Value) -> Option<ChatMessage> {
+    let role = message.get("role")?.as_str()?;
+    match role {
+        "user" => {
+            let text = pi_message_text(message);
+            (!text.trim().is_empty())
+                .then(|| MessageDisplay::User { content: text }.to_chat_message())
+        }
+        "assistant" => {
+            let text = pi_message_text(message);
+            (!text.trim().is_empty()).then(|| {
+                MessageDisplay::Assistant {
+                    content: text,
+                    is_streaming: false,
+                }
+                .to_chat_message()
+            })
+        }
+        "toolResult" => {
+            let output = pi_message_text(message);
+            let tool_name = message
+                .get("toolName")
+                .and_then(Value::as_str)
+                .unwrap_or("Tool");
+            Some(
+                MessageDisplay::Tool {
+                    name: MessageDisplay::tool_display_name_owned(tool_name),
+                    args: String::new(),
+                    output,
+                    exit_code: None,
+                    file_size: None,
+                }
+                .to_chat_message(),
+            )
+        }
+        "bashExecution" => Some(
+            MessageDisplay::Tool {
+                name: "Bash".to_string(),
+                args: message
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                output: message
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                exit_code: message
+                    .get("exitCode")
+                    .and_then(Value::as_i64)
+                    .map(|code| code as i32),
+                file_size: None,
+            }
+            .to_chat_message(),
+        ),
+        _ => None,
+    }
+}
+
+/// Load Pi history from a session file path or session id.
+pub fn load_pi_history_with_debug(
+    session_ref: &str,
+) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
+    let session_file = find_pi_session_file(session_ref)?;
+    let file = File::open(&session_file)?;
+    let reader = BufReader::new(file);
+
+    let mut debug_entries = Vec::new();
+    let mut all_entries: HashMap<String, Value> = HashMap::new();
+    let mut message_entry_ids = Vec::new();
+
+    for (line_number, line) in reader.lines().enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&line)
+            .map_err(|err| HistoryError::ParseError(format!("line {}: {err}", line_number + 1)))?;
+        let entry_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+
+        let (status, reason) = if entry_type == "message" {
+            let role = value
+                .get("message")
+                .and_then(|message| message.get("role"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            if let Some(id) = value.get("id").and_then(Value::as_str) {
+                all_entries.insert(id.to_string(), value.clone());
+                message_entry_ids.push(id.to_string());
+            }
+            ("INCLUDE".to_string(), format!("role={role}"))
+        } else {
+            if let Some(id) = value.get("id").and_then(Value::as_str) {
+                all_entries.insert(id.to_string(), value.clone());
+            }
+            ("SKIP".to_string(), format!("type={entry_type}"))
+        };
+
+        debug_entries.push(HistoryDebugEntry {
+            line_number,
+            entry_type,
+            status,
+            reason,
+            raw_json: value,
+        });
+    }
+
+    let Some(mut current_id) = message_entry_ids.last().cloned() else {
+        return Ok((Vec::new(), debug_entries, session_file));
+    };
+
+    let mut branch_ids = Vec::new();
+    while let Some(entry) = all_entries.get(&current_id) {
+        branch_ids.push(current_id.clone());
+        let parent = entry
+            .get("parentId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let Some(parent) = parent else { break };
+        if !all_entries.contains_key(&parent) {
+            break;
+        }
+        current_id = parent;
+    }
+    branch_ids.reverse();
+
+    let mut messages = Vec::new();
+    for entry_id in branch_ids {
+        let Some(entry) = all_entries.get(&entry_id) else {
+            continue;
+        };
+        if entry.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        if let Some(message) = entry.get("message").and_then(pi_message_to_chat_message) {
+            messages.push(message);
+        }
+    }
+
+    Ok((messages, debug_entries, session_file))
+}
+
 /// Create a truncated preview of text for debug output
 fn truncate_preview(text: &str, max_len: usize) -> String {
     let preview: String = text.chars().take(max_len).collect();
@@ -2788,5 +3014,59 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, MessageRole::Error);
         assert!(messages[0].content.contains("Model missing"));
+    }
+
+    #[test]
+    fn test_load_pi_history_with_debug_uses_latest_branch_messages() {
+        let temp = TempDir::new().unwrap();
+        let session_file = temp.path().join("pi-session.jsonl");
+        fs::write(
+            &session_file,
+            [
+                serde_json::json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": "pi-session-id",
+                    "timestamp": "2026-04-02T10:00:00.000Z",
+                    "cwd": "/tmp/pi-demo"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a1",
+                    "parentId": null,
+                    "timestamp": "2026-04-02T10:00:01.000Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:02.000Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "Old branch"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "b2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:03.000Z",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "New branch"}]}
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let (messages, debug_entries, file_path) =
+            load_pi_history_with_debug(session_file.to_str().unwrap()).unwrap();
+
+        assert_eq!(file_path, session_file);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Hello");
+        assert_eq!(messages[1].content, "New branch");
+        assert!(debug_entries.iter().any(|entry| entry.status == "INCLUDE"));
     }
 }
