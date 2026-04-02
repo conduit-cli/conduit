@@ -40,6 +40,7 @@ struct ActiveSession {
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<Uuid, ActiveSession>>>,
     core: Arc<RwLock<ConduitCore>>,
+    runner_overrides: HashMap<AgentType, Arc<dyn AgentRunner>>,
 }
 
 struct StartSessionArgs {
@@ -132,7 +133,33 @@ impl SessionManager {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             core,
+            runner_overrides: HashMap::new(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_runner_overrides(
+        core: Arc<RwLock<ConduitCore>>,
+        runner_overrides: HashMap<AgentType, Arc<dyn AgentRunner>>,
+    ) -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            core,
+            runner_overrides,
+        }
+    }
+
+    fn runner_for(&self, core: &ConduitCore, agent_type: AgentType) -> Arc<dyn AgentRunner> {
+        self.runner_overrides
+            .get(&agent_type)
+            .cloned()
+            .unwrap_or_else(|| match agent_type {
+                AgentType::Claude => core.claude_runner().clone(),
+                AgentType::Codex => core.codex_runner().clone(),
+                AgentType::Gemini => core.gemini_runner().clone(),
+                AgentType::Opencode => core.opencode_runner().clone(),
+                AgentType::Pi => core.pi_runner().clone(),
+            })
     }
 
     /// Start a new agent session.
@@ -165,13 +192,7 @@ impl SessionManager {
 
         // Get the appropriate runner
         let core = self.core.read().await;
-        let runner: Arc<dyn AgentRunner> = match agent_type {
-            AgentType::Claude => core.claude_runner().clone(),
-            AgentType::Codex => core.codex_runner().clone(),
-            AgentType::Gemini => core.gemini_runner().clone(),
-            AgentType::Opencode => core.opencode_runner().clone(),
-            AgentType::Pi => core.pi_runner().clone(),
-        };
+        let runner = self.runner_for(&core, agent_type);
 
         if !runner.is_available() {
             return Err(format!("{} is not available", agent_type.display_name()));
@@ -196,7 +217,7 @@ impl SessionManager {
             config = config.with_skill(skill);
         }
 
-        if agent_type == AgentType::Opencode {
+        if matches!(agent_type, AgentType::Opencode | AgentType::Pi) {
             match SessionService::get_session(&core, session_id) {
                 Ok(session_tab) => {
                     if let Some(agent_session_id) = session_tab.agent_session_id {
@@ -206,8 +227,9 @@ impl SessionManager {
                 Err(error) => {
                     tracing::warn!(
                         %session_id,
+                        agent_type = %agent_type,
                         error = %error,
-                        "Failed to load session for OpenCode resume"
+                        "Failed to load session for agent resume"
                     );
                 }
             }
@@ -1699,4 +1721,66 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
     }
 
     send_task.abort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::MockAgentRunner;
+    use crate::config::Config;
+    use crate::core::services::session_service::CreateImportedSessionParams;
+    use crate::core::services::SessionService;
+    use crate::util::ToolAvailability;
+
+    #[tokio::test]
+    async fn start_session_resumes_saved_pi_session() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+
+        let session = {
+            let core_read = core.read().await;
+            SessionService::create_imported_session(
+                &core_read,
+                CreateImportedSessionParams {
+                    workspace_id: None,
+                    agent_type: AgentType::Pi,
+                    agent_session_id: "/tmp/pi-session.jsonl".to_string(),
+                    title: Some("Imported Pi session".to_string()),
+                    model: Some("default".to_string()),
+                },
+            )
+            .expect("should create imported Pi session")
+        };
+
+        let pi_runner = Arc::new(MockAgentRunner::new(AgentType::Pi));
+        let session_manager = SessionManager::with_runner_overrides(
+            core,
+            HashMap::from([(AgentType::Pi, pi_runner.clone() as Arc<dyn AgentRunner>)]),
+        );
+
+        session_manager
+            .start_session(StartSessionArgs {
+                session_id: session.id,
+                agent_type: AgentType::Pi,
+                prompt: "continue".to_string(),
+                working_dir: std::env::temp_dir(),
+                model: Some("default".to_string()),
+                images: Vec::new(),
+                input_format: None,
+                stdin_payload: None,
+                skill: None,
+            })
+            .await
+            .expect("Pi session should start");
+
+        let config = pi_runner
+            .last_config()
+            .expect("mock runner captured config");
+        assert_eq!(
+            config.resume_session.as_ref().map(SessionId::as_str),
+            Some("/tmp/pi-session.jsonl")
+        );
+    }
 }
