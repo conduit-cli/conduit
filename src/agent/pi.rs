@@ -633,10 +633,72 @@ impl AgentRunner for PiRunner {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use serde_json::json;
 
     use super::PiRunner;
     use crate::agent::events::AgentEvent;
+    use crate::agent::{AgentStartConfig, ReasoningEffort, SessionId};
+
+    fn command_args(command: &tokio::process::Command) -> Vec<String> {
+        command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn build_command_includes_resume_model_thinking_and_tools() {
+        let runner = PiRunner::with_path(PathBuf::from("/usr/bin/pi"));
+        let config = AgentStartConfig::new("hello", PathBuf::from("/tmp"))
+            .with_resume(SessionId::from_string("/tmp/pi-session.jsonl"))
+            .with_model("anthropic/claude-sonnet-4")
+            .with_reasoning_effort(ReasoningEffort::XHigh)
+            .with_tools(vec!["Bash".to_string(), "Read".to_string()]);
+
+        let command = runner.build_command(&config);
+        let args = command_args(&command);
+
+        assert_eq!(
+            args,
+            vec![
+                "--mode",
+                "rpc",
+                "--session",
+                "/tmp/pi-session.jsonl",
+                "--model",
+                "anthropic/claude-sonnet-4",
+                "--thinking",
+                "xhigh",
+                "--tools",
+                "bash,read",
+            ]
+        );
+    }
+
+    #[test]
+    fn response_failure_emits_error_and_turn_failed() {
+        let events = PiRunner::parse_event_value(&json!({
+            "type": "response",
+            "command": "set_thinking_level",
+            "success": false,
+            "error": "thinking unsupported"
+        }));
+
+        assert!(matches!(
+            &events[0],
+            AgentEvent::Error(error)
+                if error.message == "thinking unsupported"
+                    && error.is_fatal
+                    && error.code.as_deref() == Some("pi_response_set_thinking_level")
+        ));
+        assert!(matches!(
+            &events[1],
+            AgentEvent::TurnFailed(failed) if failed.error == "thinking unsupported"
+        ));
+    }
 
     #[test]
     fn parses_get_state_response_into_session_init() {
