@@ -33,9 +33,10 @@ pub async fn set_default_model(
         "claude" => AgentType::Claude,
         "gemini" => AgentType::Gemini,
         "opencode" => AgentType::Opencode,
+        "pi" => AgentType::Pi,
         _ => {
             return Err(WebError::BadRequest(format!(
-                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
                 payload.agent_type
             )));
         }

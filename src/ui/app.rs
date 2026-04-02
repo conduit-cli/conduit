@@ -33,7 +33,7 @@ use crate::agent::{
     load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug, AgentEvent,
     AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner,
     CodexCliRunner, GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry,
-    OpencodeRunner, SessionId,
+    OpencodeRunner, PiRunner, SessionId,
 };
 use crate::command_resolver::{
     CommandResolver, ConduitCommand, MenuEntryKind, ResolveResult, ResolvedPrompt,
@@ -275,6 +275,12 @@ impl App {
     #[inline]
     fn opencode_runner(&self) -> &Arc<OpencodeRunner> {
         self.core.opencode_runner()
+    }
+
+    /// Get the Pi runner.
+    #[inline]
+    fn pi_runner(&self) -> &Arc<PiRunner> {
+        self.core.pi_runner()
     }
 
     /// Get the worktree manager.
@@ -525,6 +531,14 @@ impl App {
                         session.chat_view.push(
                             MessageDisplay::System {
                                 content: "Gemini CLI history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                            }
+                            .to_chat_message(),
+                        );
+                    }
+                    AgentType::Pi => {
+                        session.chat_view.push(
+                            MessageDisplay::System {
+                                content: "Pi history import isn't supported yet, so previous messages won't be shown.".to_string(),
                             }
                             .to_chat_message(),
                         );
@@ -2058,6 +2072,7 @@ impl App {
                         AgentType::Codex => self.codex_runner().clone(),
                         AgentType::Gemini => self.gemini_runner().clone(),
                         AgentType::Opencode => self.opencode_runner().clone(),
+                        AgentType::Pi => self.pi_runner().clone(),
                     };
 
                     let event_tx = self.event_tx.clone();
@@ -3583,6 +3598,14 @@ impl App {
                                 .to_chat_message(),
                             );
                         }
+                        AgentType::Pi => {
+                            session.chat_view.push(
+                                MessageDisplay::System {
+                                    content: "Pi history import isn't supported yet, so previous messages won't be shown.".to_string(),
+                                }
+                                .to_chat_message(),
+                            );
+                        }
                         AgentType::Opencode => {
                             if let Ok((msgs, debug_entries, file_path)) =
                                 load_opencode_history_with_debug(session_id_str)
@@ -3690,6 +3713,7 @@ impl App {
             AgentType::Codex => crate::util::Tool::Codex,
             AgentType::Gemini => crate::util::Tool::Gemini,
             AgentType::Opencode => crate::util::Tool::Opencode,
+            AgentType::Pi => crate::util::Tool::Pi,
         }
     }
 
@@ -4955,6 +4979,16 @@ impl App {
                 session.chat_view.push(
                     MessageDisplay::System {
                         content: "Gemini CLI session import isn't supported yet.".to_string(),
+                    }
+                    .to_chat_message(),
+                );
+            }
+            AgentType::Pi => {
+                session.resume_session_id = None;
+                session.agent_session_id = None;
+                session.chat_view.push(
+                    MessageDisplay::System {
+                        content: "Pi session import isn't supported yet.".to_string(),
                     }
                     .to_chat_message(),
                 );

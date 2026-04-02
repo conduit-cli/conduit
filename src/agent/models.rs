@@ -74,8 +74,11 @@ impl ModelRegistry {
 
     /// Default context window for OpenCode models (approximate)
     pub const OPENCODE_CONTEXT_WINDOW: i64 = 200_000;
+    /// Default context window for Pi models (approximate)
+    pub const PI_CONTEXT_WINDOW: i64 = 200_000;
 
     const OPENCODE_DEFAULT_MODEL_ID: &'static str = "default";
+    const PI_DEFAULT_MODEL_ID: &'static str = "default";
 
     fn opencode_store() -> &'static RwLock<Vec<ModelInfo>> {
         static OPENCODE_MODELS: OnceLock<RwLock<Vec<ModelInfo>>> = OnceLock::new();
@@ -333,12 +336,25 @@ impl ModelRegistry {
         ]
     }
 
+    pub fn pi_models() -> Vec<ModelInfo> {
+        vec![ModelInfo::new(
+            AgentType::Pi,
+            Self::PI_DEFAULT_MODEL_ID,
+            "Pi Default",
+            Self::PI_DEFAULT_MODEL_ID,
+            "Use Pi's current default model selection",
+            Self::PI_CONTEXT_WINDOW,
+        )
+        .as_default()]
+    }
+
     /// Get all models grouped by agent type
     pub fn all_models() -> Vec<ModelInfo> {
         let mut models = Self::claude_models();
         models.extend(Self::codex_models());
         models.extend(Self::gemini_models());
         models.extend(Self::opencode_models());
+        models.extend(Self::pi_models());
         models
     }
 
@@ -349,6 +365,7 @@ impl ModelRegistry {
             AgentType::Codex => Self::codex_models(),
             AgentType::Gemini => Self::gemini_models(),
             AgentType::Opencode => Self::opencode_models(),
+            AgentType::Pi => Self::pi_models(),
         }
     }
 
@@ -359,6 +376,7 @@ impl ModelRegistry {
             AgentType::Codex => "gpt-5.4".to_string(),
             AgentType::Gemini => "gemini-2.5-pro".to_string(),
             AgentType::Opencode => Self::OPENCODE_DEFAULT_MODEL_ID.to_string(),
+            AgentType::Pi => Self::PI_DEFAULT_MODEL_ID.to_string(),
         }
     }
 
@@ -385,6 +403,27 @@ impl ModelRegistry {
             ));
         }
 
+        if agent_type == AgentType::Pi {
+            let trimmed = id_or_alias.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Some(model) = Self::pi_models()
+                .into_iter()
+                .find(|m| m.id == trimmed || m.alias == trimmed)
+            {
+                return Some(model);
+            }
+            return Some(ModelInfo::new(
+                AgentType::Pi,
+                trimmed,
+                trimmed,
+                trimmed,
+                "Pi model",
+                Self::PI_CONTEXT_WINDOW,
+            ));
+        }
+
         Self::models_for(agent_type)
             .into_iter()
             .find(|m| m.id == id_or_alias || m.alias == id_or_alias)
@@ -397,6 +436,7 @@ impl ModelRegistry {
             AgentType::Codex => "◎",
             AgentType::Gemini => "◆",
             AgentType::Opencode => "◍",
+            AgentType::Pi => "π",
         }
     }
 
@@ -407,6 +447,7 @@ impl ModelRegistry {
             AgentType::Codex => "Codex",
             AgentType::Gemini => "Gemini",
             AgentType::Opencode => "OpenCode",
+            AgentType::Pi => "Pi",
         }
     }
 
@@ -424,6 +465,7 @@ impl ModelRegistry {
             AgentType::Codex => Self::CODEX_CONTEXT_WINDOW,
             AgentType::Gemini => Self::GEMINI_CONTEXT_WINDOW,
             AgentType::Opencode => Self::OPENCODE_CONTEXT_WINDOW,
+            AgentType::Pi => Self::PI_CONTEXT_WINDOW,
         }
     }
 }
@@ -443,5 +485,19 @@ mod tests {
         assert_eq!(default_model.id, "gpt-5.4");
         assert_eq!(ModelRegistry::default_model(AgentType::Codex), "gpt-5.4");
         assert!(models.iter().any(|model| model.id == "gpt-5.3-codex"));
+    }
+
+    #[test]
+    fn test_pi_models_include_default_model() {
+        let models = ModelRegistry::pi_models();
+        let default_model = models
+            .iter()
+            .find(|model| model.is_default)
+            .expect("expected default Pi model");
+
+        assert_eq!(default_model.id, "default");
+        assert_eq!(default_model.display_name, "Pi Default");
+        assert_eq!(ModelRegistry::default_model(AgentType::Pi), "default");
+        assert_eq!(ModelRegistry::agent_section_title(AgentType::Pi), "Pi");
     }
 }

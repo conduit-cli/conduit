@@ -170,6 +170,7 @@ impl SessionManager {
             AgentType::Codex => core.codex_runner().clone(),
             AgentType::Gemini => core.gemini_runner().clone(),
             AgentType::Opencode => core.opencode_runner().clone(),
+            AgentType::Pi => core.pi_runner().clone(),
         };
 
         if !runner.is_available() {
@@ -448,12 +449,14 @@ impl SessionManager {
         // Send as appropriate input type based on agent
         let agent_input = match agent_type {
             AgentType::Claude => AgentInput::ClaudeJsonl(input),
-            AgentType::Codex | AgentType::Gemini | AgentType::Opencode => AgentInput::CodexPrompt {
-                text: input,
-                images,
-                model,
-                skill,
-            },
+            AgentType::Codex | AgentType::Gemini | AgentType::Opencode | AgentType::Pi => {
+                AgentInput::CodexPrompt {
+                    text: input,
+                    images,
+                    model,
+                    skill,
+                }
+            }
         };
 
         input_tx
@@ -1151,6 +1154,23 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                             }
                             continue;
                         }
+                        AgentType::Pi => {
+                            if let Err(send_err) = tx
+                                .send(ServerMessage::session_error(
+                                    session_id,
+                                    "Image attachments are not supported for Pi sessions",
+                                ))
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
+                            continue;
+                        }
                     }
                 };
 
@@ -1511,6 +1531,23 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                                 .send(ServerMessage::session_error(
                                     session_id,
                                     "Image attachments are not supported for OpenCode sessions",
+                                ))
+                                .await
+                            {
+                                tracing::debug!(
+                                    %session_id,
+                                    error = ?send_err,
+                                    "Failed to send session error"
+                                );
+                                break 'ws_loop;
+                            }
+                            continue;
+                        }
+                        Some(AgentType::Pi) => {
+                            if let Err(send_err) = tx
+                                .send(ServerMessage::session_error(
+                                    session_id,
+                                    "Image attachments are not supported for Pi sessions",
                                 ))
                                 .await
                             {

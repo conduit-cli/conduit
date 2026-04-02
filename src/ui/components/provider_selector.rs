@@ -18,8 +18,8 @@ impl ProviderSelectorState {
         }
     }
 
-    fn all_providers() -> [AgentType; 4] {
-        AgentType::preferred_order()
+    fn all_providers() -> Vec<AgentType> {
+        AgentType::preferred_order().to_vec()
     }
 
     fn provider_tool(provider: AgentType) -> Tool {
@@ -28,6 +28,7 @@ impl ProviderSelectorState {
             AgentType::Codex => Tool::Codex,
             AgentType::Gemini => Tool::Gemini,
             AgentType::Opencode => Tool::Opencode,
+            AgentType::Pi => Tool::Pi,
         }
     }
 

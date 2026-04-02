@@ -614,6 +614,7 @@ impl Config {
             "codex" => Some(AgentType::Codex),
             "gemini" => Some(AgentType::Gemini),
             "opencode" => Some(AgentType::Opencode),
+            "pi" => Some(AgentType::Pi),
             _ => None,
         }
     }
@@ -788,6 +789,7 @@ impl Config {
             AgentType::Codex => Tool::Codex,
             AgentType::Gemini => Tool::Gemini,
             AgentType::Opencode => Tool::Opencode,
+            AgentType::Pi => Tool::Pi,
         }
     }
 
@@ -1095,5 +1097,26 @@ mod tests {
             COMMAND_NAMES.contains(&"handoff_session"),
             "handoff_session should be present in COMMAND_NAMES"
         );
+    }
+
+    #[test]
+    fn test_parse_provider_pi() {
+        assert_eq!(Config::parse_provider("pi"), Some(AgentType::Pi));
+    }
+
+    #[test]
+    fn test_effective_enabled_providers_includes_pi_when_available() {
+        let mut tools = ToolAvailability::default();
+        let executable = std::env::current_exe().expect("current test executable path");
+        assert!(tools.update_tool(Tool::Pi, executable));
+
+        let mut config = Config::default();
+        config.enabled_providers = Some(vec![AgentType::Pi]);
+
+        assert_eq!(
+            config.effective_enabled_providers(&tools),
+            vec![AgentType::Pi]
+        );
+        assert_eq!(config.default_model_for(AgentType::Pi), "default");
     }
 }

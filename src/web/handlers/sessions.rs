@@ -122,9 +122,10 @@ pub async fn create_session(
         "claude" => AgentType::Claude,
         "gemini" => AgentType::Gemini,
         "opencode" => AgentType::Opencode,
+        "pi" => AgentType::Pi,
         _ => {
             return Err(WebError::BadRequest(format!(
-                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
                 req.agent_type
             )));
         }
@@ -171,8 +172,9 @@ pub async fn update_session(
                 "claude" => Ok(AgentType::Claude),
                 "gemini" => Ok(AgentType::Gemini),
                 "opencode" => Ok(AgentType::Opencode),
+                "pi" => Ok(AgentType::Pi),
                 _ => Err(WebError::BadRequest(format!(
-                    "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+                    "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
                     agent_type_str
                 ))),
             },
@@ -239,6 +241,7 @@ fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
                 tracing::warn!("Failed to load OpenCode history: {}", e);
                 Vec::new()
             }),
+        AgentType::Pi => Vec::new(),
     };
 
     if let Some(pending) = session.pending_user_message.as_ref() {
@@ -395,6 +398,10 @@ pub async fn get_session_events(
         },
         AgentType::Gemini => {
             // Gemini history loading not supported yet
+            vec![]
+        }
+        AgentType::Pi => {
+            // Pi history loading not supported yet
             vec![]
         }
         AgentType::Opencode => match load_opencode_history_with_debug(&agent_session_id) {

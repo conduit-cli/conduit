@@ -15,6 +15,7 @@ pub enum AgentType {
     Codex,
     Gemini,
     Opencode,
+    Pi,
 }
 
 /// Agent mode (Build vs Plan)
@@ -117,12 +118,13 @@ impl AgentMode {
 
 impl AgentType {
     /// Preferred provider priority order used for defaults and UI listing.
-    pub const fn preferred_order() -> [AgentType; 4] {
+    pub const fn preferred_order() -> [AgentType; 5] {
         [
             AgentType::Codex,
             AgentType::Claude,
             AgentType::Gemini,
             AgentType::Opencode,
+            AgentType::Pi,
         ]
     }
 
@@ -139,6 +141,7 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::Gemini => "gemini",
             AgentType::Opencode => "opencode",
+            AgentType::Pi => "pi",
         }
     }
 
@@ -147,6 +150,7 @@ impl AgentType {
             "codex" => AgentType::Codex,
             "gemini" => AgentType::Gemini,
             "opencode" => AgentType::Opencode,
+            "pi" => AgentType::Pi,
             _ => AgentType::Claude,
         }
     }
@@ -158,6 +162,7 @@ impl AgentType {
             AgentType::Codex => "Codex",
             AgentType::Gemini => "Gemini",
             AgentType::Opencode => "OpenCode",
+            AgentType::Pi => "Pi",
         }
     }
 
@@ -167,6 +172,7 @@ impl AgentType {
             AgentType::Codex => "Codex CLI",
             AgentType::Gemini => "Gemini CLI",
             AgentType::Opencode => "OpenCode",
+            AgentType::Pi => "Pi",
         }
     }
 }
@@ -349,4 +355,19 @@ pub trait AgentRunner: Send + Sync {
 
     /// Get the path to the agent binary
     fn binary_path(&self) -> Option<PathBuf>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentType;
+
+    #[test]
+    fn pi_agent_type_has_public_identifiers() {
+        assert_eq!(AgentType::parse("pi"), AgentType::Pi);
+        assert_eq!(AgentType::Pi.as_str(), "pi");
+        assert_eq!(AgentType::Pi.short_name(), "Pi");
+        assert_eq!(AgentType::Pi.display_name(), "Pi");
+        assert!(!AgentType::Pi.supports_plan_mode());
+        assert!(AgentType::preferred_order().contains(&AgentType::Pi));
+    }
 }

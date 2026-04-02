@@ -559,12 +559,14 @@ impl SessionImportPicker {
                 AgentType::Codex => "X",
                 AgentType::Gemini => "G",
                 AgentType::Opencode => "O",
+                AgentType::Pi => "P",
             };
             let agent_color = match session.agent_type {
                 AgentType::Claude => agent_claude(),
                 AgentType::Codex => agent_codex(),
                 AgentType::Gemini => agent_gemini(),
                 AgentType::Opencode => agent_opencode(),
+                AgentType::Pi => agent_opencode(),
             };
 
             // Calculate widths

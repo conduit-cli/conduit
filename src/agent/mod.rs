@@ -8,6 +8,7 @@ pub mod history;
 pub mod mock;
 pub mod models;
 pub mod opencode;
+pub mod pi;
 pub mod runner;
 pub mod session;
 pub mod stream;
@@ -26,6 +27,7 @@ pub use history::{
 pub use mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
 pub use models::{ModelInfo, ModelRegistry};
 pub use opencode::OpencodeRunner;
+pub use pi::PiRunner;
 pub use runner::{
     AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ReasoningEffort,
 };

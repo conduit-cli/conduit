@@ -369,7 +369,7 @@ fn render_skill_invocation(
             codex_skill: None,
             source_badge: Some(format!("{} skill", source.display_name())),
         },
-        AgentType::Gemini | AgentType::Opencode | AgentType::Claude => {
+        AgentType::Gemini | AgentType::Opencode | AgentType::Pi | AgentType::Claude => {
             let task = if args.is_empty() {
                 "Use it for the user's current request.".to_string()
             } else {

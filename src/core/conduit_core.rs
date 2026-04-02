@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::agent::{
-    ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, ModelRegistry, OpencodeRunner,
+    ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner, ModelRegistry, OpencodeRunner, PiRunner,
 };
 use crate::config::Config;
 use crate::data::{
@@ -44,6 +44,8 @@ pub struct ConduitCore {
     gemini_runner: Arc<GeminiCliRunner>,
     /// OpenCode runner
     opencode_runner: Arc<OpencodeRunner>,
+    /// Pi runner
+    pi_runner: Arc<PiRunner>,
     /// Worktree manager
     worktree_manager: WorkspaceRepoManager,
 }
@@ -105,6 +107,10 @@ impl ConduitCore {
             Some(path) => Arc::new(OpencodeRunner::with_path(path.clone())),
             None => Arc::new(OpencodeRunner::new()),
         };
+        let pi_runner = match tools.get_path(Tool::Pi) {
+            Some(path) => Arc::new(PiRunner::with_path(path.clone())),
+            None => Arc::new(PiRunner::new()),
+        };
 
         if tools.is_available(Tool::Opencode) {
             let models = crate::agent::opencode::load_opencode_models(
@@ -128,6 +134,7 @@ impl ConduitCore {
             codex_runner,
             gemini_runner,
             opencode_runner,
+            pi_runner,
             worktree_manager,
         }
     }
@@ -212,6 +219,11 @@ impl ConduitCore {
         &self.opencode_runner
     }
 
+    /// Get the Pi runner.
+    pub fn pi_runner(&self) -> &Arc<PiRunner> {
+        &self.pi_runner
+    }
+
     /// Get the worktree manager.
     pub fn worktree_manager(&self) -> &WorkspaceRepoManager {
         &self.worktree_manager
@@ -252,6 +264,10 @@ impl ConduitCore {
         self.opencode_runner = match self.tools.get_path(Tool::Opencode) {
             Some(path) => Arc::new(OpencodeRunner::with_path(path.clone())),
             None => Arc::new(OpencodeRunner::new()),
+        };
+        self.pi_runner = match self.tools.get_path(Tool::Pi) {
+            Some(path) => Arc::new(PiRunner::with_path(path.clone())),
+            None => Arc::new(PiRunner::new()),
         };
 
         if self.tools.is_available(Tool::Opencode) {
