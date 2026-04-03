@@ -10068,6 +10068,7 @@ impl App {
                             let dialog = BaseDirDialog::new();
                             dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
                         } else if self.state.provider_selector_state.is_visible() {
+                            self.state.provider_selector_state.update_viewport(size);
                             let selector = ProviderSelector::new();
                             selector.render(
                                 size,
@@ -10507,6 +10508,7 @@ impl App {
         }
 
         if self.state.provider_selector_state.is_visible() {
+            self.state.provider_selector_state.update_viewport(size);
             let selector = ProviderSelector::new();
             selector.render(
                 size,

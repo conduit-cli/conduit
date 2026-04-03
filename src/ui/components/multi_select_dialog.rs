@@ -68,6 +68,20 @@ impl MultiSelectDialogState {
         self.update_filter();
     }
 
+    pub fn update_viewport(&mut self, area: Rect) {
+        let max_visible = MultiSelectDialog::list_area(area).height.max(1) as usize;
+        self.list.max_visible = max_visible;
+        self.list.clamp_selection();
+        if self.list.selected < self.list.scroll_offset {
+            self.list.scroll_offset = self.list.selected;
+        } else if self.list.selected >= self.list.scroll_offset + self.list.max_visible {
+            self.list.scroll_offset = self
+                .list
+                .selected
+                .saturating_sub(self.list.max_visible.saturating_sub(1));
+        }
+    }
+
     pub fn hide(&mut self) {
         self.visible = false;
     }
