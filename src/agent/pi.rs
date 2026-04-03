@@ -608,6 +608,27 @@ impl AgentRunner for PiRunner {
                             }
                         }
                     }
+                    AgentInput::PiSetFollowUpMode { mode } => {
+                        if let Err(err) = Self::write_command_line(
+                            &input_stdin,
+                            json!({ "type": "set_follow_up_mode", "mode": mode.as_str() }),
+                        )
+                        .await
+                        {
+                            if input_event_tx
+                                .send(AgentEvent::Error(ErrorEvent {
+                                    message: err.to_string(),
+                                    is_fatal: true,
+                                    code: Some("pi_set_follow_up_mode".to_string()),
+                                    details: None,
+                                }))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
                     AgentInput::ClaudeJsonl(_) | AgentInput::OpencodeQuestion { .. } => {
                         if input_event_tx
                             .send(AgentEvent::Error(ErrorEvent {
@@ -712,7 +733,7 @@ mod tests {
 
     use super::PiRunner;
     use crate::agent::events::AgentEvent;
-    use crate::agent::{AgentStartConfig, ReasoningEffort, SessionId};
+    use crate::agent::{AgentStartConfig, PiFollowUpMode, ReasoningEffort, SessionId};
 
     fn command_args(command: &tokio::process::Command) -> Vec<String> {
         command
@@ -797,6 +818,17 @@ mod tests {
         assert_eq!(payload["type"], "follow_up");
         assert_eq!(payload["message"], "later");
         assert!(payload.get("images").is_none());
+    }
+
+    #[test]
+    fn build_set_follow_up_mode_payload() {
+        let payload = json!({
+            "type": "set_follow_up_mode",
+            "mode": PiFollowUpMode::OneAtATime.as_str(),
+        });
+
+        assert_eq!(payload["type"], "set_follow_up_mode");
+        assert_eq!(payload["mode"], "one-at-a-time");
     }
 
     #[test]

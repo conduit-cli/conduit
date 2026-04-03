@@ -2212,6 +2212,24 @@ impl AgentRunner for OpencodeRunner {
                                 return;
                             }
                         }
+                        AgentInput::PiSetFollowUpMode { .. } => {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
+                                    message:
+                                        "OpenCode runner does not support Pi follow-up mode input."
+                                            .to_string(),
+                                    is_fatal: false,
+                                    code: None,
+                                    details: None,
+                                }),
+                                "opencode_pi_follow_up_mode_unsupported",
+                            )
+                            .await
+                            {
+                                return;
+                            }
+                        }
                         AgentInput::OpencodeQuestion {
                             request_id,
                             answers,

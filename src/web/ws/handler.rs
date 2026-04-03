@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
-use crate::agent::ReasoningEffort;
+use crate::agent::{PiFollowUpMode, ReasoningEffort};
 use crate::command_resolver::{CommandResolver, ConduitCommand, ResolveResult, SkillReference};
 use crate::core::services::{SessionService, UpdateSessionParams};
 use crate::core::ConduitCore;
@@ -517,6 +517,38 @@ impl SessionManager {
             })
             .await
             .map_err(|e| format!("Failed to send reasoning update: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update follow-up delivery mode for a running session.
+    pub async fn set_follow_up_mode(
+        &self,
+        session_id: Uuid,
+        follow_up_mode: PiFollowUpMode,
+    ) -> Result<(), String> {
+        let input_tx = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session.input_tx.clone().ok_or_else(|| {
+                "Session does not support live follow-up mode updates".to_string()
+            })?;
+            if session.agent_type != AgentType::Pi {
+                return Err(
+                    "Live follow-up mode updates are only supported for Pi sessions".to_string(),
+                );
+            }
+            input_tx
+        };
+
+        input_tx
+            .send(AgentInput::PiSetFollowUpMode {
+                mode: follow_up_mode,
+            })
+            .await
+            .map_err(|e| format!("Failed to send follow-up mode update: {}", e))?;
 
         Ok(())
     }
@@ -1619,6 +1651,45 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 }
             }
 
+            ClientMessage::SetFollowUpMode {
+                session_id,
+                follow_up_mode,
+            } => {
+                let Some(follow_up_mode) = PiFollowUpMode::parse(&follow_up_mode) else {
+                    if let Err(send_err) = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Unsupported follow-up mode. Use one of: all, one-at-a-time.",
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                    continue;
+                };
+
+                if let Err(e) = session_manager
+                    .set_follow_up_mode(session_id, follow_up_mode)
+                    .await
+                {
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                }
+            }
+
             ClientMessage::StopSession { session_id } => {
                 // Clean up subscription first
                 {
@@ -1750,6 +1821,80 @@ mod tests {
 
         let error = session_manager
             .set_reasoning_effort(session_id, ReasoningEffort::High)
+            .await
+            .expect_err("non-Pi sessions should be rejected");
+        assert!(error.contains("only supported for Pi sessions"));
+    }
+
+    #[tokio::test]
+    async fn set_follow_up_mode_sends_live_pi_update() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, mut input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Pi,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        session_manager
+            .set_follow_up_mode(session_id, PiFollowUpMode::OneAtATime)
+            .await
+            .expect("Pi follow-up mode update should succeed");
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), input_rx.recv())
+            .await
+            .expect("timed out waiting for follow-up mode update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetFollowUpMode {
+                mode: PiFollowUpMode::OneAtATime
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_follow_up_mode_rejects_non_pi_sessions() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, _input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Claude,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        let error = session_manager
+            .set_follow_up_mode(session_id, PiFollowUpMode::All)
             .await
             .expect_err("non-Pi sessions should be rejected");
         assert!(error.contains("only supported for Pi sessions"));

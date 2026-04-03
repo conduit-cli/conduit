@@ -97,6 +97,30 @@ fn test_client_message_set_reasoning_effort_serialization() {
 }
 
 #[test]
+fn test_client_message_set_follow_up_mode_serialization() {
+    let session_id = Uuid::nil();
+    let msg = ClientMessage::SetFollowUpMode {
+        session_id,
+        follow_up_mode: "one-at-a-time".to_string(),
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    assert!(json.contains(r#""type":"set_follow_up_mode""#));
+    assert!(json.contains(r#""follow_up_mode":"one-at-a-time""#));
+
+    let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+    if let ClientMessage::SetFollowUpMode {
+        session_id: parsed_id,
+        follow_up_mode,
+    } = parsed
+    {
+        assert_eq!(parsed_id, session_id);
+        assert_eq!(follow_up_mode, "one-at-a-time");
+    } else {
+        panic!("Expected SetFollowUpMode message");
+    }
+}
+
+#[test]
 fn test_server_message_pong_serialization() {
     let msg = ServerMessage::Pong;
     let json = serde_json::to_string(&msg).unwrap();

@@ -73,6 +73,12 @@ pub enum ClientMessage {
         reasoning_effort: String,
     },
 
+    /// Update follow-up delivery mode for a running Pi session.
+    SetFollowUpMode {
+        session_id: Uuid,
+        follow_up_mode: String,
+    },
+
     /// Stop a running agent session
     StopSession { session_id: Uuid },
 

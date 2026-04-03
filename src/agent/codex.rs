@@ -1363,6 +1363,11 @@ impl AgentRunner for CodexCliRunner {
                     AgentInput::PiFollowUp { .. } => {
                         tracing::warn!("Ignored Pi follow-up sent to Codex input channel");
                     }
+                    AgentInput::PiSetFollowUpMode { .. } => {
+                        tracing::warn!(
+                            "Ignored Pi follow-up mode update sent to Codex input channel"
+                        );
+                    }
                     AgentInput::OpencodeQuestion { .. } => {
                         tracing::warn!(
                             "Ignored OpenCode question response sent to Codex input channel"

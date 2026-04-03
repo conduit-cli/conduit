@@ -29,6 +29,7 @@ pub use models::{ModelInfo, ModelRegistry};
 pub use opencode::OpencodeRunner;
 pub use pi::PiRunner;
 pub use runner::{
-    AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ReasoningEffort,
+    AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, PiFollowUpMode,
+    ReasoningEffort,
 };
 pub use session::{SessionId, SessionMetadata, SessionStatus};

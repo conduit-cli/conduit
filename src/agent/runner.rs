@@ -40,6 +40,29 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiFollowUpMode {
+    All,
+    OneAtATime,
+}
+
+impl PiFollowUpMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(PiFollowUpMode::All),
+            "one-at-a-time" => Some(PiFollowUpMode::OneAtATime),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PiFollowUpMode::All => "all",
+            PiFollowUpMode::OneAtATime => "one-at-a-time",
+        }
+    }
+}
+
 impl ReasoningEffort {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -309,6 +332,8 @@ pub enum AgentInput {
     PiSetThinkingLevel { level: ReasoningEffort },
     /// Pi-native follow-up message for a live session.
     PiFollowUp { text: String, images: Vec<PathBuf> },
+    /// Pi-specific follow-up queue mode for a live session.
+    PiSetFollowUpMode { mode: PiFollowUpMode },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {
         request_id: String,
