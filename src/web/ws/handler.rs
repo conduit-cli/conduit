@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
+use crate::agent::ReasoningEffort;
 use crate::command_resolver::{CommandResolver, ConduitCommand, ResolveResult, SkillReference};
 use crate::core::services::{SessionService, UpdateSessionParams};
 use crate::core::ConduitCore;
@@ -485,6 +486,37 @@ impl SessionManager {
             .send(agent_input)
             .await
             .map_err(|e| format!("Failed to send input: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update reasoning effort for a running session.
+    pub async fn set_reasoning_effort(
+        &self,
+        session_id: Uuid,
+        reasoning_effort: ReasoningEffort,
+    ) -> Result<(), String> {
+        let input_tx = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session
+                .input_tx
+                .clone()
+                .ok_or_else(|| "Session does not support live reasoning updates".to_string())?;
+            if session.agent_type != AgentType::Pi {
+                return Err("Live reasoning updates are only supported for Pi sessions".to_string());
+            }
+            input_tx
+        };
+
+        input_tx
+            .send(AgentInput::PiSetThinkingLevel {
+                level: reasoning_effort,
+            })
+            .await
+            .map_err(|e| format!("Failed to send reasoning update: {}", e))?;
 
         Ok(())
     }
@@ -1548,6 +1580,45 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 }
             }
 
+            ClientMessage::SetReasoningEffort {
+                session_id,
+                reasoning_effort,
+            } => {
+                let Some(reasoning_effort) = ReasoningEffort::parse(&reasoning_effort) else {
+                    if let Err(send_err) = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Unsupported reasoning effort. Use one of: off, minimal, low, medium, high, xhigh.",
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                    continue;
+                };
+
+                if let Err(e) = session_manager
+                    .set_reasoning_effort(session_id, reasoning_effort)
+                    .await
+                {
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                }
+            }
+
             ClientMessage::StopSession { session_id } => {
                 // Clean up subscription first
                 {
@@ -1609,6 +1680,80 @@ mod tests {
     use crate::core::services::session_service::CreateImportedSessionParams;
     use crate::core::services::SessionService;
     use crate::util::ToolAvailability;
+
+    #[tokio::test]
+    async fn set_reasoning_effort_sends_live_pi_update() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, mut input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Pi,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        session_manager
+            .set_reasoning_effort(session_id, ReasoningEffort::High)
+            .await
+            .expect("Pi reasoning update should succeed");
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), input_rx.recv())
+            .await
+            .expect("timed out waiting for reasoning update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetThinkingLevel {
+                level: ReasoningEffort::High
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_reasoning_effort_rejects_non_pi_sessions() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, _input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Claude,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        let error = session_manager
+            .set_reasoning_effort(session_id, ReasoningEffort::High)
+            .await
+            .expect_err("non-Pi sessions should be rejected");
+        assert!(error.contains("only supported for Pi sessions"));
+    }
 
     #[tokio::test]
     async fn start_session_resumes_saved_pi_session() {

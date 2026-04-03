@@ -67,6 +67,12 @@ pub enum ClientMessage {
         response: serde_json::Value,
     },
 
+    /// Update reasoning effort for a running session.
+    SetReasoningEffort {
+        session_id: Uuid,
+        reasoning_effort: String,
+    },
+
     /// Stop a running agent session
     StopSession { session_id: Uuid },
 
