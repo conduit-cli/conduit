@@ -752,6 +752,32 @@ fn decode_image_attachments(images: &[ImageAttachment]) -> Result<Vec<PathBuf>, 
     Ok(paths)
 }
 
+fn prepare_agent_images(
+    agent_type: Option<AgentType>,
+    prompt: &str,
+    images: &[ImageAttachment],
+) -> Result<(Vec<PathBuf>, Option<String>), String> {
+    if images.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+
+    match agent_type {
+        Some(AgentType::Codex) | Some(AgentType::Pi) => {
+            decode_image_attachments(images).map(|paths| (paths, None))
+        }
+        Some(AgentType::Claude) => {
+            build_claude_prompt_jsonl(prompt, images).map(|payload| (Vec::new(), Some(payload)))
+        }
+        Some(AgentType::Gemini) => {
+            Err("Image attachments are not supported for Gemini sessions".to_string())
+        }
+        Some(AgentType::Opencode) => {
+            Err("Image attachments are not supported for OpenCode sessions".to_string())
+        }
+        None => Ok((Vec::new(), None)),
+    }
+}
+
 fn build_claude_prompt_jsonl(prompt: &str, images: &[ImageAttachment]) -> Result<String, String> {
     const SUPPORTED_MEDIA_TYPES: &[&str] = &[
         "image/png",
@@ -1098,85 +1124,27 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 let mut stdin_payload: Option<String> = None;
                 let working_dir_path = PathBuf::from(working_dir);
 
-                let image_paths = if images.is_empty() {
-                    Vec::new()
-                } else {
-                    match agent_type {
-                        AgentType::Codex | AgentType::Pi => match decode_image_attachments(&images)
+                let image_paths = match prepare_agent_images(Some(agent_type), &prompt, &images) {
+                    Ok((paths, maybe_stdin_payload)) => {
+                        if let Some(payload) = maybe_stdin_payload {
+                            input_format = Some("stream-json".to_string());
+                            stdin_payload = Some(payload);
+                        }
+                        paths
+                    }
+                    Err(error) => {
+                        if let Err(send_err) = tx
+                            .send(ServerMessage::session_error(session_id, error))
+                            .await
                         {
-                            Ok(paths) => paths,
-                            Err(error) => {
-                                if let Err(send_err) = tx
-                                    .send(ServerMessage::session_error(session_id, error))
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        %session_id,
-                                        error = ?send_err,
-                                        "Failed to send session error"
-                                    );
-                                    break 'ws_loop;
-                                }
-                                continue;
-                            }
-                        },
-                        AgentType::Claude => {
-                            match build_claude_prompt_jsonl(&prompt, &images) {
-                                Ok(payload) => {
-                                    input_format = Some("stream-json".to_string());
-                                    stdin_payload = Some(payload);
-                                }
-                                Err(error) => {
-                                    if let Err(send_err) = tx
-                                        .send(ServerMessage::session_error(session_id, error))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            %session_id,
-                                            error = ?send_err,
-                                            "Failed to send session error"
-                                        );
-                                        break 'ws_loop;
-                                    }
-                                    continue;
-                                }
-                            }
-                            Vec::new()
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
                         }
-                        AgentType::Gemini => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Gemini sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
-                        AgentType::Opencode => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
+                        continue;
                     }
                 };
 
@@ -1472,57 +1440,17 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     ResolveResult::Passthrough { text } => (text.clone(), text, None),
                 };
                 let mut input_payload = input.clone();
-                let image_paths = if images.is_empty() {
-                    Vec::new()
-                } else {
-                    match agent_type {
-                        Some(AgentType::Codex) | Some(AgentType::Pi) => {
-                            match decode_image_attachments(&images) {
-                                Ok(paths) => paths,
-                                Err(error) => {
-                                    if let Err(send_err) = tx
-                                        .send(ServerMessage::session_error(session_id, error))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            %session_id,
-                                            error = ?send_err,
-                                            "Failed to send session error"
-                                        );
-                                        break 'ws_loop;
-                                    }
-                                    continue;
-                                }
+                let image_paths =
+                    match prepare_agent_images(agent_type, &resolved_input_text, &images) {
+                        Ok((paths, maybe_payload)) => {
+                            if let Some(payload) = maybe_payload {
+                                input_payload = payload;
                             }
+                            paths
                         }
-                        Some(AgentType::Claude) => {
-                            match build_claude_prompt_jsonl(&resolved_input_text, &images) {
-                                Ok(payload) => {
-                                    input_payload = payload;
-                                    Vec::new()
-                                }
-                                Err(error) => {
-                                    if let Err(send_err) = tx
-                                        .send(ServerMessage::session_error(session_id, error))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            %session_id,
-                                            error = ?send_err,
-                                            "Failed to send session error"
-                                        );
-                                        break 'ws_loop;
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                        Some(AgentType::Gemini) => {
+                        Err(error) => {
                             if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Gemini sessions",
-                                ))
+                                .send(ServerMessage::session_error(session_id, error))
                                 .await
                             {
                                 tracing::debug!(
@@ -1534,26 +1462,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                             }
                             continue;
                         }
-                        Some(AgentType::Opencode) => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
-                        None => Vec::new(),
-                    }
-                };
+                    };
 
                 if matches!(agent_type, Some(AgentType::Claude)) && images.is_empty() {
                     match build_claude_prompt_jsonl(&resolved_input_text, &[]) {

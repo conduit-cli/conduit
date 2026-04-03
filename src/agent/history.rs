@@ -2138,15 +2138,19 @@ fn pi_reasoning_effort_from_level(level: &str) -> Option<ReasoningEffort> {
     }
 }
 
-pub fn load_pi_reasoning_effort(
-    session_ref: &str,
-) -> Result<Option<ReasoningEffort>, HistoryError> {
-    let session_file = find_pi_session_file(session_ref)?;
-    let file = File::open(&session_file)?;
+struct PiSessionEntries {
+    all_entries: HashMap<String, Value>,
+    last_entry_id: Option<String>,
+    message_entry_ids: Vec<String>,
+}
+
+fn parse_pi_session_entries(session_file: &Path) -> Result<PiSessionEntries, HistoryError> {
+    let file = File::open(session_file)?;
     let reader = BufReader::new(file);
 
     let mut all_entries: HashMap<String, Value> = HashMap::new();
     let mut last_entry_id: Option<String> = None;
+    let mut message_entry_ids = Vec::new();
 
     for (line_number, line) in reader.lines().enumerate() {
         let line = line?;
@@ -2155,17 +2159,38 @@ pub fn load_pi_reasoning_effort(
         }
         let value: Value = serde_json::from_str(&line)
             .map_err(|err| HistoryError::ParseError(format!("line {}: {err}", line_number + 1)))?;
+        let entry_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
         if let Some(id) = value.get("id").and_then(Value::as_str) {
             last_entry_id = Some(id.to_string());
+            if entry_type == "message" {
+                message_entry_ids.push(id.to_string());
+            }
             all_entries.insert(id.to_string(), value);
         }
     }
 
-    let Some(mut current_id) = last_entry_id else {
+    Ok(PiSessionEntries {
+        all_entries,
+        last_entry_id,
+        message_entry_ids,
+    })
+}
+
+pub fn load_pi_reasoning_effort(
+    session_ref: &str,
+) -> Result<Option<ReasoningEffort>, HistoryError> {
+    let session_file = find_pi_session_file(session_ref)?;
+    let parsed = parse_pi_session_entries(&session_file)?;
+
+    let Some(mut current_id) = parsed.last_entry_id else {
         return Ok(None);
     };
 
-    while let Some(entry) = all_entries.get(&current_id) {
+    while let Some(entry) = parsed.all_entries.get(&current_id) {
         if entry.get("type").and_then(Value::as_str) == Some("thinking_level_change") {
             let effort = entry
                 .get("thinkingLevel")
@@ -2176,7 +2201,7 @@ pub fn load_pi_reasoning_effort(
         let Some(parent) = entry.get("parentId").and_then(Value::as_str) else {
             break;
         };
-        if !all_entries.contains_key(parent) {
+        if !parsed.all_entries.contains_key(parent) {
             break;
         }
         current_id = parent.to_string();
@@ -2190,12 +2215,11 @@ pub fn load_pi_history_with_debug(
     session_ref: &str,
 ) -> Result<(Vec<ChatMessage>, Vec<HistoryDebugEntry>, PathBuf), HistoryError> {
     let session_file = find_pi_session_file(session_ref)?;
+    let parsed = parse_pi_session_entries(&session_file)?;
+
     let file = File::open(&session_file)?;
     let reader = BufReader::new(file);
-
     let mut debug_entries = Vec::new();
-    let mut all_entries: HashMap<String, Value> = HashMap::new();
-    let mut message_entry_ids = Vec::new();
 
     for (line_number, line) in reader.lines().enumerate() {
         let line = line?;
@@ -2216,15 +2240,8 @@ pub fn load_pi_history_with_debug(
                 .and_then(|message| message.get("role"))
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            if let Some(id) = value.get("id").and_then(Value::as_str) {
-                all_entries.insert(id.to_string(), value.clone());
-                message_entry_ids.push(id.to_string());
-            }
             ("INCLUDE".to_string(), format!("role={role}"))
         } else {
-            if let Some(id) = value.get("id").and_then(Value::as_str) {
-                all_entries.insert(id.to_string(), value.clone());
-            }
             ("SKIP".to_string(), format!("type={entry_type}"))
         };
 
@@ -2237,19 +2254,19 @@ pub fn load_pi_history_with_debug(
         });
     }
 
-    let Some(mut current_id) = message_entry_ids.last().cloned() else {
+    let Some(mut current_id) = parsed.message_entry_ids.last().cloned() else {
         return Ok((Vec::new(), debug_entries, session_file));
     };
 
     let mut branch_ids = Vec::new();
-    while let Some(entry) = all_entries.get(&current_id) {
+    while let Some(entry) = parsed.all_entries.get(&current_id) {
         branch_ids.push(current_id.clone());
         let parent = entry
             .get("parentId")
             .and_then(Value::as_str)
             .map(str::to_string);
         let Some(parent) = parent else { break };
-        if !all_entries.contains_key(&parent) {
+        if !parsed.all_entries.contains_key(&parent) {
             break;
         }
         current_id = parent;
@@ -2258,7 +2275,7 @@ pub fn load_pi_history_with_debug(
 
     let mut messages = Vec::new();
     for entry_id in branch_ids {
-        let Some(entry) = all_entries.get(&entry_id) else {
+        let Some(entry) = parsed.all_entries.get(&entry_id) else {
             continue;
         };
         if entry.get("type").and_then(Value::as_str) != Some("message") {
