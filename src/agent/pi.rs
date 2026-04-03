@@ -752,6 +752,18 @@ mod tests {
     }
 
     #[test]
+    fn build_command_supports_off_thinking() {
+        let runner = PiRunner::with_path(PathBuf::from("/usr/bin/pi"));
+        let config = AgentStartConfig::new("hello", PathBuf::from("/tmp"))
+            .with_reasoning_effort(ReasoningEffort::Off);
+
+        let command = runner.build_command(&config);
+        let args = command_args(&command);
+
+        assert!(args.windows(2).any(|pair| pair == ["--thinking", "off"]));
+    }
+
+    #[test]
     fn build_prompt_payload_includes_images() {
         let tmp = tempfile::Builder::new()
             .prefix("conduit-pi-image-")

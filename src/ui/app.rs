@@ -13520,6 +13520,33 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_confirm_action_selecting_reasoning_sets_pi_off() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
+        app.state.reasoning_selector_state.insert_str("off");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::Off));
+    }
+
+    #[test]
     fn test_handle_confirm_action_model_selector_wins_over_stale_mode() {
         let mut app = build_test_app_with_sessions(&[]);
         let executable = std::env::current_exe().expect("test executable path");

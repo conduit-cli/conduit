@@ -32,6 +32,7 @@ pub enum AgentMode {
 /// Provider-agnostic reasoning effort profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReasoningEffort {
+    Off,
     Minimal,
     Low,
     Medium,
@@ -42,6 +43,7 @@ pub enum ReasoningEffort {
 impl ReasoningEffort {
     pub fn as_str(self) -> &'static str {
         match self {
+            ReasoningEffort::Off => "off",
             ReasoningEffort::Minimal => "minimal",
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
@@ -52,6 +54,7 @@ impl ReasoningEffort {
 
     pub fn display_name(self) -> &'static str {
         match self {
+            ReasoningEffort::Off => "Off",
             ReasoningEffort::Minimal => "Minimal",
             ReasoningEffort::Low => "Low",
             ReasoningEffort::Medium => "Medium",
@@ -65,7 +68,7 @@ impl ReasoningEffort {
             ReasoningEffort::Low => Some("low"),
             ReasoningEffort::Medium => Some("medium"),
             ReasoningEffort::High => Some("high"),
-            ReasoningEffort::Minimal | ReasoningEffort::XHigh => None,
+            ReasoningEffort::Off | ReasoningEffort::Minimal | ReasoningEffort::XHigh => None,
         }
     }
 

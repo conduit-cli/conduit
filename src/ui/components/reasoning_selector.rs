@@ -184,6 +184,13 @@ impl ReasoningSelectorState {
                 });
             }
             AgentType::Codex | AgentType::Pi => {
+                if agent_type == AgentType::Pi {
+                    options.push(ReasoningOption {
+                        effort: Some(ReasoningEffort::Off),
+                        label: "Off",
+                        description: "Disable reasoning entirely",
+                    });
+                }
                 options.push(ReasoningOption {
                     effort: Some(ReasoningEffort::Minimal),
                     label: "Minimal",
@@ -387,7 +394,7 @@ impl ReasoningSelector {
         let hint = match state.agent_type {
             Some(AgentType::Claude) => "Claude supports: auto, low, medium, high",
             Some(AgentType::Codex) => "Codex supports: auto, minimal, low, medium, high, xhigh",
-            Some(AgentType::Pi) => "Pi supports: auto, minimal, low, medium, high, xhigh",
+            Some(AgentType::Pi) => "Pi supports: auto, off, minimal, low, medium, high, xhigh",
             Some(AgentType::Gemini) | Some(AgentType::Opencode) | None => {
                 "Reasoning effort is not available for this agent"
             }
@@ -418,6 +425,7 @@ mod tests {
             efforts,
             vec![
                 None,
+                Some(ReasoningEffort::Off),
                 Some(ReasoningEffort::Minimal),
                 Some(ReasoningEffort::Low),
                 Some(ReasoningEffort::Medium),

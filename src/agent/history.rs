@@ -2129,6 +2129,7 @@ fn pi_message_to_chat_message(message: &Value) -> Option<ChatMessage> {
 
 fn pi_reasoning_effort_from_level(level: &str) -> Option<ReasoningEffort> {
     match level {
+        "off" => Some(ReasoningEffort::Off),
         "minimal" => Some(ReasoningEffort::Minimal),
         "low" => Some(ReasoningEffort::Low),
         "medium" => Some(ReasoningEffort::Medium),
@@ -3146,6 +3147,46 @@ mod tests {
 
         let effort = load_pi_reasoning_effort(session_file.to_str().unwrap()).unwrap();
         assert_eq!(effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn test_load_pi_reasoning_effort_restores_off() {
+        let temp = TempDir::new().unwrap();
+        let session_file = temp.path().join("pi-session.jsonl");
+        fs::write(
+            &session_file,
+            [
+                serde_json::json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": "pi-session-id",
+                    "timestamp": "2026-04-02T10:00:00.000Z",
+                    "cwd": "/tmp/pi-demo"
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a1",
+                    "parentId": null,
+                    "timestamp": "2026-04-02T10:00:01.000Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "thinking_level_change",
+                    "id": "a2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:02.000Z",
+                    "thinkingLevel": "off"
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let effort = load_pi_reasoning_effort(session_file.to_str().unwrap()).unwrap();
+        assert_eq!(effort, Some(ReasoningEffort::Off));
     }
 
     #[test]
