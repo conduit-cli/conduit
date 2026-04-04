@@ -33,6 +33,9 @@ impl Default for PiRunner {
 }
 
 impl PiRunner {
+    const DEFAULT_MODEL_ID: &str = "default";
+    const SUPPORTED_TOOLS: [&str; 7] = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+
     pub fn new() -> Self {
         Self {
             binary_path: Self::find_binary().unwrap_or_else(|| PathBuf::from("pi")),
@@ -59,19 +62,21 @@ impl PiRunner {
             cmd.arg("--session").arg(session_id.as_str());
         }
         if let Some(model) = &config.model {
-            cmd.arg("--model").arg(model);
+            if !model.trim().eq_ignore_ascii_case(Self::DEFAULT_MODEL_ID) {
+                cmd.arg("--model").arg(model);
+            }
         }
         if let Some(effort) = config.reasoning_effort {
             cmd.arg("--thinking").arg(effort.as_str());
         }
-        if !config.allowed_tools.is_empty() {
-            let tools = config
-                .allowed_tools
-                .iter()
-                .map(|tool| tool.trim().to_ascii_lowercase())
-                .collect::<Vec<_>>()
-                .join(",");
-            cmd.arg("--tools").arg(tools);
+        let tools = config
+            .allowed_tools
+            .iter()
+            .map(|tool| tool.trim().to_ascii_lowercase())
+            .filter(|tool| Self::SUPPORTED_TOOLS.contains(&tool.as_str()))
+            .collect::<Vec<_>>();
+        if !tools.is_empty() {
+            cmd.arg("--tools").arg(tools.join(","));
         }
         for arg in &config.additional_args {
             cmd.arg(arg);
@@ -230,10 +235,36 @@ impl PiRunner {
             return Vec::new();
         }
 
+        let text = message
+            .get("content")
+            .map(Self::extract_text_from_message_content)
+            .filter(|text| !text.is_empty())
+            .or_else(|| {
+                message
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .filter(|text| !text.is_empty())
+            })
+            .unwrap_or_default();
+
         vec![AgentEvent::AssistantMessage(AssistantMessageEvent {
-            text: String::new(),
+            text,
             is_final: true,
         })]
+    }
+
+    fn extract_text_from_message_content(content: &Value) -> String {
+        match content {
+            Value::String(text) => text.clone(),
+            Value::Array(blocks) => blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        }
     }
 
     fn parse_tool_execution_start(value: &Value) -> Vec<AgentEvent> {
@@ -773,6 +804,36 @@ mod tests {
     }
 
     #[test]
+    fn build_command_omits_pi_default_model_argument() {
+        let runner = PiRunner::with_path(PathBuf::from("/usr/bin/pi"));
+        let config = AgentStartConfig::new("hello", PathBuf::from("/tmp"))
+            .with_model("default")
+            .with_tools(vec!["Read".to_string()]);
+
+        let command = runner.build_command(&config);
+        let args = command_args(&command);
+
+        assert_eq!(args, vec!["--mode", "rpc", "--tools", "read"]);
+    }
+
+    #[test]
+    fn build_command_filters_unsupported_tools() {
+        let runner = PiRunner::with_path(PathBuf::from("/usr/bin/pi"));
+        let config = AgentStartConfig::new("hello", PathBuf::from("/tmp")).with_tools(vec![
+            "Bash".to_string(),
+            "Glob".to_string(),
+            "Read".to_string(),
+            "Unknown".to_string(),
+            "Find".to_string(),
+        ]);
+
+        let command = runner.build_command(&config);
+        let args = command_args(&command);
+
+        assert_eq!(args, vec!["--mode", "rpc", "--tools", "bash,read,find"]);
+    }
+
+    #[test]
     fn build_command_supports_off_thinking() {
         let runner = PiRunner::with_path(PathBuf::from("/usr/bin/pi"));
         let config = AgentStartConfig::new("hello", PathBuf::from("/tmp"))
@@ -966,6 +1027,42 @@ mod tests {
         assert!(matches!(
             &events[0],
             AgentEvent::AssistantMessage(message) if message.is_final && message.text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_message_end_text_from_content_blocks() {
+        let events = PiRunner::parse_event_value(&json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "Yes — everything appears committed." }
+                ]
+            }
+        }));
+
+        assert!(matches!(
+            &events[0],
+            AgentEvent::AssistantMessage(message)
+                if message.is_final && message.text == "Yes — everything appears committed."
+        ));
+    }
+
+    #[test]
+    fn parses_message_end_text_field_when_content_missing() {
+        let events = PiRunner::parse_event_value(&json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "text": "Final answer"
+            }
+        }));
+
+        assert!(matches!(
+            &events[0],
+            AgentEvent::AssistantMessage(message)
+                if message.is_final && message.text == "Final answer"
         ));
     }
 }

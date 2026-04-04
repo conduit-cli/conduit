@@ -11333,7 +11333,10 @@ async fn generate_title_and_branch_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::events::{AssistantMessageEvent, ReasoningEvent, TurnCompletedEvent};
+    use crate::agent::events::{
+        AssistantMessageEvent, ReasoningEvent, ToolCompletedEvent, ToolStartedEvent,
+        TurnCompletedEvent,
+    };
     use crate::agent::{AgentType, ModelRegistry, ReasoningEffort, SessionId, TokenUsage};
     use crate::config::Config;
     use crate::data::{QueuedMessage, QueuedMessageMode};
@@ -12167,6 +12170,71 @@ mod tests {
             assert!(session.chat_view.streaming_buffer().is_none());
             assert!(session.chat_view.messages().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn test_pi_tool_turn_keeps_final_assistant_reply_after_tool_output() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.set_agent_and_model(AgentType::Pi, Some("default".to_string()));
+            session.start_processing();
+        }
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::ToolStarted(ToolStartedEvent {
+                tool_name: "bash".to_string(),
+                tool_id: "call-1".to_string(),
+                arguments: json!({ "command": "git status --short --branch" }),
+            }),
+        )
+        .await
+        .unwrap();
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::ToolCompleted(ToolCompletedEvent {
+                tool_id: "call-1".to_string(),
+                success: true,
+                result: Some("## henrique/query-agent-identity".to_string()),
+                error: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::AssistantMessage(AssistantMessageEvent {
+                text: "Yes — everything appears committed.".to_string(),
+                is_final: true,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let session = app
+            .state
+            .tab_manager
+            .session_by_id_mut(session_id)
+            .expect("session missing");
+        let messages = session.chat_view.messages();
+
+        assert!(messages.iter().any(|msg| {
+            msg.role == MessageRole::Tool
+                && msg.content.contains("## henrique/query-agent-identity")
+        }));
+        assert!(messages.iter().any(|msg| {
+            msg.role == MessageRole::Assistant
+                && msg.content == "Yes — everything appears committed."
+        }));
     }
 
     #[tokio::test]
