@@ -1117,6 +1117,9 @@ mod tests {
             config.effective_enabled_providers(&tools),
             vec![AgentType::Pi]
         );
-        assert_eq!(config.default_model_for(AgentType::Pi), "default");
+        assert_eq!(
+            config.default_model_for(AgentType::Pi),
+            ModelRegistry::default_model(AgentType::Pi)
+        );
     }
 }

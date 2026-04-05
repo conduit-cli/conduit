@@ -5,6 +5,7 @@ use std::sync::{OnceLock, RwLock};
 use tracing::error;
 
 use crate::agent::opencode::load_opencode_models;
+use crate::agent::pi::PiRunner;
 use crate::agent::AgentType;
 
 /// Information about a model
@@ -78,11 +79,16 @@ impl ModelRegistry {
     pub const PI_CONTEXT_WINDOW: i64 = 200_000;
 
     const OPENCODE_DEFAULT_MODEL_ID: &'static str = "default";
-    const PI_DEFAULT_MODEL_ID: &'static str = "default";
+    const PI_LEGACY_DEFAULT_MODEL_ID: &'static str = "default";
 
     fn opencode_store() -> &'static RwLock<Vec<ModelInfo>> {
         static OPENCODE_MODELS: OnceLock<RwLock<Vec<ModelInfo>>> = OnceLock::new();
         OPENCODE_MODELS.get_or_init(|| RwLock::new(Vec::new()))
+    }
+
+    fn pi_store() -> &'static RwLock<Vec<ModelInfo>> {
+        static PI_MODELS: OnceLock<RwLock<Vec<ModelInfo>>> = OnceLock::new();
+        PI_MODELS.get_or_init(|| RwLock::new(Vec::new()))
     }
 
     fn opencode_default_model() -> ModelInfo {
@@ -336,16 +342,65 @@ impl ModelRegistry {
         ]
     }
 
+    pub fn set_pi_models(binary_path: Option<std::path::PathBuf>) {
+        let catalog = PiRunner::load_model_catalog(binary_path);
+        let mut models = catalog
+            .models
+            .into_iter()
+            .map(|model| {
+                let full_id = model.full_id();
+                let description = format!("Pi model from {}", model.provider);
+                let mut info = ModelInfo::new(
+                    AgentType::Pi,
+                    &full_id,
+                    &full_id,
+                    &full_id,
+                    &description,
+                    model.context_window,
+                );
+                if catalog.current_model_id.as_deref() == Some(full_id.as_str()) {
+                    info = info.as_default();
+                }
+                info
+            })
+            .collect::<Vec<_>>();
+
+        models.sort_by(|a, b| a.id.cmp(&b.id));
+        models.dedup_by(|a, b| a.id == b.id);
+        if let Some(pos) = models.iter().position(|model| model.is_default) {
+            let default = models.remove(pos);
+            models.insert(0, default);
+        }
+
+        let mut store = match Self::pi_store().write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                error!(error = %err, "pi_store poisoned in set_pi_models");
+                err.into_inner()
+            }
+        };
+        *store = models;
+    }
+
+    pub fn clear_pi_models() {
+        let mut store = match Self::pi_store().write() {
+            Ok(guard) => guard,
+            Err(err) => {
+                error!(error = %err, "pi_store poisoned in clear_pi_models");
+                err.into_inner()
+            }
+        };
+        store.clear();
+    }
+
     pub fn pi_models() -> Vec<ModelInfo> {
-        vec![ModelInfo::new(
-            AgentType::Pi,
-            Self::PI_DEFAULT_MODEL_ID,
-            "Pi Default",
-            Self::PI_DEFAULT_MODEL_ID,
-            "Use Pi's current default model selection",
-            Self::PI_CONTEXT_WINDOW,
-        )
-        .as_default()]
+        match Self::pi_store().read() {
+            Ok(guard) => guard.clone(),
+            Err(err) => {
+                error!(error = %err, "pi_store poisoned in pi_models");
+                Vec::new()
+            }
+        }
     }
 
     /// Get all models grouped by agent type
@@ -376,7 +431,12 @@ impl ModelRegistry {
             AgentType::Codex => "gpt-5.4".to_string(),
             AgentType::Gemini => "gemini-2.5-pro".to_string(),
             AgentType::Opencode => Self::OPENCODE_DEFAULT_MODEL_ID.to_string(),
-            AgentType::Pi => Self::PI_DEFAULT_MODEL_ID.to_string(),
+            AgentType::Pi => Self::pi_models()
+                .into_iter()
+                .find(|model| model.is_default)
+                .or_else(|| Self::pi_models().into_iter().next())
+                .map(|model| model.id)
+                .unwrap_or_else(|| Self::PI_LEGACY_DEFAULT_MODEL_ID.to_string()),
         }
     }
 
@@ -407,6 +467,12 @@ impl ModelRegistry {
             let trimmed = id_or_alias.trim();
             if trimmed.is_empty() {
                 return None;
+            }
+            if trimmed.eq_ignore_ascii_case(Self::PI_LEGACY_DEFAULT_MODEL_ID) {
+                return Self::pi_models()
+                    .into_iter()
+                    .find(|model| model.is_default)
+                    .or_else(|| Self::pi_models().into_iter().next());
             }
             if let Some(model) = Self::pi_models()
                 .into_iter()
@@ -488,16 +554,22 @@ mod tests {
     }
 
     #[test]
-    fn test_pi_models_include_default_model() {
-        let models = ModelRegistry::pi_models();
-        let default_model = models
-            .iter()
-            .find(|model| model.is_default)
-            .expect("expected default Pi model");
-
-        assert_eq!(default_model.id, "default");
-        assert_eq!(default_model.display_name, "Pi Default");
+    fn test_pi_models_use_discovered_current_model() {
+        ModelRegistry::clear_pi_models();
         assert_eq!(ModelRegistry::default_model(AgentType::Pi), "default");
+
+        ModelRegistry::set_pi_models(None);
+        let models = ModelRegistry::pi_models();
+
+        if let Some(default_model) = models.iter().find(|model| model.is_default) {
+            assert!(default_model.id.contains('/'));
+            assert_eq!(
+                ModelRegistry::default_model(AgentType::Pi),
+                default_model.id
+            );
+        } else {
+            assert!(models.is_empty());
+        }
         assert_eq!(ModelRegistry::agent_section_title(AgentType::Pi), "Pi");
     }
 }

@@ -1,5 +1,6 @@
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -21,6 +22,25 @@ use crate::agent::events::{
 };
 use crate::agent::runner::{AgentHandle, AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PiModelCatalogEntry {
+    pub provider: String,
+    pub model_id: String,
+    pub context_window: i64,
+}
+
+impl PiModelCatalogEntry {
+    pub fn full_id(&self) -> String {
+        format!("{}/{}", self.provider, self.model_id)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PiModelCatalog {
+    pub current_model_id: Option<String>,
+    pub models: Vec<PiModelCatalogEntry>,
+}
 
 pub struct PiRunner {
     binary_path: PathBuf,
@@ -48,6 +68,154 @@ impl PiRunner {
 
     fn find_binary() -> Option<PathBuf> {
         which::which("pi").ok()
+    }
+
+    pub fn load_model_catalog(binary_path: Option<PathBuf>) -> PiModelCatalog {
+        let binary = binary_path
+            .filter(|path| path.exists())
+            .or_else(Self::find_binary);
+        let Some(binary) = binary else {
+            return PiModelCatalog::default();
+        };
+
+        let mut catalog = match Self::discover_model_catalog(&binary) {
+            Ok(catalog) => catalog,
+            Err(err) => {
+                tracing::debug!(error = %err, binary = %binary.display(), "Failed to discover Pi models");
+                PiModelCatalog::default()
+            }
+        };
+
+        if let Some(current_model_id) = catalog.current_model_id.clone() {
+            let already_present = catalog
+                .models
+                .iter()
+                .any(|model| model.full_id() == current_model_id);
+            if !already_present {
+                if let Some((provider, model_id)) = current_model_id.split_once('/') {
+                    catalog.models.push(PiModelCatalogEntry {
+                        provider: provider.to_string(),
+                        model_id: model_id.to_string(),
+                        context_window: 200_000,
+                    });
+                }
+            }
+        }
+
+        catalog.models.sort_by_key(PiModelCatalogEntry::full_id);
+        catalog.models.dedup_by(|left, right| {
+            left.provider == right.provider && left.model_id == right.model_id
+        });
+        catalog
+    }
+
+    fn discover_model_catalog(binary: &Path) -> std::io::Result<PiModelCatalog> {
+        Ok(PiModelCatalog {
+            current_model_id: Self::discover_current_model(binary)?,
+            models: Self::discover_available_models(binary)?,
+        })
+    }
+
+    fn discover_available_models(binary: &Path) -> std::io::Result<Vec<PiModelCatalogEntry>> {
+        let output = StdCommand::new(binary).arg("--list-models").output()?;
+        if !output.status.success() {
+            return Err(std::io::Error::other(format!(
+                "pi --list-models exited with status {:?}",
+                output.status.code()
+            )));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let text = if stdout.trim().is_empty() {
+            stderr.as_ref()
+        } else {
+            stdout.as_ref()
+        };
+        Ok(Self::parse_list_models_output(text))
+    }
+
+    fn discover_current_model(binary: &Path) -> std::io::Result<Option<String>> {
+        let mut child = StdCommand::new(binary)
+            .args(["--mode", "rpc", "--no-session"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(
+                br#"{"id":"state-1","type":"get_state"}
+"#,
+            )?;
+        }
+
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            return Err(std::io::Error::other(format!(
+                "pi --mode rpc --no-session exited with status {:?}",
+                output.status.code()
+            )));
+        }
+
+        Ok(Self::parse_current_model_output(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    fn parse_list_models_output(output: &str) -> Vec<PiModelCatalogEntry> {
+        output
+            .lines()
+            .skip_while(|line| line.trim().is_empty())
+            .skip(1)
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let provider = parts.next()?;
+                let model_id = parts.next()?;
+                let context_window = parts
+                    .next()
+                    .and_then(Self::parse_token_count)
+                    .unwrap_or(200_000);
+                Some(PiModelCatalogEntry {
+                    provider: provider.to_string(),
+                    model_id: model_id.to_string(),
+                    context_window,
+                })
+            })
+            .collect()
+    }
+
+    fn parse_current_model_output(output: &str) -> Option<String> {
+        output.lines().find_map(|line| {
+            let value: Value = serde_json::from_str(line).ok()?;
+            if value.get("type").and_then(Value::as_str) != Some("response")
+                || value.get("command").and_then(Value::as_str) != Some("get_state")
+                || value.get("success").and_then(Value::as_bool) != Some(true)
+            {
+                return None;
+            }
+
+            let model = value.get("data")?.get("model")?;
+            let provider = model.get("provider")?.as_str()?;
+            let model_id = model.get("id")?.as_str()?;
+            Some(format!("{provider}/{model_id}"))
+        })
+    }
+
+    fn parse_token_count(value: &str) -> Option<i64> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let suffix = trimmed.chars().last()?;
+        let multiplier = match suffix {
+            'K' | 'k' => 1_000_f64,
+            'M' | 'm' => 1_000_000_f64,
+            _ => return trimmed.parse::<i64>().ok(),
+        };
+        let number = trimmed[..trimmed.len().saturating_sub(1)]
+            .parse::<f64>()
+            .ok()?;
+        Some((number * multiplier).round() as i64)
     }
 
     fn build_command(&self, config: &AgentStartConfig) -> Command {

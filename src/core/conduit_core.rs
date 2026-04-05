@@ -121,6 +121,12 @@ impl ConduitCore {
             ModelRegistry::clear_opencode_models();
         }
 
+        if tools.is_available(Tool::Pi) {
+            ModelRegistry::set_pi_models(tools.get_path(Tool::Pi).cloned());
+        } else {
+            ModelRegistry::clear_pi_models();
+        }
+
         Self {
             config,
             tools,
@@ -277,6 +283,12 @@ impl ConduitCore {
             ModelRegistry::set_opencode_models(models);
         } else {
             ModelRegistry::clear_opencode_models();
+        }
+
+        if self.tools.is_available(Tool::Pi) {
+            ModelRegistry::set_pi_models(self.tools.get_path(Tool::Pi).cloned());
+        } else {
+            ModelRegistry::clear_pi_models();
         }
     }
 }
