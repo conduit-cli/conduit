@@ -20,8 +20,8 @@ test('renders Pi sessions with Pi agent labels instead of Gemini', async ({ page
   await page.waitForResponse('**/api/bootstrap');
   await expect(page.getByPlaceholder('Type a message...')).toBeVisible();
 
-  await expect(page.getByText('Pi · anthropic/claude-haiku-4-5')).toBeVisible();
+  await expect(page.getByRole('banner').getByText('Pi', { exact: true })).toBeVisible();
+  await expect(page.getByText('· anthropic/claude-haiku-4-5')).toBeVisible();
   await expect(page.getByText('anthropic/claude-haiku-4-5 · Pi')).toBeVisible();
-  await expect(page.getByText('anthropic/claude-haiku-4-5 Pi')).toBeVisible();
   await expect(page.getByText('Gemini CLI')).toHaveCount(0);
 });

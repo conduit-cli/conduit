@@ -13,6 +13,8 @@ interface ModelSelectorDialogProps {
   onSetDefault: (modelId: string, newAgentType: AgentType) => void;
   isUpdating?: boolean;
   isSettingDefault?: boolean;
+  title?: string;
+  primaryActionLabel?: string;
 }
 
 export function ModelSelectorDialog({
@@ -24,6 +26,8 @@ export function ModelSelectorDialog({
   onSetDefault,
   isUpdating = false,
   isSettingDefault = false,
+  title = 'Select Model',
+  primaryActionLabel = 'Select Model',
 }: ModelSelectorDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -147,7 +151,7 @@ export function ModelSelectorDialog({
       <div className="flex max-h-[600px] flex-col">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
-          <h2 className="text-lg font-semibold text-text">Select Model</h2>
+          <h2 className="text-lg font-semibold text-text">{title}</h2>
           <button
             onClick={onClose}
             disabled={isBusy}
@@ -282,7 +286,7 @@ export function ModelSelectorDialog({
             )}
           >
             {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isUpdating ? 'Updating...' : 'Select Model'}
+            {isUpdating ? 'Updating...' : primaryActionLabel}
           </button>
         </div>
       </div>
