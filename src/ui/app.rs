@@ -30,10 +30,10 @@ use uuid::Uuid;
 use crate::agent::events::UserQuestion;
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug,
-    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug, AgentEvent,
-    AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner,
-    CodexCliRunner, GeminiCliRunner, HistoryDebugEntry, MessageDisplay, ModelRegistry,
-    OpencodeRunner, SessionId,
+    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug,
+    load_pi_history_with_debug, load_pi_reasoning_effort, AgentEvent, AgentInput, AgentMode,
+    AgentRunner, AgentStartConfig, AgentType, ClaudeCodeRunner, CodexCliRunner, GeminiCliRunner,
+    HistoryDebugEntry, MessageDisplay, ModelRegistry, OpencodeRunner, PiRunner, SessionId,
 };
 use crate::command_resolver::{
     CommandResolver, ConduitCommand, MenuEntryKind, ResolveResult, ResolvedPrompt,
@@ -275,6 +275,12 @@ impl App {
     #[inline]
     fn opencode_runner(&self) -> &Arc<OpencodeRunner> {
         self.core.opencode_runner()
+    }
+
+    /// Get the Pi runner.
+    #[inline]
+    fn pi_runner(&self) -> &Arc<PiRunner> {
+        self.core.pi_runner()
     }
 
     /// Get the worktree manager.
@@ -528,6 +534,20 @@ impl App {
                             }
                             .to_chat_message(),
                         );
+                    }
+                    AgentType::Pi => {
+                        if let Ok((msgs, debug_entries, file_path)) =
+                            load_pi_history_with_debug(session_id_str)
+                        {
+                            Self::populate_debug_from_history(
+                                &mut session.raw_events_view,
+                                &debug_entries,
+                                &file_path,
+                            );
+                            for msg in msgs {
+                                session.chat_view.push(msg);
+                            }
+                        }
                     }
                     AgentType::Opencode => {
                         if let Ok((msgs, debug_entries, file_path)) =
@@ -2058,6 +2078,7 @@ impl App {
                         AgentType::Codex => self.codex_runner().clone(),
                         AgentType::Gemini => self.gemini_runner().clone(),
                         AgentType::Opencode => self.opencode_runner().clone(),
+                        AgentType::Pi => self.pi_runner().clone(),
                     };
 
                     let event_tx = self.event_tx.clone();
@@ -3583,6 +3604,22 @@ impl App {
                                 .to_chat_message(),
                             );
                         }
+                        AgentType::Pi => {
+                            if let Ok((msgs, debug_entries, file_path)) =
+                                load_pi_history_with_debug(session_id_str)
+                            {
+                                Self::populate_debug_from_history(
+                                    &mut session.raw_events_view,
+                                    &debug_entries,
+                                    &file_path,
+                                );
+                                for msg in msgs {
+                                    session.chat_view.push(msg);
+                                }
+                            }
+                            session.reasoning_effort =
+                                load_pi_reasoning_effort(session_id_str).ok().flatten();
+                        }
                         AgentType::Opencode => {
                             if let Ok((msgs, debug_entries, file_path)) =
                                 load_opencode_history_with_debug(session_id_str)
@@ -3690,11 +3727,15 @@ impl App {
             AgentType::Codex => crate::util::Tool::Codex,
             AgentType::Gemini => crate::util::Tool::Gemini,
             AgentType::Opencode => crate::util::Tool::Opencode,
+            AgentType::Pi => crate::util::Tool::Pi,
         }
     }
 
     fn reasoning_supported(agent_type: AgentType) -> bool {
-        matches!(agent_type, AgentType::Claude | AgentType::Codex)
+        matches!(
+            agent_type,
+            AgentType::Claude | AgentType::Codex | AgentType::Pi
+        )
     }
 
     fn session_started(session: &AgentSession) -> bool {
@@ -4903,17 +4944,20 @@ impl App {
         session_file: std::path::PathBuf,
         working_dir: std::path::PathBuf,
     ) -> anyhow::Result<()> {
-        // Extract session ID from the file path
-        let session_id_str = session_file
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let session_ref = if agent_type == AgentType::Pi {
+            session_file.to_string_lossy().to_string()
+        } else {
+            session_file
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        };
 
         // Create a new session with working directory
         let mut session = AgentSession::with_working_dir(agent_type, working_dir);
         // Set both resume and agent session IDs so the session can be restored after restart
-        let session_id = SessionId::from_string(&session_id_str);
+        let session_id = SessionId::from_string(&session_ref);
         session.resume_session_id = Some(session_id.clone());
         if agent_type != AgentType::Codex {
             session.agent_session_id = Some(session_id);
@@ -4923,7 +4967,7 @@ impl App {
         match agent_type {
             AgentType::Claude => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_claude_history_with_debug(&session_id_str)
+                    load_claude_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,
@@ -4937,7 +4981,7 @@ impl App {
             }
             AgentType::Codex => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_codex_history_with_debug(&session_id_str)
+                    load_codex_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,
@@ -4959,9 +5003,24 @@ impl App {
                     .to_chat_message(),
                 );
             }
+            AgentType::Pi => {
+                if let Ok((msgs, debug_entries, file_path)) =
+                    load_pi_history_with_debug(&session_ref)
+                {
+                    Self::populate_debug_from_history(
+                        &mut session.raw_events_view,
+                        &debug_entries,
+                        &file_path,
+                    );
+                    for msg in msgs {
+                        session.chat_view.push(msg);
+                    }
+                }
+                session.reasoning_effort = load_pi_reasoning_effort(&session_ref).ok().flatten();
+            }
             AgentType::Opencode => {
                 if let Ok((msgs, debug_entries, file_path)) =
-                    load_opencode_history_with_debug(&session_id_str)
+                    load_opencode_history_with_debug(&session_ref)
                 {
                     Self::populate_debug_from_history(
                         &mut session.raw_events_view,
@@ -8097,6 +8156,9 @@ impl App {
                             "Image attachments aren't supported for OpenCode in Conduit yet."
                                 .to_string()
                         }
+                        AgentType::Pi => {
+                            "Image attachments aren't supported for Pi in Conduit yet.".to_string()
+                        }
                         _ => "Image attachments aren't supported for this agent.".to_string(),
                     },
                 };
@@ -8111,7 +8173,11 @@ impl App {
         // Strip placeholders for agents that send images out-of-band.
         if matches!(
             agent_type,
-            AgentType::Codex | AgentType::Claude | AgentType::Gemini | AgentType::Opencode
+            AgentType::Codex
+                | AgentType::Claude
+                | AgentType::Gemini
+                | AgentType::Opencode
+                | AgentType::Pi
         ) {
             agent_prompt = Self::strip_image_placeholders(agent_prompt, &image_placeholders);
         }
@@ -8206,7 +8272,10 @@ impl App {
             }
         }
 
-        if matches!(agent_type, AgentType::Codex | AgentType::Opencode) {
+        if matches!(
+            agent_type,
+            AgentType::Codex | AgentType::Opencode | AgentType::Pi
+        ) {
             let is_active_tab = self.state.tab_manager.active_index() == tab_index;
             if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
                 if let Some(ref input_tx) = session.agent_input_tx {
@@ -9796,6 +9865,41 @@ impl App {
             return Ok(effects);
         }
 
+        if queued.len() == 1 && queued[0].mode == QueuedMessageMode::FollowUp {
+            let (text, images, placeholders) = app_queue::queued_to_submission(&queued[0]);
+            let is_active_tab = self.state.tab_manager.active_index() == tab_index;
+            let mut sent_pi_follow_up = false;
+            if let Some(session) = self.state.tab_manager.session_mut(tab_index) {
+                if session.agent_type == AgentType::Pi {
+                    if let Some(input_tx) = session.agent_input_tx.clone() {
+                        tokio::spawn(async move {
+                            if let Err(err) =
+                                input_tx.send(AgentInput::PiFollowUp { text, images }).await
+                            {
+                                tracing::warn!("Failed to send Pi follow-up: {}", err);
+                            }
+                        });
+                        session.start_processing();
+                        session.set_processing_state(ProcessingState::Thinking);
+                        if !placeholders.is_empty() {
+                            session.record_raw_event(
+                                EventDirection::Sent,
+                                "QueuedFollowUp",
+                                serde_json::json!({ "agent_type": "pi", "images": placeholders }),
+                            );
+                        }
+                        sent_pi_follow_up = true;
+                    }
+                }
+            }
+            if sent_pi_follow_up {
+                if is_active_tab {
+                    self.state.start_footer_spinner(None);
+                }
+                return Ok(effects);
+            }
+        }
+
         let (prompt, images, placeholders) =
             app_queue::build_queued_submission(&queued, queue_delivery);
         effects.extend(self.submit_prompt_for_tab(
@@ -9964,6 +10068,7 @@ impl App {
                             let dialog = BaseDirDialog::new();
                             dialog.render(size, f.buffer_mut(), &self.state.base_dir_dialog_state);
                         } else if self.state.provider_selector_state.is_visible() {
+                            self.state.provider_selector_state.update_viewport(size);
                             let selector = ProviderSelector::new();
                             selector.render(
                                 size,
@@ -10403,6 +10508,7 @@ impl App {
         }
 
         if self.state.provider_selector_state.is_visible() {
+            self.state.provider_selector_state.update_viewport(size);
             let selector = ProviderSelector::new();
             selector.render(
                 size,
@@ -11227,7 +11333,10 @@ async fn generate_title_and_branch_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::events::{AssistantMessageEvent, ReasoningEvent, TurnCompletedEvent};
+    use crate::agent::events::{
+        AssistantMessageEvent, ReasoningEvent, ToolCompletedEvent, ToolStartedEvent,
+        TurnCompletedEvent,
+    };
     use crate::agent::{AgentType, ModelRegistry, ReasoningEffort, SessionId, TokenUsage};
     use crate::config::Config;
     use crate::data::{QueuedMessage, QueuedMessageMode};
@@ -11859,6 +11968,46 @@ mod tests {
         assert!(separate.contains("[Queued 2 of 2]"));
     }
 
+    #[tokio::test]
+    async fn test_drain_queue_for_tab_sends_pi_follow_up_input() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.agent_input_tx = Some(tx);
+            session.is_processing = true;
+            session.queue_message(QueuedMessage {
+                id: Uuid::new_v4(),
+                mode: QueuedMessageMode::FollowUp,
+                text: "after this".to_string(),
+                images: Vec::new(),
+                created_at: Utc::now(),
+            });
+        }
+
+        let effects = app.drain_queue_for_tab(0).expect("drain should succeed");
+        assert!(effects.is_empty());
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for Pi follow-up")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiFollowUp {
+                text,
+                images
+            } if text == "after this" && images.is_empty()
+        ));
+    }
+
     #[test]
     fn test_sanitize_title_collapses_whitespace_and_bounds_length() {
         let title = "  Hello\n\tworld  ".to_string();
@@ -12024,6 +12173,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pi_tool_turn_keeps_final_assistant_reply_after_tool_output() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.set_agent_and_model(AgentType::Pi, Some("default".to_string()));
+            session.start_processing();
+        }
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::ToolStarted(ToolStartedEvent {
+                tool_name: "bash".to_string(),
+                tool_id: "call-1".to_string(),
+                arguments: json!({ "command": "git status --short --branch" }),
+            }),
+        )
+        .await
+        .unwrap();
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::ToolCompleted(ToolCompletedEvent {
+                tool_id: "call-1".to_string(),
+                success: true,
+                result: Some("## henrique/query-agent-identity".to_string()),
+                error: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        app.handle_agent_event(
+            session_id,
+            AgentEvent::AssistantMessage(AssistantMessageEvent {
+                text: "Yes — everything appears committed.".to_string(),
+                is_final: true,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let session = app
+            .state
+            .tab_manager
+            .session_by_id_mut(session_id)
+            .expect("session missing");
+        let messages = session.chat_view.messages();
+
+        assert!(messages.iter().any(|msg| {
+            msg.role == MessageRole::Tool
+                && msg.content.contains("## henrique/query-agent-identity")
+        }));
+        assert!(messages.iter().any(|msg| {
+            msg.role == MessageRole::Assistant
+                && msg.content == "Yes — everything appears committed."
+        }));
+    }
+
+    #[tokio::test]
     async fn test_turn_completed_clears_codex_input_channel() {
         let session_id = Uuid::new_v4();
         let mut app = build_test_app_with_sessions(&[session_id]);
@@ -12139,6 +12353,195 @@ mod tests {
         assert_eq!(*agent_type, AgentType::Codex);
         assert_eq!(config.resume_session.as_ref(), Some(&live_session));
         assert_eq!(config.prompt, "hi again");
+    }
+
+    #[tokio::test]
+    async fn test_submit_prompt_for_tab_uses_live_pi_input_channel() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let live_session = SessionId::from_string("/tmp/pi-session.jsonl");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+            session.agent_session_id = Some(live_session);
+            session.agent_input_tx = Some(tx);
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "hi from pi".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StartAgent { .. })),
+            "live Pi sessions should reuse the existing input channel"
+        );
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for pi input")
+            .expect("input channel closed");
+        match input {
+            AgentInput::CodexPrompt { text, .. } => assert_eq!(text, "hi from pi"),
+            other => panic!("unexpected input: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_resumes_saved_pi_session() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let saved_session = SessionId::from_string("/tmp/pi-history.jsonl");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+            session.resume_session_id = Some(saved_session.clone());
+            session.agent_input_tx = None;
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(0, "resume pi".to_string(), vec![], vec![], false, None)
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Pi);
+        assert_eq!(config.resume_session.as_ref(), Some(&saved_session));
+        assert_eq!(config.prompt, "resume pi");
+    }
+
+    #[test]
+    fn test_submit_prompt_for_tab_allows_pi_images() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let default_model = app.config().default_model_for(AgentType::Pi);
+        let tmp = tempfile::Builder::new()
+            .prefix("conduit-pi-image-")
+            .suffix(".png")
+            .tempfile()
+            .expect("failed to create temp image");
+        let image_path = tmp.path().to_path_buf();
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .save(&image_path)
+            .expect("failed to write temp image");
+
+        {
+            let session = app
+                .state
+                .tab_manager
+                .session_by_id_mut(session_id)
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.model = Some(default_model);
+            session.model_invalid = false;
+            session.working_dir = Some(cwd);
+        }
+
+        let effects = app
+            .submit_prompt_for_tab(
+                0,
+                "describe image".to_string(),
+                vec![image_path.clone()],
+                vec!["@image.png".to_string()],
+                false,
+                None,
+            )
+            .expect("submit should succeed");
+
+        let (agent_type, config) = effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::StartAgent {
+                    agent_type, config, ..
+                } => Some((agent_type, config)),
+                _ => None,
+            })
+            .expect("expected StartAgent effect");
+
+        assert_eq!(*agent_type, AgentType::Pi);
+        assert_eq!(config.images, vec![image_path]);
+        assert_eq!(config.prompt, "describe image");
+    }
+
+    #[tokio::test]
+    async fn test_create_imported_session_tab_restores_pi_reasoning_effort() {
+        let mut app = build_test_app_with_sessions(&[]);
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let session_file = temp.path().join("pi-session.jsonl");
+        std::fs::write(
+            &session_file,
+            [
+                serde_json::json!({
+                    "type": "session",
+                    "version": 3,
+                    "id": "pi-session-id",
+                    "timestamp": "2026-04-02T10:00:00.000Z",
+                    "cwd": temp.path()
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "message",
+                    "id": "a1",
+                    "parentId": null,
+                    "timestamp": "2026-04-02T10:00:01.000Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+                })
+                .to_string(),
+                serde_json::json!({
+                    "type": "thinking_level_change",
+                    "id": "a2",
+                    "parentId": "a1",
+                    "timestamp": "2026-04-02T10:00:02.000Z",
+                    "thinkingLevel": "high"
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        )
+        .expect("write session file");
+
+        app.create_imported_session_tab(AgentType::Pi, session_file, temp.path().to_path_buf())
+            .await
+            .expect("import should succeed");
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::High));
     }
 
     #[test]
@@ -13156,6 +13559,64 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_confirm_action_selecting_reasoning_sets_pi_effort() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
+        app.state.reasoning_selector_state.insert_str("xhigh");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(!app.state.reasoning_selector_state.is_visible());
+        assert!(effects.is_empty());
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::XHigh));
+    }
+
+    #[test]
+    fn test_handle_confirm_action_selecting_reasoning_sets_pi_off() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
+        app.state.reasoning_selector_state.insert_str("off");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::Off));
+    }
+
+    #[test]
     fn test_handle_confirm_action_model_selector_wins_over_stale_mode() {
         let mut app = build_test_app_with_sessions(&[]);
         let executable = std::env::current_exe().expect("test executable path");
@@ -13227,6 +13688,51 @@ mod tests {
         assert!(last
             .content
             .contains("Changing reasoning effort after a session has started"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_confirm_action_selecting_reasoning_updates_live_pi_session() {
+        let session_id = Uuid::new_v4();
+        let mut app = build_test_app_with_sessions(&[session_id]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        {
+            let session = app
+                .state
+                .tab_manager
+                .active_session_mut()
+                .expect("session missing");
+            session.agent_type = AgentType::Pi;
+            session.turn_count = 1;
+            session.agent_input_tx = Some(tx);
+        }
+        app.state.reasoning_selector_state.show(AgentType::Pi, None);
+        app.state.reasoning_selector_state.insert_str("high");
+        app.state.input_mode = InputMode::SelectingReasoning;
+
+        let mut effects = Vec::new();
+        app.handle_confirm_action(&mut effects).unwrap();
+
+        assert_eq!(app.state.input_mode, InputMode::Normal);
+        assert!(!app.state.reasoning_selector_state.is_visible());
+        assert!(effects.is_empty());
+
+        let session = app
+            .state
+            .tab_manager
+            .active_session()
+            .expect("session missing");
+        assert_eq!(session.reasoning_effort, Some(ReasoningEffort::High));
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for Pi reasoning update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetThinkingLevel {
+                level: ReasoningEffort::High
+            }
+        ));
     }
 
     #[test]

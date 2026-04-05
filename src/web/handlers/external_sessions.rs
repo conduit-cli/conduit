@@ -267,8 +267,9 @@ fn parse_agent_type(agent_type: &str) -> Result<AgentType, WebError> {
         "claude" => Ok(AgentType::Claude),
         "gemini" => Ok(AgentType::Gemini),
         "opencode" => Ok(AgentType::Opencode),
+        "pi" => Ok(AgentType::Pi),
         _ => Err(WebError::BadRequest(format!(
-            "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+            "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
             agent_type
         ))),
     }

@@ -25,6 +25,7 @@ import {
 } from '../hooks';
 import { getFileContent, getSessionEventsPage } from '../lib/api';
 import { supportsPlanMode } from '../lib/agentCapabilities';
+import { agentAccentColor, agentDisplayName } from '../lib/agentMetadata';
 import type {
   Session,
   UserQuestion,
@@ -36,6 +37,8 @@ import type {
 } from '../types';
 import { MessageSquarePlus, Loader2, Bug, GitBranch, GitPullRequest } from 'lucide-react';
 import { cn } from '../lib/cn';
+
+type ModelPickerMode = 'session' | 'default';
 
 interface ChatViewProps {
   session: Session | null;
@@ -231,6 +234,7 @@ export function ChatView({
   const [pendingControlResponse, setPendingControlResponse] = useState<unknown | null>(null);
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [modelPickerMode, setModelPickerMode] = useState<ModelPickerMode>('session');
   const [escHint, setEscHint] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<Record<string, string[]>>({});
@@ -1149,15 +1153,21 @@ export function ChatView({
     supportsPlanMode(session?.agent_type) && !session?.agent_session_id && !isProcessing;
 
   useEffect(() => {
-    const handleOpenModelPicker = () => {
+    const handleOpenModelPicker = (event?: Event) => {
       if (!session) {
         onNotify?.('No active session.', 'error');
         return;
       }
-      if (!canChangeModel) {
+
+      const pickerMode =
+        event instanceof CustomEvent && event.detail?.mode === 'default' ? 'default' : 'session';
+
+      if (pickerMode === 'session' && !canChangeModel) {
         onNotify?.('Wait for the current response to finish before changing the model.', 'error');
         return;
       }
+
+      setModelPickerMode(pickerMode);
       setShowModelSelector(true);
     };
 
@@ -1184,10 +1194,23 @@ export function ChatView({
   const currentAttachments = session ? attachmentsBySession[session.id] ?? [] : [];
   const canStop = isProcessing || isAwaitingResponse;
 
-  const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+  const handleModelSelect = useCallback((modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi') => {
     if (!session) return;
-    // Only include agent_type in the request if it's different from current
-    const data: { model: string; agent_type?: 'claude' | 'codex' | 'gemini' | 'opencode' } = { model: modelId };
+
+    if (modelPickerMode === 'default') {
+      setDefaultModelMutation.mutate(
+        { agent_type: newAgentType, model_id: modelId },
+        {
+          onSuccess: () => {
+            setShowModelSelector(false);
+            setModelPickerMode('session');
+          },
+        }
+      );
+      return;
+    }
+
+    const data: { model: string; agent_type?: 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi' } = { model: modelId };
     if (newAgentType !== session.agent_type) {
       data.agent_type = newAgentType;
     }
@@ -1203,10 +1226,10 @@ export function ChatView({
         },
       }
     );
-  }, [session, updateSessionMutation, onNotify]);
+  }, [modelPickerMode, onNotify, session, setDefaultModelMutation, updateSessionMutation]);
 
   const handleSetDefaultModel = useCallback(
-    (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+    (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi') => {
       setDefaultModelMutation.mutate({ agent_type: newAgentType, model_id: modelId });
     },
     [setDefaultModelMutation]
@@ -1287,16 +1310,7 @@ export function ChatView({
       <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
           <span
-            className={cn(
-              'h-3 w-3 rounded-full',
-              session.agent_type === 'claude'
-                ? 'bg-orange-400'
-                : session.agent_type === 'codex'
-                ? 'bg-green-400'
-                : session.agent_type === 'opencode'
-                ? 'bg-teal-400'
-                : 'bg-blue-400'
-            )}
+            className={cn('h-3 w-3 rounded-full', agentAccentColor(session.agent_type))}
           />
           <div>
             <h3 className="font-medium text-text">
@@ -1306,13 +1320,7 @@ export function ChatView({
               {session.model && <span>{session.model}</span>}
               {session.model && ' · '}
               <span className="capitalize">
-                {session.agent_type === 'claude'
-                  ? 'Claude Code'
-                  : session.agent_type === 'codex'
-                  ? 'Codex CLI'
-                  : session.agent_type === 'opencode'
-                  ? 'OpenCode'
-                  : 'Gemini CLI'}
+                {agentDisplayName(session.agent_type)}
             </span>
             </p>
           </div>
@@ -1462,7 +1470,10 @@ export function ChatView({
         agentMode={supportsPlanMode(session?.agent_type) ? effectiveAgentMode : undefined}
         gitStats={status?.git_stats}
         branch={workspace?.branch}
-        onModelClick={() => setShowModelSelector(true)}
+        onModelClick={() => {
+          setModelPickerMode('session');
+          setShowModelSelector(true);
+        }}
         canChangeModel={canChangeModel}
         onModeToggle={supportsPlanMode(session?.agent_type) ? handleToggleAgentMode : undefined}
         canChangeMode={canChangeMode}
@@ -1478,13 +1489,18 @@ export function ChatView({
       {/* Model selector dialog */}
       <ModelSelectorDialog
         isOpen={showModelSelector}
-        onClose={() => setShowModelSelector(false)}
+        onClose={() => {
+          setShowModelSelector(false);
+          setModelPickerMode('session');
+        }}
         currentModel={session?.model ?? null}
         agentType={session?.agent_type ?? 'claude'}
         onSelect={handleModelSelect}
         onSetDefault={handleSetDefaultModel}
         isUpdating={updateSessionMutation.isPending}
         isSettingDefault={setDefaultModelMutation.isPending}
+        title={modelPickerMode === 'default' ? 'Default Model' : 'Select Model'}
+        primaryActionLabel={modelPickerMode === 'default' ? 'Set Default' : 'Select Model'}
       />
     </div>
   );

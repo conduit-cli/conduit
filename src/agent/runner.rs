@@ -15,6 +15,7 @@ pub enum AgentType {
     Codex,
     Gemini,
     Opencode,
+    Pi,
 }
 
 /// Agent mode (Build vs Plan)
@@ -31,6 +32,7 @@ pub enum AgentMode {
 /// Provider-agnostic reasoning effort profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReasoningEffort {
+    Off,
     Minimal,
     Low,
     Medium,
@@ -38,9 +40,45 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
-impl ReasoningEffort {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiFollowUpMode {
+    All,
+    OneAtATime,
+}
+
+impl PiFollowUpMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(PiFollowUpMode::All),
+            "one-at-a-time" => Some(PiFollowUpMode::OneAtATime),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
+            PiFollowUpMode::All => "all",
+            PiFollowUpMode::OneAtATime => "one-at-a-time",
+        }
+    }
+}
+
+impl ReasoningEffort {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(ReasoningEffort::Off),
+            "minimal" => Some(ReasoningEffort::Minimal),
+            "low" => Some(ReasoningEffort::Low),
+            "medium" => Some(ReasoningEffort::Medium),
+            "high" => Some(ReasoningEffort::High),
+            "xhigh" => Some(ReasoningEffort::XHigh),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReasoningEffort::Off => "off",
             ReasoningEffort::Minimal => "minimal",
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
@@ -51,6 +89,7 @@ impl ReasoningEffort {
 
     pub fn display_name(self) -> &'static str {
         match self {
+            ReasoningEffort::Off => "Off",
             ReasoningEffort::Minimal => "Minimal",
             ReasoningEffort::Low => "Low",
             ReasoningEffort::Medium => "Medium",
@@ -64,7 +103,7 @@ impl ReasoningEffort {
             ReasoningEffort::Low => Some("low"),
             ReasoningEffort::Medium => Some("medium"),
             ReasoningEffort::High => Some("high"),
-            ReasoningEffort::Minimal | ReasoningEffort::XHigh => None,
+            ReasoningEffort::Off | ReasoningEffort::Minimal | ReasoningEffort::XHigh => None,
         }
     }
 
@@ -117,12 +156,13 @@ impl AgentMode {
 
 impl AgentType {
     /// Preferred provider priority order used for defaults and UI listing.
-    pub const fn preferred_order() -> [AgentType; 4] {
+    pub const fn preferred_order() -> [AgentType; 5] {
         [
             AgentType::Codex,
             AgentType::Claude,
             AgentType::Gemini,
             AgentType::Opencode,
+            AgentType::Pi,
         ]
     }
 
@@ -139,6 +179,7 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::Gemini => "gemini",
             AgentType::Opencode => "opencode",
+            AgentType::Pi => "pi",
         }
     }
 
@@ -147,6 +188,7 @@ impl AgentType {
             "codex" => AgentType::Codex,
             "gemini" => AgentType::Gemini,
             "opencode" => AgentType::Opencode,
+            "pi" => AgentType::Pi,
             _ => AgentType::Claude,
         }
     }
@@ -158,6 +200,7 @@ impl AgentType {
             AgentType::Codex => "Codex",
             AgentType::Gemini => "Gemini",
             AgentType::Opencode => "OpenCode",
+            AgentType::Pi => "Pi",
         }
     }
 
@@ -167,6 +210,7 @@ impl AgentType {
             AgentType::Codex => "Codex CLI",
             AgentType::Gemini => "Gemini CLI",
             AgentType::Opencode => "OpenCode",
+            AgentType::Pi => "Pi",
         }
     }
 }
@@ -277,13 +321,19 @@ impl AgentStartConfig {
 pub enum AgentInput {
     /// Raw JSONL payload for Claude streaming input.
     ClaudeJsonl(String),
-    /// Codex prompt with optional local images and model override.
+    /// Codex-style prompt with optional local images and model override.
     CodexPrompt {
         text: String,
         images: Vec<PathBuf>,
         model: Option<String>,
         skill: Option<SkillReference>,
     },
+    /// Pi-specific thinking level update for a live session.
+    PiSetThinkingLevel { level: ReasoningEffort },
+    /// Pi-native follow-up message for a live session.
+    PiFollowUp { text: String, images: Vec<PathBuf> },
+    /// Pi-specific follow-up queue mode for a live session.
+    PiSetFollowUpMode { mode: PiFollowUpMode },
     /// OpenCode question response (None means reject).
     OpencodeQuestion {
         request_id: String,
@@ -349,4 +399,19 @@ pub trait AgentRunner: Send + Sync {
 
     /// Get the path to the agent binary
     fn binary_path(&self) -> Option<PathBuf>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentType;
+
+    #[test]
+    fn pi_agent_type_has_public_identifiers() {
+        assert_eq!(AgentType::parse("pi"), AgentType::Pi);
+        assert_eq!(AgentType::Pi.as_str(), "pi");
+        assert_eq!(AgentType::Pi.short_name(), "Pi");
+        assert_eq!(AgentType::Pi.display_name(), "Pi");
+        assert!(!AgentType::Pi.supports_plan_mode());
+        assert!(AgentType::preferred_order().contains(&AgentType::Pi));
+    }
 }

@@ -2177,6 +2177,59 @@ impl AgentRunner for OpencodeRunner {
                                 return;
                             }
                         }
+                        AgentInput::PiSetThinkingLevel { .. } => {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
+                                    message:
+                                        "OpenCode runner does not support Pi thinking level input."
+                                            .to_string(),
+                                    is_fatal: false,
+                                    code: None,
+                                    details: None,
+                                }),
+                                "opencode_pi_thinking_unsupported",
+                            )
+                            .await
+                            {
+                                return;
+                            }
+                        }
+                        AgentInput::PiFollowUp { .. } => {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
+                                    message: "OpenCode runner does not support Pi follow-up input."
+                                        .to_string(),
+                                    is_fatal: false,
+                                    code: None,
+                                    details: None,
+                                }),
+                                "opencode_pi_follow_up_unsupported",
+                            )
+                            .await
+                            {
+                                return;
+                            }
+                        }
+                        AgentInput::PiSetFollowUpMode { .. } => {
+                            if !send_event_or_log(
+                                &event_tx,
+                                AgentEvent::Error(ErrorEvent {
+                                    message:
+                                        "OpenCode runner does not support Pi follow-up mode input."
+                                            .to_string(),
+                                    is_fatal: false,
+                                    code: None,
+                                    details: None,
+                                }),
+                                "opencode_pi_follow_up_mode_unsupported",
+                            )
+                            .await
+                            {
+                                return;
+                            }
+                        }
                         AgentInput::OpencodeQuestion {
                             request_id,
                             answers,

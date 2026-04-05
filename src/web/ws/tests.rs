@@ -3,6 +3,7 @@
 use super::messages::{ClientMessage, ServerMessage};
 use crate::agent::events::{AgentEvent, AssistantMessageEvent, SessionInitEvent};
 use crate::agent::session::SessionId;
+use crate::agent::ReasoningEffort;
 use uuid::Uuid;
 
 #[test]
@@ -68,6 +69,54 @@ fn test_client_message_start_session_serialization() {
         assert!(images.is_empty());
     } else {
         panic!("Expected StartSession message");
+    }
+}
+
+#[test]
+fn test_client_message_set_reasoning_effort_serialization() {
+    let session_id = Uuid::nil();
+    let msg = ClientMessage::SetReasoningEffort {
+        session_id,
+        reasoning_effort: ReasoningEffort::High.as_str().to_string(),
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    assert!(json.contains(r#""type":"set_reasoning_effort""#));
+    assert!(json.contains(r#""reasoning_effort":"high""#));
+
+    let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+    if let ClientMessage::SetReasoningEffort {
+        session_id: parsed_id,
+        reasoning_effort,
+    } = parsed
+    {
+        assert_eq!(parsed_id, session_id);
+        assert_eq!(reasoning_effort, "high");
+    } else {
+        panic!("Expected SetReasoningEffort message");
+    }
+}
+
+#[test]
+fn test_client_message_set_follow_up_mode_serialization() {
+    let session_id = Uuid::nil();
+    let msg = ClientMessage::SetFollowUpMode {
+        session_id,
+        follow_up_mode: "one-at-a-time".to_string(),
+    };
+    let json = serde_json::to_string(&msg).unwrap();
+    assert!(json.contains(r#""type":"set_follow_up_mode""#));
+    assert!(json.contains(r#""follow_up_mode":"one-at-a-time""#));
+
+    let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+    if let ClientMessage::SetFollowUpMode {
+        session_id: parsed_id,
+        follow_up_mode,
+    } = parsed
+    {
+        assert_eq!(parsed_id, session_id);
+        assert_eq!(follow_up_mode, "one-at-a-time");
+    } else {
+        panic!("Expected SetFollowUpMode message");
     }
 }
 

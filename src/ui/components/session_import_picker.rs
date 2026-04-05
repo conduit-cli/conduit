@@ -45,6 +45,8 @@ pub enum AgentFilter {
     Gemini,
     /// Show only OpenCode sessions
     Opencode,
+    /// Show only Pi sessions
+    Pi,
 }
 
 impl AgentFilter {
@@ -55,7 +57,8 @@ impl AgentFilter {
             AgentFilter::Claude => AgentFilter::Codex,
             AgentFilter::Codex => AgentFilter::Gemini,
             AgentFilter::Gemini => AgentFilter::Opencode,
-            AgentFilter::Opencode => AgentFilter::All,
+            AgentFilter::Opencode => AgentFilter::Pi,
+            AgentFilter::Pi => AgentFilter::All,
         }
     }
 
@@ -67,6 +70,7 @@ impl AgentFilter {
             AgentFilter::Codex => "Codex",
             AgentFilter::Gemini => "Gemini",
             AgentFilter::Opencode => "OpenCode",
+            AgentFilter::Pi => "Pi",
         }
     }
 }
@@ -203,6 +207,7 @@ impl SessionImportPickerState {
                     AgentFilter::Codex => matches!(s.agent_type, AgentType::Codex),
                     AgentFilter::Gemini => matches!(s.agent_type, AgentType::Gemini),
                     AgentFilter::Opencode => matches!(s.agent_type, AgentType::Opencode),
+                    AgentFilter::Pi => matches!(s.agent_type, AgentType::Pi),
                 }
             })
             .filter(|(_, s)| {
@@ -477,6 +482,7 @@ impl SessionImportPicker {
             AgentFilter::Codex,
             AgentFilter::Gemini,
             AgentFilter::Opencode,
+            AgentFilter::Pi,
         ] {
             let is_selected = state.agent_filter == filter;
             let label = format!(" {} ", filter.label());
@@ -488,6 +494,7 @@ impl SessionImportPicker {
                 AgentFilter::Codex => agent_codex(),
                 AgentFilter::Gemini => agent_gemini(),
                 AgentFilter::Opencode => agent_opencode(),
+                AgentFilter::Pi => agent_opencode(),
             };
             let style = if is_selected {
                 let fg = ensure_contrast_fg(base_fg, tab_selected_bg, 4.5);
@@ -559,12 +566,14 @@ impl SessionImportPicker {
                 AgentType::Codex => "X",
                 AgentType::Gemini => "G",
                 AgentType::Opencode => "O",
+                AgentType::Pi => "P",
             };
             let agent_color = match session.agent_type {
                 AgentType::Claude => agent_claude(),
                 AgentType::Codex => agent_codex(),
                 AgentType::Gemini => agent_gemini(),
                 AgentType::Opencode => agent_opencode(),
+                AgentType::Pi => agent_opencode(),
             };
 
             // Calculate widths

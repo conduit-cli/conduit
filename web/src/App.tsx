@@ -761,8 +761,8 @@ function AppContent() {
     updateSession.mutate({ id: activeSession.id, data: { agent_mode: nextMode } });
   };
 
-  const handleOpenModelPicker = () => {
-    window.dispatchEvent(new Event('conduit:open-model-picker'));
+  const handleOpenModelPicker = (mode: 'session' | 'default' = 'session') => {
+    window.dispatchEvent(new CustomEvent('conduit:open-model-picker', { detail: { mode } }));
   };
 
   const commands = useMemo<CommandPaletteItem[]>(
@@ -1108,7 +1108,7 @@ function AppContent() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onOpenBaseDirDialog={() => setIsBaseDirDialogOpen(true)}
-        onOpenModelPicker={handleOpenModelPicker}
+        onOpenModelPicker={() => handleOpenModelPicker('default')}
       />
       <ConfirmDialog
         isOpen={!!archiveWorkspaceTarget}

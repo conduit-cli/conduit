@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::agent::events::AgentEvent;
 use crate::agent::runner::{AgentInput, AgentRunner, AgentStartConfig, AgentType};
 use crate::agent::session::SessionId;
+use crate::agent::{PiFollowUpMode, ReasoningEffort};
 use crate::command_resolver::{CommandResolver, ConduitCommand, ResolveResult, SkillReference};
 use crate::core::services::{SessionService, UpdateSessionParams};
 use crate::core::ConduitCore;
@@ -40,6 +41,7 @@ struct ActiveSession {
 pub struct SessionManager {
     sessions: Arc<RwLock<HashMap<Uuid, ActiveSession>>>,
     core: Arc<RwLock<ConduitCore>>,
+    runner_overrides: HashMap<AgentType, Arc<dyn AgentRunner>>,
 }
 
 struct StartSessionArgs {
@@ -132,7 +134,33 @@ impl SessionManager {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             core,
+            runner_overrides: HashMap::new(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_runner_overrides(
+        core: Arc<RwLock<ConduitCore>>,
+        runner_overrides: HashMap<AgentType, Arc<dyn AgentRunner>>,
+    ) -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            core,
+            runner_overrides,
+        }
+    }
+
+    fn runner_for(&self, core: &ConduitCore, agent_type: AgentType) -> Arc<dyn AgentRunner> {
+        self.runner_overrides
+            .get(&agent_type)
+            .cloned()
+            .unwrap_or_else(|| match agent_type {
+                AgentType::Claude => core.claude_runner().clone(),
+                AgentType::Codex => core.codex_runner().clone(),
+                AgentType::Gemini => core.gemini_runner().clone(),
+                AgentType::Opencode => core.opencode_runner().clone(),
+                AgentType::Pi => core.pi_runner().clone(),
+            })
     }
 
     /// Start a new agent session.
@@ -165,12 +193,7 @@ impl SessionManager {
 
         // Get the appropriate runner
         let core = self.core.read().await;
-        let runner: Arc<dyn AgentRunner> = match agent_type {
-            AgentType::Claude => core.claude_runner().clone(),
-            AgentType::Codex => core.codex_runner().clone(),
-            AgentType::Gemini => core.gemini_runner().clone(),
-            AgentType::Opencode => core.opencode_runner().clone(),
-        };
+        let runner = self.runner_for(&core, agent_type);
 
         if !runner.is_available() {
             return Err(format!("{} is not available", agent_type.display_name()));
@@ -195,7 +218,7 @@ impl SessionManager {
             config = config.with_skill(skill);
         }
 
-        if agent_type == AgentType::Opencode {
+        if matches!(agent_type, AgentType::Opencode | AgentType::Pi) {
             match SessionService::get_session(&core, session_id) {
                 Ok(session_tab) => {
                     if let Some(agent_session_id) = session_tab.agent_session_id {
@@ -205,8 +228,9 @@ impl SessionManager {
                 Err(error) => {
                     tracing::warn!(
                         %session_id,
+                        agent_type = %agent_type,
                         error = %error,
-                        "Failed to load session for OpenCode resume"
+                        "Failed to load session for agent resume"
                     );
                 }
             }
@@ -448,18 +472,83 @@ impl SessionManager {
         // Send as appropriate input type based on agent
         let agent_input = match agent_type {
             AgentType::Claude => AgentInput::ClaudeJsonl(input),
-            AgentType::Codex | AgentType::Gemini | AgentType::Opencode => AgentInput::CodexPrompt {
-                text: input,
-                images,
-                model,
-                skill,
-            },
+            AgentType::Codex | AgentType::Gemini | AgentType::Opencode | AgentType::Pi => {
+                AgentInput::CodexPrompt {
+                    text: input,
+                    images,
+                    model,
+                    skill,
+                }
+            }
         };
 
         input_tx
             .send(agent_input)
             .await
             .map_err(|e| format!("Failed to send input: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update reasoning effort for a running session.
+    pub async fn set_reasoning_effort(
+        &self,
+        session_id: Uuid,
+        reasoning_effort: ReasoningEffort,
+    ) -> Result<(), String> {
+        let input_tx = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session
+                .input_tx
+                .clone()
+                .ok_or_else(|| "Session does not support live reasoning updates".to_string())?;
+            if session.agent_type != AgentType::Pi {
+                return Err("Live reasoning updates are only supported for Pi sessions".to_string());
+            }
+            input_tx
+        };
+
+        input_tx
+            .send(AgentInput::PiSetThinkingLevel {
+                level: reasoning_effort,
+            })
+            .await
+            .map_err(|e| format!("Failed to send reasoning update: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Update follow-up delivery mode for a running session.
+    pub async fn set_follow_up_mode(
+        &self,
+        session_id: Uuid,
+        follow_up_mode: PiFollowUpMode,
+    ) -> Result<(), String> {
+        let input_tx = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("Session {} not found", session_id))?;
+            let input_tx = session.input_tx.clone().ok_or_else(|| {
+                "Session does not support live follow-up mode updates".to_string()
+            })?;
+            if session.agent_type != AgentType::Pi {
+                return Err(
+                    "Live follow-up mode updates are only supported for Pi sessions".to_string(),
+                );
+            }
+            input_tx
+        };
+
+        input_tx
+            .send(AgentInput::PiSetFollowUpMode {
+                mode: follow_up_mode,
+            })
+            .await
+            .map_err(|e| format!("Failed to send follow-up mode update: {}", e))?;
 
         Ok(())
     }
@@ -725,6 +814,32 @@ fn decode_image_attachments(images: &[ImageAttachment]) -> Result<Vec<PathBuf>, 
         paths.push(decode_image_attachment(image)?);
     }
     Ok(paths)
+}
+
+fn prepare_agent_images(
+    agent_type: Option<AgentType>,
+    prompt: &str,
+    images: &[ImageAttachment],
+) -> Result<(Vec<PathBuf>, Option<String>), String> {
+    if images.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+
+    match agent_type {
+        Some(AgentType::Codex) | Some(AgentType::Pi) => {
+            decode_image_attachments(images).map(|paths| (paths, None))
+        }
+        Some(AgentType::Claude) => {
+            build_claude_prompt_jsonl(prompt, images).map(|payload| (Vec::new(), Some(payload)))
+        }
+        Some(AgentType::Gemini) => {
+            Err("Image attachments are not supported for Gemini sessions".to_string())
+        }
+        Some(AgentType::Opencode) => {
+            Err("Image attachments are not supported for OpenCode sessions".to_string())
+        }
+        None => Ok((Vec::new(), None)),
+    }
 }
 
 fn build_claude_prompt_jsonl(prompt: &str, images: &[ImageAttachment]) -> Result<String, String> {
@@ -1073,84 +1188,27 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 let mut stdin_payload: Option<String> = None;
                 let working_dir_path = PathBuf::from(working_dir);
 
-                let image_paths = if images.is_empty() {
-                    Vec::new()
-                } else {
-                    match agent_type {
-                        AgentType::Codex => match decode_image_attachments(&images) {
-                            Ok(paths) => paths,
-                            Err(error) => {
-                                if let Err(send_err) = tx
-                                    .send(ServerMessage::session_error(session_id, error))
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        %session_id,
-                                        error = ?send_err,
-                                        "Failed to send session error"
-                                    );
-                                    break 'ws_loop;
-                                }
-                                continue;
-                            }
-                        },
-                        AgentType::Claude => {
-                            match build_claude_prompt_jsonl(&prompt, &images) {
-                                Ok(payload) => {
-                                    input_format = Some("stream-json".to_string());
-                                    stdin_payload = Some(payload);
-                                }
-                                Err(error) => {
-                                    if let Err(send_err) = tx
-                                        .send(ServerMessage::session_error(session_id, error))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            %session_id,
-                                            error = ?send_err,
-                                            "Failed to send session error"
-                                        );
-                                        break 'ws_loop;
-                                    }
-                                    continue;
-                                }
-                            }
-                            Vec::new()
+                let image_paths = match prepare_agent_images(Some(agent_type), &prompt, &images) {
+                    Ok((paths, maybe_stdin_payload)) => {
+                        if let Some(payload) = maybe_stdin_payload {
+                            input_format = Some("stream-json".to_string());
+                            stdin_payload = Some(payload);
                         }
-                        AgentType::Gemini => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Gemini sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
+                        paths
+                    }
+                    Err(error) => {
+                        if let Err(send_err) = tx
+                            .send(ServerMessage::session_error(session_id, error))
+                            .await
+                        {
+                            tracing::debug!(
+                                %session_id,
+                                error = ?send_err,
+                                "Failed to send session error"
+                            );
+                            break 'ws_loop;
                         }
-                        AgentType::Opencode => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
+                        continue;
                     }
                 };
 
@@ -1446,55 +1504,17 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                     ResolveResult::Passthrough { text } => (text.clone(), text, None),
                 };
                 let mut input_payload = input.clone();
-                let image_paths = if images.is_empty() {
-                    Vec::new()
-                } else {
-                    match agent_type {
-                        Some(AgentType::Codex) => match decode_image_attachments(&images) {
-                            Ok(paths) => paths,
-                            Err(error) => {
-                                if let Err(send_err) = tx
-                                    .send(ServerMessage::session_error(session_id, error))
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        %session_id,
-                                        error = ?send_err,
-                                        "Failed to send session error"
-                                    );
-                                    break 'ws_loop;
-                                }
-                                continue;
+                let image_paths =
+                    match prepare_agent_images(agent_type, &resolved_input_text, &images) {
+                        Ok((paths, maybe_payload)) => {
+                            if let Some(payload) = maybe_payload {
+                                input_payload = payload;
                             }
-                        },
-                        Some(AgentType::Claude) => {
-                            match build_claude_prompt_jsonl(&resolved_input_text, &images) {
-                                Ok(payload) => {
-                                    input_payload = payload;
-                                    Vec::new()
-                                }
-                                Err(error) => {
-                                    if let Err(send_err) = tx
-                                        .send(ServerMessage::session_error(session_id, error))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            %session_id,
-                                            error = ?send_err,
-                                            "Failed to send session error"
-                                        );
-                                        break 'ws_loop;
-                                    }
-                                    continue;
-                                }
-                            }
+                            paths
                         }
-                        Some(AgentType::Gemini) => {
+                        Err(error) => {
                             if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for Gemini sessions",
-                                ))
+                                .send(ServerMessage::session_error(session_id, error))
                                 .await
                             {
                                 tracing::debug!(
@@ -1506,26 +1526,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                             }
                             continue;
                         }
-                        Some(AgentType::Opencode) => {
-                            if let Err(send_err) = tx
-                                .send(ServerMessage::session_error(
-                                    session_id,
-                                    "Image attachments are not supported for OpenCode sessions",
-                                ))
-                                .await
-                            {
-                                tracing::debug!(
-                                    %session_id,
-                                    error = ?send_err,
-                                    "Failed to send session error"
-                                );
-                                break 'ws_loop;
-                            }
-                            continue;
-                        }
-                        None => Vec::new(),
-                    }
-                };
+                    };
 
                 if matches!(agent_type, Some(AgentType::Claude)) && images.is_empty() {
                     match build_claude_prompt_jsonl(&resolved_input_text, &[]) {
@@ -1611,6 +1612,84 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
                 }
             }
 
+            ClientMessage::SetReasoningEffort {
+                session_id,
+                reasoning_effort,
+            } => {
+                let Some(reasoning_effort) = ReasoningEffort::parse(&reasoning_effort) else {
+                    if let Err(send_err) = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Unsupported reasoning effort. Use one of: off, minimal, low, medium, high, xhigh.",
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                    continue;
+                };
+
+                if let Err(e) = session_manager
+                    .set_reasoning_effort(session_id, reasoning_effort)
+                    .await
+                {
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                }
+            }
+
+            ClientMessage::SetFollowUpMode {
+                session_id,
+                follow_up_mode,
+            } => {
+                let Some(follow_up_mode) = PiFollowUpMode::parse(&follow_up_mode) else {
+                    if let Err(send_err) = tx
+                        .send(ServerMessage::session_error(
+                            session_id,
+                            "Unsupported follow-up mode. Use one of: all, one-at-a-time.",
+                        ))
+                        .await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                    continue;
+                };
+
+                if let Err(e) = session_manager
+                    .set_follow_up_mode(session_id, follow_up_mode)
+                    .await
+                {
+                    if let Err(send_err) =
+                        tx.send(ServerMessage::session_error(session_id, e)).await
+                    {
+                        tracing::debug!(
+                            %session_id,
+                            error = ?send_err,
+                            "Failed to send session error"
+                        );
+                        break 'ws_loop;
+                    }
+                }
+            }
+
             ClientMessage::StopSession { session_id } => {
                 // Clean up subscription first
                 {
@@ -1662,4 +1741,214 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
     }
 
     send_task.abort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::MockAgentRunner;
+    use crate::config::Config;
+    use crate::core::services::session_service::CreateImportedSessionParams;
+    use crate::core::services::SessionService;
+    use crate::util::ToolAvailability;
+
+    #[tokio::test]
+    async fn set_reasoning_effort_sends_live_pi_update() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, mut input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Pi,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        session_manager
+            .set_reasoning_effort(session_id, ReasoningEffort::High)
+            .await
+            .expect("Pi reasoning update should succeed");
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), input_rx.recv())
+            .await
+            .expect("timed out waiting for reasoning update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetThinkingLevel {
+                level: ReasoningEffort::High
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_reasoning_effort_rejects_non_pi_sessions() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, _input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Claude,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        let error = session_manager
+            .set_reasoning_effort(session_id, ReasoningEffort::High)
+            .await
+            .expect_err("non-Pi sessions should be rejected");
+        assert!(error.contains("only supported for Pi sessions"));
+    }
+
+    #[tokio::test]
+    async fn set_follow_up_mode_sends_live_pi_update() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, mut input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Pi,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        session_manager
+            .set_follow_up_mode(session_id, PiFollowUpMode::OneAtATime)
+            .await
+            .expect("Pi follow-up mode update should succeed");
+
+        let input = tokio::time::timeout(std::time::Duration::from_secs(1), input_rx.recv())
+            .await
+            .expect("timed out waiting for follow-up mode update")
+            .expect("input channel closed");
+        assert!(matches!(
+            input,
+            AgentInput::PiSetFollowUpMode {
+                mode: PiFollowUpMode::OneAtATime
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_follow_up_mode_rejects_non_pi_sessions() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+        let session_manager = SessionManager::with_runner_overrides(core, HashMap::new());
+        let session_id = Uuid::new_v4();
+        let (input_tx, _input_rx) = mpsc::channel(1);
+        let (event_tx, _) = broadcast::channel(1);
+
+        {
+            let mut sessions = session_manager.sessions.write().await;
+            sessions.insert(
+                session_id,
+                ActiveSession {
+                    agent_type: AgentType::Claude,
+                    working_dir: std::env::temp_dir(),
+                    pid: None,
+                    event_tx,
+                    input_tx: Some(input_tx),
+                },
+            );
+        }
+
+        let error = session_manager
+            .set_follow_up_mode(session_id, PiFollowUpMode::All)
+            .await
+            .expect_err("non-Pi sessions should be rejected");
+        assert!(error.contains("only supported for Pi sessions"));
+    }
+
+    #[tokio::test]
+    async fn start_session_resumes_saved_pi_session() {
+        let core = Arc::new(RwLock::new(ConduitCore::new(
+            Config::default(),
+            ToolAvailability::default(),
+        )));
+
+        let session = {
+            let core_read = core.read().await;
+            SessionService::create_imported_session(
+                &core_read,
+                CreateImportedSessionParams {
+                    workspace_id: None,
+                    agent_type: AgentType::Pi,
+                    agent_session_id: "/tmp/pi-session.jsonl".to_string(),
+                    title: Some("Imported Pi session".to_string()),
+                    model: Some("default".to_string()),
+                },
+            )
+            .expect("should create imported Pi session")
+        };
+
+        let pi_runner = Arc::new(MockAgentRunner::new(AgentType::Pi));
+        let session_manager = SessionManager::with_runner_overrides(
+            core,
+            HashMap::from([(AgentType::Pi, pi_runner.clone() as Arc<dyn AgentRunner>)]),
+        );
+
+        session_manager
+            .start_session(StartSessionArgs {
+                session_id: session.id,
+                agent_type: AgentType::Pi,
+                prompt: "continue".to_string(),
+                working_dir: std::env::temp_dir(),
+                model: Some("default".to_string()),
+                images: Vec::new(),
+                input_format: None,
+                stdin_payload: None,
+                skill: None,
+            })
+            .await
+            .expect("Pi session should start");
+
+        let config = pi_runner
+            .last_config()
+            .expect("mock runner captured config");
+        assert_eq!(
+            config.resume_session.as_ref().map(SessionId::as_str),
+            Some("/tmp/pi-session.jsonl")
+        );
+    }
 }

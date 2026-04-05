@@ -63,6 +63,11 @@ impl AgentSelectorState {
                 name: "OpenCode",
                 description: "OpenCode multi-provider assistant",
             },
+            AgentType::Pi => AgentOption {
+                agent_type: AgentType::Pi,
+                name: "Pi",
+                description: "Pi coding harness",
+            },
         }
     }
 
@@ -72,6 +77,7 @@ impl AgentSelectorState {
             AgentType::Claude => Tool::Claude,
             AgentType::Gemini => Tool::Gemini,
             AgentType::Opencode => Tool::Opencode,
+            AgentType::Pi => Tool::Pi,
         }
     }
 

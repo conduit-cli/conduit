@@ -1355,6 +1355,19 @@ impl AgentRunner for CodexCliRunner {
                     AgentInput::ClaudeJsonl(_) => {
                         tracing::warn!("Ignored Claude JSONL sent to Codex input channel");
                     }
+                    AgentInput::PiSetThinkingLevel { .. } => {
+                        tracing::warn!(
+                            "Ignored Pi thinking level update sent to Codex input channel"
+                        );
+                    }
+                    AgentInput::PiFollowUp { .. } => {
+                        tracing::warn!("Ignored Pi follow-up sent to Codex input channel");
+                    }
+                    AgentInput::PiSetFollowUpMode { .. } => {
+                        tracing::warn!(
+                            "Ignored Pi follow-up mode update sent to Codex input channel"
+                        );
+                    }
                     AgentInput::OpencodeQuestion { .. } => {
                         tracing::warn!(
                             "Ignored OpenCode question response sent to Codex input channel"

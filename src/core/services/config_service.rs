@@ -76,6 +76,7 @@ impl ConfigService {
                     AgentType::Codex => crate::util::Tool::Codex,
                     AgentType::Gemini => crate::util::Tool::Gemini,
                     AgentType::Opencode => crate::util::Tool::Opencode,
+                    AgentType::Pi => crate::util::Tool::Pi,
                 })
             })
             .count();

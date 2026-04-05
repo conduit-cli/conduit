@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { X, Loader2, Search, Check } from 'lucide-react';
 import { useModels } from '../hooks';
-import type { ModelInfo } from '../types';
+import type { AgentType, ModelInfo } from '../types';
 import { cn } from '../lib/cn';
 
 interface ModelSelectorDialogProps {
   isOpen: boolean;
   onClose: () => void;
   currentModel: string | null;
-  agentType: 'claude' | 'codex' | 'gemini' | 'opencode';
-  onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
-  onSetDefault: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
+  agentType: AgentType;
+  onSelect: (modelId: string, newAgentType: AgentType) => void;
+  onSetDefault: (modelId: string, newAgentType: AgentType) => void;
   isUpdating?: boolean;
   isSettingDefault?: boolean;
+  title?: string;
+  primaryActionLabel?: string;
 }
 
 export function ModelSelectorDialog({
@@ -24,6 +26,8 @@ export function ModelSelectorDialog({
   onSetDefault,
   isUpdating = false,
   isSettingDefault = false,
+  title = 'Select Model',
+  primaryActionLabel = 'Select Model',
 }: ModelSelectorDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -56,10 +60,10 @@ export function ModelSelectorDialog({
 
   // Flatten models for keyboard navigation
   const flatModels = useMemo(() => {
-    const models: { model: ModelInfo; groupAgentType: 'claude' | 'codex' | 'gemini' | 'opencode' }[] = [];
+    const models: { model: ModelInfo; groupAgentType: AgentType }[] = [];
     filteredGroups.forEach((group) => {
       group.models.forEach((model) => {
-        models.push({ model, groupAgentType: group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode' });
+        models.push({ model, groupAgentType: group.agent_type as AgentType });
       });
     });
     return models;
@@ -118,12 +122,12 @@ export function ModelSelectorDialog({
     }
   };
 
-  const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+  const handleSelect = (modelId: string, modelAgentType: AgentType) => {
     if (isBusy) return;
     onSelect(modelId, modelAgentType);
   };
 
-  const handleSetDefault = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+  const handleSetDefault = (modelId: string, modelAgentType: AgentType) => {
     if (isBusy) return;
     onSetDefault(modelId, modelAgentType);
   };
@@ -147,7 +151,7 @@ export function ModelSelectorDialog({
       <div className="flex max-h-[600px] flex-col">
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
-          <h2 className="text-lg font-semibold text-text">Select Model</h2>
+          <h2 className="text-lg font-semibold text-text">{title}</h2>
           <button
             onClick={onClose}
             disabled={isBusy}
@@ -197,7 +201,7 @@ export function ModelSelectorDialog({
                     const isSelected = model.id === currentModel && model.agent_type === agentType;
                     const isHighlighted = currentFlatIndex === selectedIndex;
                     const flatIndex = currentFlatIndex;
-                    const groupAgentType = group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode';
+                    const groupAgentType = group.agent_type as AgentType;
                     currentFlatIndex++;
 
                     return (
@@ -282,7 +286,7 @@ export function ModelSelectorDialog({
             )}
           >
             {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isUpdating ? 'Updating...' : 'Select Model'}
+            {isUpdating ? 'Updating...' : primaryActionLabel}
           </button>
         </div>
       </div>

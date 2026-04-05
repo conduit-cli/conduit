@@ -1,4 +1,4 @@
-use crate::agent::MessageDisplay;
+use crate::agent::{AgentInput, AgentType, MessageDisplay};
 use crate::ui::app::App;
 use crate::ui::app_state::ModelPickerContext;
 use crate::ui::components::ConfirmationContext;
@@ -134,15 +134,46 @@ impl App {
                             return Ok(());
                         }
                         if App::session_started(session) {
-                            let display = MessageDisplay::Error {
-                                content: "Changing reasoning effort after a session has started is not supported. Start a new session/tab."
-                                    .to_string(),
-                            };
-                            session.chat_view.push(display.to_chat_message());
-                            return Ok(());
+                            if session.agent_type == AgentType::Pi {
+                                let Some(effort) = option.effort else {
+                                    let display = MessageDisplay::Error {
+                                        content: "Auto reasoning isn't available for active Pi sessions. Pick an explicit thinking level."
+                                            .to_string(),
+                                    };
+                                    session.chat_view.push(display.to_chat_message());
+                                    return Ok(());
+                                };
+                                let Some(input_tx) = session.agent_input_tx.clone() else {
+                                    let display = MessageDisplay::Error {
+                                        content: "Pi reasoning can't be changed because the live input channel is unavailable."
+                                            .to_string(),
+                                    };
+                                    session.chat_view.push(display.to_chat_message());
+                                    return Ok(());
+                                };
+                                tokio::spawn(async move {
+                                    if let Err(err) = input_tx
+                                        .send(AgentInput::PiSetThinkingLevel { level: effort })
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to send Pi thinking level update: {}",
+                                            err
+                                        );
+                                    }
+                                });
+                                session.set_reasoning_effort(Some(effort));
+                            } else {
+                                let display = MessageDisplay::Error {
+                                    content: "Changing reasoning effort after a session has started is not supported. Start a new session/tab."
+                                        .to_string(),
+                                };
+                                session.chat_view.push(display.to_chat_message());
+                                return Ok(());
+                            }
+                        } else {
+                            session.set_reasoning_effort(option.effort);
                         }
-
-                        session.set_reasoning_effort(option.effort);
                         let msg = match option.effort {
                             Some(effort) => {
                                 format!("Reasoning effort set to: {}", effort.display_name())

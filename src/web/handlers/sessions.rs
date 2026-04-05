@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 use crate::agent::{
     load_claude_history_with_debug, load_codex_history_with_debug,
-    load_opencode_history_with_debug, AgentMode, AgentType, ModelRegistry,
+    load_opencode_history_with_debug, load_pi_history_with_debug, AgentMode, AgentType,
+    ModelRegistry,
 };
 use crate::core::resolve_repo_workspace_settings;
 use crate::core::services::session_service::CreateForkedSessionParams;
@@ -122,9 +123,10 @@ pub async fn create_session(
         "claude" => AgentType::Claude,
         "gemini" => AgentType::Gemini,
         "opencode" => AgentType::Opencode,
+        "pi" => AgentType::Pi,
         _ => {
             return Err(WebError::BadRequest(format!(
-                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+                "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
                 req.agent_type
             )));
         }
@@ -171,8 +173,9 @@ pub async fn update_session(
                 "claude" => Ok(AgentType::Claude),
                 "gemini" => Ok(AgentType::Gemini),
                 "opencode" => Ok(AgentType::Opencode),
+                "pi" => Ok(AgentType::Pi),
                 _ => Err(WebError::BadRequest(format!(
-                    "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode",
+                    "Invalid agent type: {}. Must be one of: codex, claude, gemini, opencode, pi",
                     agent_type_str
                 ))),
             },
@@ -237,6 +240,12 @@ fn load_history_for_session(session: &SessionTab) -> Vec<ChatMessage> {
             .map(|(messages, _, _)| messages)
             .unwrap_or_else(|e| {
                 tracing::warn!("Failed to load OpenCode history: {}", e);
+                Vec::new()
+            }),
+        AgentType::Pi => load_pi_history_with_debug(agent_session_id)
+            .map(|(messages, _, _)| messages)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load Pi history: {}", e);
                 Vec::new()
             }),
     };
@@ -397,6 +406,17 @@ pub async fn get_session_events(
             // Gemini history loading not supported yet
             vec![]
         }
+        AgentType::Pi => match load_pi_history_with_debug(&agent_session_id) {
+            Ok((msgs, entries, file_path)) => {
+                debug_entries = entries;
+                debug_file = Some(file_path.to_string_lossy().to_string());
+                msgs
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load Pi history: {}", e);
+                vec![]
+            }
+        },
         AgentType::Opencode => match load_opencode_history_with_debug(&agent_session_id) {
             Ok((msgs, entries, file_path)) => {
                 debug_entries = entries;

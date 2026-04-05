@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test';
-import type { QueuedMessage, Session, UiState } from '../../src/types';
+import type { ListModelsResponse, QueuedMessage, Session, UiState } from '../../src/types';
 
 export const sessionId = 'session-1';
 export const workspaceId = 'workspace-1';
@@ -314,6 +314,61 @@ export const sessionEventsResponse = {
   debug_entries: debugEntries,
 };
 
+export const settingsResponse = {
+  items: [
+    {
+      id: 'projects_directory',
+      title: 'Projects Directory',
+      description: 'Where Conduit scans for local git projects',
+      value: 'Not set',
+    },
+    {
+      id: 'default_model',
+      title: 'Default Model',
+      description: 'Agent + model used for new sessions',
+      value: 'Codex: GPT-5.4',
+    },
+    {
+      id: 'enabled_providers',
+      title: 'Enabled Providers',
+      description: 'Providers shown in model selection',
+      value: 'Claude, Codex, Gemini, OpenCode, Pi',
+    },
+    {
+      id: 'theme',
+      title: 'Theme',
+      description: 'Active color theme',
+      value: theme.displayName,
+    },
+    {
+      id: 'workspace_defaults',
+      title: 'Workspace Defaults',
+      description: 'Defaults applied when a repo has no override',
+      value: 'worktree, delete branch on, remote prompt on',
+    },
+  ],
+};
+
+export const modelsResponse: ListModelsResponse = {
+  groups: [
+    {
+      agent_type: 'pi',
+      section_title: 'Pi',
+      icon: 'π',
+      models: [
+        {
+          id: 'anthropic/claude-haiku-4-5',
+          display_name: 'anthropic/claude-haiku-4-5',
+          description: 'Pi model from anthropic',
+          is_default: true,
+          agent_type: 'pi',
+          context_window: 200000,
+        },
+      ],
+    },
+  ],
+};
+
 function fulfillJson(route: Route, payload: unknown) {
   return route.fulfill({
     status: 200,
@@ -329,6 +384,8 @@ export async function mockApi(
     uiState?: UiState;
     queueMessages?: QueuedMessage[];
     sessionEvents?: typeof sessionEventsResponse;
+    settings?: typeof settingsResponse;
+    models?: ListModelsResponse;
   } = {}
 ) {
   const effectiveSession = overrides.session ?? session;
@@ -339,6 +396,8 @@ export async function mockApi(
   };
   const queueMessages = overrides.queueMessages ?? [];
   const effectiveSessionEvents = overrides.sessionEvents ?? sessionEventsResponse;
+  const effectiveSettings = overrides.settings ?? settingsResponse;
+  const effectiveModels = overrides.models ?? modelsResponse;
   let currentTheme = theme;
 
   await page.route('**/api/**', async (route) => {
@@ -422,8 +481,16 @@ export async function mockApi(
       return fulfillJson(route, currentTheme);
     }
 
+    if (path === '/settings') {
+      return fulfillJson(route, effectiveSettings);
+    }
+
     if (path === '/models') {
-      return fulfillJson(route, { groups: [] });
+      return fulfillJson(route, effectiveModels);
+    }
+
+    if (path === '/models/default') {
+      return route.fulfill({ status: 204, body: '' });
     }
 
     return fulfillJson(route, {});

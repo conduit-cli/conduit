@@ -3,6 +3,7 @@
 use crate::agent::AgentType;
 use crate::config::Config;
 use crate::util::{Tool, ToolAvailability};
+use ratatui::layout::Rect;
 
 use super::{MultiSelectDialog, MultiSelectDialogState, MultiSelectItem};
 
@@ -18,8 +19,8 @@ impl ProviderSelectorState {
         }
     }
 
-    fn all_providers() -> [AgentType; 4] {
-        AgentType::preferred_order()
+    fn all_providers() -> Vec<AgentType> {
+        AgentType::preferred_order().to_vec()
     }
 
     fn provider_tool(provider: AgentType) -> Tool {
@@ -28,6 +29,7 @@ impl ProviderSelectorState {
             AgentType::Codex => Tool::Codex,
             AgentType::Gemini => Tool::Gemini,
             AgentType::Opencode => Tool::Opencode,
+            AgentType::Pi => Tool::Pi,
         }
     }
 
@@ -66,6 +68,10 @@ impl ProviderSelectorState {
 
     pub fn show(&mut self) {
         self.dialog.show();
+    }
+
+    pub fn update_viewport(&mut self, area: Rect) {
+        self.dialog.update_viewport(area);
     }
 
     pub fn hide(&mut self) {
@@ -152,3 +158,36 @@ impl Default for ProviderSelectorState {
 }
 
 pub type ProviderSelector = MultiSelectDialog;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_provider_dialog_scrolls_to_pi() {
+        let executable = std::env::current_exe().expect("test executable path");
+        let mut tools = ToolAvailability::default();
+        for tool in [
+            Tool::Claude,
+            Tool::Codex,
+            Tool::Gemini,
+            Tool::Opencode,
+            Tool::Pi,
+        ] {
+            assert!(tools.update_tool(tool, executable.clone()));
+        }
+
+        let mut state = ProviderSelectorState::configure_for(&Config::default(), &tools);
+        state.update_viewport(Rect::new(0, 0, 72, 12));
+
+        for _ in 0..4 {
+            state.select_next();
+        }
+
+        assert_eq!(
+            state.dialog.selected_item().map(|item| item.id.as_str()),
+            Some("pi")
+        );
+        assert_eq!(state.dialog.list.scroll_offset, 2);
+    }
+}

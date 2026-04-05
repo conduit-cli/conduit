@@ -8,6 +8,7 @@ pub mod history;
 pub mod mock;
 pub mod models;
 pub mod opencode;
+pub mod pi;
 pub mod runner;
 pub mod session;
 pub mod stream;
@@ -20,13 +21,15 @@ pub use events::*;
 pub use gemini::GeminiCliRunner;
 pub use history::{
     load_claude_history_with_debug, load_codex_history_with_debug,
-    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug, HistoryDebugEntry,
-    HistoryError,
+    load_opencode_history_for_dir_with_debug, load_opencode_history_with_debug,
+    load_pi_history_with_debug, load_pi_reasoning_effort, HistoryDebugEntry, HistoryError,
 };
 pub use mock::{MockAgentRunner, MockConfig, MockEventBuilder, MockStartError};
 pub use models::{ModelInfo, ModelRegistry};
 pub use opencode::OpencodeRunner;
+pub use pi::PiRunner;
 pub use runner::{
-    AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, ReasoningEffort,
+    AgentHandle, AgentInput, AgentMode, AgentRunner, AgentStartConfig, AgentType, PiFollowUpMode,
+    ReasoningEffort,
 };
 pub use session::{SessionId, SessionMetadata, SessionStatus};
