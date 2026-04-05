@@ -2,6 +2,7 @@ import { useHealth } from '../hooks';
 import { Circle, Settings, PanelLeft, GitBranch, GitPullRequest, Activity, Download } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { supportsPlanMode } from '../lib/agentCapabilities';
+import { agentAccentColor, agentDisplayName } from '../lib/agentMetadata';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import type { Session, Workspace, WorkspaceStatus } from '../types';
 
@@ -54,26 +55,9 @@ export function Header({
         {activeSession && (
           <div className="flex items-center gap-2 rounded-full bg-surface-elevated px-2.5 py-1 text-xs text-text">
             <span
-              className={cn(
-                'h-2 w-2 rounded-full',
-                activeSession.agent_type === 'claude'
-                  ? 'bg-orange-400'
-                  : activeSession.agent_type === 'codex'
-                  ? 'bg-green-400'
-                  : activeSession.agent_type === 'opencode'
-                  ? 'bg-teal-400'
-                  : 'bg-blue-400'
-              )}
+              className={cn('h-2 w-2 rounded-full', agentAccentColor(activeSession.agent_type))}
             />
-            <span className="capitalize">
-              {activeSession.agent_type === 'claude'
-                ? 'Claude'
-                : activeSession.agent_type === 'codex'
-                ? 'Codex'
-                : activeSession.agent_type === 'opencode'
-                ? 'OpenCode'
-                : 'Gemini'}
-            </span>
+            <span>{agentDisplayName(activeSession.agent_type, { short: true })}</span>
             {supportsPlanMode(activeSession.agent_type) && (
               <span className="text-text-muted">
                 · {effectiveAgentMode === 'plan' ? 'Plan' : 'Build'}

@@ -1,6 +1,7 @@
 // API types matching Rust backend
 
 export type WorkspaceMode = 'worktree' | 'checkout';
+export type AgentType = 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi';
 
 export interface Repository {
   id: string;
@@ -57,7 +58,7 @@ export interface Session {
   id: string;
   tab_index: number;
   workspace_id: string | null;
-  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type: AgentType;
   agent_mode: string | null;
   agent_session_id: string | null;
   model: string | null;
@@ -120,7 +121,7 @@ export interface ArchiveWorkspaceRequest {
 
 export interface CreateSessionRequest {
   workspace_id?: string;
-  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type: AgentType;
   model?: string;
 }
 
@@ -176,7 +177,7 @@ export interface BootstrapResponse {
 
 export interface ExternalSession {
   id: string;
-  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type: AgentType;
   display: string;
   project?: string | null;
   project_name?: string | null;
@@ -313,7 +314,7 @@ export interface ModelInfo {
   display_name: string;
   description: string;
   is_default: boolean;
-  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type: AgentType;
   context_window: number;
 }
 
@@ -330,12 +331,12 @@ export interface ListModelsResponse {
 
 export interface UpdateSessionRequest {
   model?: string;
-  agent_type?: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type?: AgentType;
   agent_mode?: 'build' | 'plan';
 }
 
 export interface SetDefaultModelRequest {
-  agent_type: 'claude' | 'codex' | 'gemini' | 'opencode';
+  agent_type: AgentType;
   model_id: string;
 }
 

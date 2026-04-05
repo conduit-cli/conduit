@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { X, FileText, Loader2 } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { agentAccentColor } from '../lib/agentMetadata';
 import { useProcessingSessions, useUnseenSessions } from '../hooks';
 import type { Session, Workspace, FileViewerTab } from '../types';
 
@@ -125,16 +126,7 @@ export function SessionTabs({
           // Default: agent type indicator
           return (
             <span
-              className={cn(
-                'h-2 w-2 rounded-full',
-                session.agent_type === 'claude'
-                  ? 'bg-orange-400'
-                  : session.agent_type === 'codex'
-                  ? 'bg-green-400'
-                  : session.agent_type === 'opencode'
-                  ? 'bg-teal-400'
-                  : 'bg-blue-400'
-              )}
+              className={cn('h-2 w-2 rounded-full', agentAccentColor(session.agent_type))}
             />
           );
         };

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, type KeyboardEvent } from 'react';
 import { Send, Loader2, GitBranch, ListPlus, ImagePlus, X, Square } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { agentDisplayName } from '../lib/agentMetadata';
 import { ModeToggle } from './ModeToggle';
 
 interface ChatInputProps {
@@ -21,7 +22,7 @@ interface ChatInputProps {
   notice?: string | null;
   // Session/workspace info for status line
   modelDisplayName?: string | null;
-  agentType?: 'claude' | 'codex' | 'gemini' | 'opencode' | null;
+  agentType?: 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi' | null;
   agentMode?: string | null;
   gitStats?: { additions: number; deletions: number } | null;
   branch?: string | null;
@@ -416,13 +417,7 @@ export function ChatInput({
           )}
           {agentType && (
             <span className="shrink-0">
-              {agentType === 'claude'
-                ? 'Claude Code'
-                : agentType === 'codex'
-                  ? 'Codex CLI'
-                  : agentType === 'opencode'
-                    ? 'OpenCode'
-                    : 'Gemini CLI'}
+              {agentDisplayName(agentType)}
             </span>
           )}
           {!modelDisplayName && !agentType && !canChangeModel && (

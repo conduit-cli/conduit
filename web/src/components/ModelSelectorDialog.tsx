@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { X, Loader2, Search, Check } from 'lucide-react';
 import { useModels } from '../hooks';
-import type { ModelInfo } from '../types';
+import type { AgentType, ModelInfo } from '../types';
 import { cn } from '../lib/cn';
 
 interface ModelSelectorDialogProps {
   isOpen: boolean;
   onClose: () => void;
   currentModel: string | null;
-  agentType: 'claude' | 'codex' | 'gemini' | 'opencode';
-  onSelect: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
-  onSetDefault: (modelId: string, newAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => void;
+  agentType: AgentType;
+  onSelect: (modelId: string, newAgentType: AgentType) => void;
+  onSetDefault: (modelId: string, newAgentType: AgentType) => void;
   isUpdating?: boolean;
   isSettingDefault?: boolean;
 }
@@ -56,10 +56,10 @@ export function ModelSelectorDialog({
 
   // Flatten models for keyboard navigation
   const flatModels = useMemo(() => {
-    const models: { model: ModelInfo; groupAgentType: 'claude' | 'codex' | 'gemini' | 'opencode' }[] = [];
+    const models: { model: ModelInfo; groupAgentType: AgentType }[] = [];
     filteredGroups.forEach((group) => {
       group.models.forEach((model) => {
-        models.push({ model, groupAgentType: group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode' });
+        models.push({ model, groupAgentType: group.agent_type as AgentType });
       });
     });
     return models;
@@ -118,12 +118,12 @@ export function ModelSelectorDialog({
     }
   };
 
-  const handleSelect = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+  const handleSelect = (modelId: string, modelAgentType: AgentType) => {
     if (isBusy) return;
     onSelect(modelId, modelAgentType);
   };
 
-  const handleSetDefault = (modelId: string, modelAgentType: 'claude' | 'codex' | 'gemini' | 'opencode') => {
+  const handleSetDefault = (modelId: string, modelAgentType: AgentType) => {
     if (isBusy) return;
     onSetDefault(modelId, modelAgentType);
   };
@@ -197,7 +197,7 @@ export function ModelSelectorDialog({
                     const isSelected = model.id === currentModel && model.agent_type === agentType;
                     const isHighlighted = currentFlatIndex === selectedIndex;
                     const flatIndex = currentFlatIndex;
-                    const groupAgentType = group.agent_type as 'claude' | 'codex' | 'gemini' | 'opencode';
+                    const groupAgentType = group.agent_type as AgentType;
                     currentFlatIndex++;
 
                     return (
