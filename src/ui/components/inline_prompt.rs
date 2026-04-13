@@ -3,6 +3,7 @@
 //! Emulates Claude Code CLI's inline UI patterns for interactive tool responses.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -652,7 +653,7 @@ impl InlinePromptState {
                     self.append_submit_view_lines(&mut lines, questions);
                 } else if let Some(question) = self.current_question() {
                     // Question content
-                    self.append_question_lines(&mut lines, question, questions.len() > 1);
+                    self.append_question_lines(&mut lines, question, questions.len() > 1, width);
                 }
             }
             InlinePromptType::ExitPlanMode {
@@ -668,10 +669,30 @@ impl InlinePromptState {
                 // Top dashed line
                 lines.push(self.dashed_line(width));
 
-                // Plan content (limited to 15 lines)
+                // Plan content (limited to 15 display lines, with word-wrapping)
                 let plan_style = Style::default().fg(text_secondary());
-                for line in plan_content.lines().take(15) {
-                    lines.push(Line::from(Span::styled(format!(" {}", line), plan_style)));
+                let content_width = width.saturating_sub(1); // subtract 1 for leading " "
+                let max_display_lines = 15;
+                let mut displayed = 0;
+                'plan: for line in plan_content.lines() {
+                    if displayed >= max_display_lines {
+                        break;
+                    }
+                    if line.is_empty() {
+                        lines.push(Line::from(Span::styled(" ".to_string(), plan_style)));
+                        displayed += 1;
+                        continue;
+                    }
+                    for wrapped in word_wrap_line(line, content_width) {
+                        if displayed >= max_display_lines {
+                            break 'plan;
+                        }
+                        lines.push(Line::from(Span::styled(
+                            format!(" {}", wrapped),
+                            plan_style,
+                        )));
+                        displayed += 1;
+                    }
                 }
 
                 // Bottom dashed line
@@ -699,7 +720,7 @@ impl InlinePromptState {
 
                 if self.input_mode {
                     lines.push(Line::from("")); // blank line
-                    lines.push(self.text_input_line());
+                    lines.extend(self.text_input_lines_wrapped(width));
                     lines.push(Line::from("")); // blank line
                     lines.push(
                         self.instruction_bar_line(&[("Enter", "submit"), ("Esc", "go back")]),
@@ -843,12 +864,15 @@ impl InlinePromptState {
         lines: &mut Vec<Line<'static>>,
         question: &UserQuestion,
         is_multi_question: bool,
+        width: usize,
     ) {
-        // Question text
-        lines.push(Line::from(Span::styled(
-            question.question.clone(),
-            Style::default().fg(text_primary()),
-        )));
+        // Question text (word-wrapped to terminal width)
+        for wrapped in word_wrap_line(&question.question, width) {
+            lines.push(Line::from(Span::styled(
+                wrapped,
+                Style::default().fg(text_primary()),
+            )));
+        }
         lines.push(Line::from("")); // blank line
 
         if self.input_mode {
@@ -974,6 +998,88 @@ impl InlinePromptState {
             Span::styled(format!("{}. ", index + 1), number_style),
             Span::styled(label, label_style),
         ])
+    }
+
+    /// Build wrapped text input lines for render_as_lines.
+    ///
+    /// Returns one `Line` per terminal row needed, splitting the input text
+    /// at `width` columns so it doesn't push off the right edge.
+    fn text_input_lines_wrapped(&self, width: usize) -> Vec<Line<'static>> {
+        let prompt_style = Style::default().fg(accent_primary());
+        let input_style = Style::default().fg(text_primary());
+        let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
+
+        let input = &self.text_input.input;
+        let cursor_byte = self.text_input.cursor.min(input.len());
+
+        // Convert byte cursor offset to char index
+        let cursor_char_idx = input[..cursor_byte].chars().count();
+        let chars: Vec<char> = input.chars().collect();
+        let total = chars.len();
+
+        let prefix_width = 2usize; // "> "
+        let mut rows: Vec<Line<'static>> = Vec::new();
+        let mut char_start = 0usize;
+        let mut first = true;
+
+        loop {
+            // Columns available for text on this row
+            let text_capacity = if first {
+                width.saturating_sub(prefix_width).max(1)
+            } else {
+                width.max(1)
+            };
+
+            let char_end = (char_start + text_capacity).min(total);
+            let is_last = char_end >= total;
+
+            // The cursor belongs to this row if it falls within [char_start, char_end),
+            // or — for the very last row — at char_end (end-of-input position).
+            let cursor_in_row = if is_last {
+                cursor_char_idx >= char_start
+            } else {
+                cursor_char_idx >= char_start && cursor_char_idx < char_end
+            };
+
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if first {
+                spans.push(Span::styled("> ".to_string(), prompt_style));
+            }
+
+            if cursor_in_row {
+                let rel = cursor_char_idx - char_start;
+                let before: String = chars[char_start..char_start + rel].iter().collect();
+                if !before.is_empty() {
+                    spans.push(Span::styled(before, input_style));
+                }
+                if cursor_char_idx < total {
+                    let cc: String = std::iter::once(chars[cursor_char_idx]).collect();
+                    let after: String = chars[cursor_char_idx + 1..char_end].iter().collect();
+                    spans.push(Span::styled(cc, cursor_style));
+                    if !after.is_empty() {
+                        spans.push(Span::styled(after, input_style));
+                    }
+                } else {
+                    // Cursor sits after the last character
+                    spans.push(Span::styled(" ", cursor_style));
+                }
+            } else {
+                let text: String = chars[char_start..char_end].iter().collect();
+                if !text.is_empty() {
+                    spans.push(Span::styled(text, input_style));
+                }
+            }
+
+            rows.push(Line::from(spans));
+
+            if is_last {
+                break;
+            }
+            char_start = char_end;
+            first = false;
+        }
+
+        rows
     }
 
     /// Build the text input line with cursor
@@ -1238,21 +1344,54 @@ impl<'a> InlinePrompt<'a> {
         // Render prompt and input
         let prompt_style = Style::default().fg(accent_primary());
         let input_style = Style::default().fg(text_primary());
+        let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
 
-        // Draw prompt
+        // Draw prompt prefix on first line
         buf[(area.x, area.y)].set_char('>').set_style(prompt_style);
         buf[(area.x + 1, area.y)]
             .set_char(' ')
             .set_style(prompt_style);
 
-        // Draw input text with cursor
+        // Build spans with cursor highlighted so Paragraph wrapping positions it correctly
+        let input = &self.state.text_input.input;
+        let cursor_pos = self.state.text_input.cursor;
+        let spans = if input.is_empty() {
+            vec![Span::styled(" ", cursor_style)]
+        } else if cursor_pos >= input.len() {
+            vec![
+                Span::styled(input.clone(), input_style),
+                Span::styled(" ", cursor_style),
+            ]
+        } else {
+            let (before, after) = input.split_at(cursor_pos);
+            let (cursor_char, rest) = after.split_at(1);
+            vec![
+                Span::styled(before.to_string(), input_style),
+                Span::styled(cursor_char.to_string(), cursor_style),
+                Span::styled(rest.to_string(), input_style),
+            ]
+        };
+
+        // Draw input text with wrapping in the area to the right of the prompt prefix
         let input_area = Rect {
             x: area.x + 2,
             y: area.y,
             width: area.width.saturating_sub(2),
-            height: 1,
+            height: area.height,
         };
-        self.state.text_input.render(input_area, buf, input_style);
+        Paragraph::new(Line::from(spans))
+            .wrap(Wrap { trim: false })
+            .render(input_area, buf);
+    }
+
+    /// Compute how many lines the text input will occupy given the available width.
+    fn input_height(&self, available_width: u16) -> u16 {
+        if available_width == 0 {
+            return 1;
+        }
+        // +1 for the cursor space appended after the text
+        let text_len = (self.state.text_input.input.len() + 1) as u16;
+        ((text_len + available_width - 1) / available_width).max(1)
     }
 }
 
@@ -1376,17 +1515,19 @@ impl Widget for InlinePrompt<'_> {
                     y += 2;
 
                     if self.state.input_mode {
-                        // Render text input
+                        // Render text input — height grows with content to enable line wrapping
+                        let input_w = area.width.saturating_sub(2); // 2 for "> "
+                        let input_h = self.input_height(input_w);
                         self.render_input(
                             Rect {
                                 x: area.x,
                                 y,
                                 width: area.width,
-                                height: 1,
+                                height: input_h,
                             },
                             buf,
                         );
-                        y += 2;
+                        y += input_h + 1;
 
                         // Input mode instructions
                         InstructionBar::new(vec![("Enter", "submit"), ("Esc", "go back")]).render(
@@ -1563,17 +1704,19 @@ impl Widget for InlinePrompt<'_> {
                         );
                     y += 2;
 
-                    // Text input
+                    // Text input — height grows with content to enable line wrapping
+                    let input_w = area.width.saturating_sub(3); // 1 indent + 2 for "> "
+                    let input_h = self.input_height(input_w);
                     self.render_input(
                         Rect {
                             x: area.x + 1,
                             y,
                             width: area.width.saturating_sub(1),
-                            height: 1,
+                            height: input_h,
                         },
                         buf,
                     );
-                    y += 2;
+                    y += input_h + 1;
 
                     // File path
                     let path_style = Style::default().fg(text_faint());
@@ -1702,4 +1845,37 @@ impl Widget for InlinePrompt<'_> {
             }
         }
     }
+}
+
+/// Word-wrap a single line of text to fit within max_width display columns.
+/// Returns one or more sub-lines. Uses unicode display width for correctness.
+fn word_wrap_line(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || text.is_empty() {
+        return vec![text.to_string()];
+    }
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    for word in text.split_whitespace() {
+        let word_width = UnicodeWidthStr::width(word);
+        if current.is_empty() {
+            current.push_str(word);
+            current_width = word_width;
+        } else if current_width + 1 + word_width <= max_width {
+            current.push(' ');
+            current.push_str(word);
+            current_width += 1 + word_width;
+        } else {
+            result.push(std::mem::take(&mut current));
+            current.push_str(word);
+            current_width = word_width;
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    if result.is_empty() {
+        result.push(String::new());
+    }
+    result
 }
