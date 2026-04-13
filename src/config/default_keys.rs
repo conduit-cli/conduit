@@ -183,8 +183,8 @@ pub fn default_keybindings() -> KeybindingConfig {
         KeyCombo::new(KeyCode::Esc, KeyModifiers::NONE),
         Action::ScrollToBottom,
     );
-    bind(chat, "M-<Up>", Action::ScrollPrevUserMessage);
-    bind(chat, "M-<Down>", Action::ScrollNextUserMessage);
+    bind(chat, "M-<Up>", Action::ScrollUp(1));
+    bind(chat, "M-<Down>", Action::ScrollDown(1));
 
     // Tab toggles Plan/Build mode
     chat.insert(
