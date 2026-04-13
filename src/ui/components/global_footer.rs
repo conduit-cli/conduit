@@ -37,6 +37,8 @@ impl FooterContext {
             ViewMode::Chat => {
                 if input_mode == InputMode::SidebarNavigation {
                     FooterContext::Sidebar
+                } else if input_mode == InputMode::FileViewer {
+                    FooterContext::FileViewer
                 } else {
                     FooterContext::Chat
                 }
