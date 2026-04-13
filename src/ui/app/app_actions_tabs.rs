@@ -47,7 +47,6 @@ impl App {
                 effects.push(Effect::SaveSessionState);
             }
             Action::NextTab => {
-                // Include sidebar in tab cycle when visible
                 if self.state.input_mode == InputMode::SidebarNavigation {
                     // From sidebar, go to first tab
                     if !self.state.tab_manager.is_empty() {
@@ -57,21 +56,8 @@ impl App {
                         self.sync_input_mode_for_active_tab();
                         self.sync_sidebar_to_active_tab();
                     }
-                } else if self.state.sidebar_state.visible {
-                    // Check if on last tab - if so, go to sidebar
-                    let current = self.state.tab_manager.active_index();
-                    let count = self.state.tab_manager.len();
-                    if count > 0 && current == count - 1 {
-                        // On last tab, go to sidebar
-                        self.state.sidebar_state.set_focused(true);
-                        self.state.input_mode = InputMode::SidebarNavigation;
-                    } else {
-                        self.state.tab_manager.next_tab();
-                        self.sync_input_mode_for_active_tab();
-                        self.sync_sidebar_to_active_tab();
-                        self.sync_footer_spinner();
-                    }
                 } else {
+                    // Cycle through workspaces, wrapping around (sidebar not in cycle)
                     self.state.tab_manager.next_tab();
                     self.sync_input_mode_for_active_tab();
                     self.sync_sidebar_to_active_tab();
@@ -79,7 +65,6 @@ impl App {
                 }
             }
             Action::PrevTab => {
-                // Include sidebar in tab cycle when visible
                 if self.state.input_mode == InputMode::SidebarNavigation {
                     // From sidebar, go to last tab
                     let count = self.state.tab_manager.len();
@@ -91,20 +76,8 @@ impl App {
                         self.sync_sidebar_to_active_tab();
                         self.sync_footer_spinner();
                     }
-                } else if self.state.sidebar_state.visible {
-                    // Check if on first tab - if so, go to sidebar
-                    let current = self.state.tab_manager.active_index();
-                    if current == 0 {
-                        // On first tab, go to sidebar
-                        self.state.sidebar_state.set_focused(true);
-                        self.state.input_mode = InputMode::SidebarNavigation;
-                    } else {
-                        self.state.tab_manager.prev_tab();
-                        self.sync_input_mode_for_active_tab();
-                        self.sync_sidebar_to_active_tab();
-                        self.sync_footer_spinner();
-                    }
                 } else {
+                    // Cycle through workspaces in reverse, wrapping around (sidebar not in cycle)
                     self.state.tab_manager.prev_tab();
                     self.sync_input_mode_for_active_tab();
                     self.sync_sidebar_to_active_tab();
