@@ -36,7 +36,13 @@ impl App {
             }
             Action::ExitSidebarMode => {
                 self.state.sidebar_state.set_focused(false);
-                self.state.input_mode = InputMode::Normal;
+                // If a confirmation dialog is active, return focus to it rather
+                // than dropping to Normal (which routes keys to the prompt input).
+                if self.state.confirmation_dialog_state.visible {
+                    self.state.input_mode = InputMode::Confirming;
+                } else {
+                    self.state.input_mode = InputMode::Normal;
+                }
             }
             Action::ExpandOrSelect => {
                 // Same as Confirm for sidebar
