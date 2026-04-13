@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 use chrono::Utc;
 use crossterm::{
-    event::{EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers, MouseEventKind},
+    event::{EnableBracketedPaste, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers, MouseEventKind},
     execute,
     terminal::{enable_raw_mode, EnterAlternateScreen},
 };
@@ -972,7 +972,7 @@ impl App {
         // Create terminal guard AFTER enabling features - Drop will clean up on any exit path
         let mut guard = TerminalGuard::new(keyboard_enhancement_enabled);
 
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
 
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
@@ -8600,7 +8600,7 @@ impl App {
     ) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
         terminal.clear()?;
         Ok(())
     }
