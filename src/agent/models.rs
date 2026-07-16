@@ -198,6 +198,14 @@ impl ModelRegistry {
             ),
             ModelInfo::new(
                 AgentType::Claude,
+                "claude-fable-5",
+                "Fable 5",
+                "fable",
+                "Most capable Anthropic model, 1M context",
+                Self::CLAUDE_1M_CONTEXT_WINDOW,
+            ),
+            ModelInfo::new(
+                AgentType::Claude,
                 "sonnet",
                 "Sonnet 4.6",
                 "sonnet",
