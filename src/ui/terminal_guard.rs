@@ -4,7 +4,7 @@
 //! when the application exits, whether normally, via early return, or panic.
 
 use crossterm::{
-    event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
+    event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags},
     execute,
     terminal::{disable_raw_mode, LeaveAlternateScreen},
 };
@@ -66,7 +66,12 @@ impl TerminalGuard {
             }
         }
         disable_raw_mode()?;
-        execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
+        execute!(
+            stdout,
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste
+        )?;
         stdout.flush()?;
         Ok(())
     }
@@ -103,7 +108,12 @@ pub fn install_panic_hook() {
         if let Err(e) = disable_raw_mode() {
             tracing::debug!(error = %e, "Failed to disable raw mode in panic hook");
         }
-        if let Err(e) = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture) {
+        if let Err(e) = execute!(
+            stdout,
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste
+        ) {
             tracing::debug!(error = %e, "Failed to restore terminal screen in panic hook");
         }
         if let Err(e) = stdout.flush() {
