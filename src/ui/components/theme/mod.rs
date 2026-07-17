@@ -51,6 +51,15 @@ static THEME_REVISION: AtomicU64 = AtomicU64::new(0);
 /// Global theme registry for discovery.
 static REGISTRY: OnceLock<RwLock<ThemeRegistry>> = OnceLock::new();
 
+/// Serializes tests that mutate the process-global theme.
+///
+/// The current theme is shared across the whole process, so tests that call
+/// [`set_theme`] and then observe [`current_theme`] must run one at a time or
+/// they race on each other's writes. Every theme-mutating test acquires this
+/// guard for its duration via its module's `preserve_theme` helper.
+#[cfg(test)]
+pub static THEME_TEST_GUARD: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 fn theme_lock() -> &'static RwLock<Theme> {
     THEME.get_or_init(|| RwLock::new(Theme::default()))
 }

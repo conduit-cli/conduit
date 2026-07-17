@@ -556,7 +556,7 @@ mod tests {
     use super::*;
     use crate::ui::components::{set_theme, Theme};
 
-    struct ThemeReset(Theme);
+    struct ThemeReset(Theme, #[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
 
     impl Drop for ThemeReset {
         fn drop(&mut self) {
@@ -565,7 +565,9 @@ mod tests {
     }
 
     fn preserve_theme() -> ThemeReset {
-        ThemeReset(current_theme().clone())
+        // Hold the shared guard so theme-mutating tests don't race on global state.
+        let guard = crate::ui::components::theme::THEME_TEST_GUARD.lock();
+        ThemeReset(current_theme().clone(), guard)
     }
 
     #[test]
