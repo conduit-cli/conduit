@@ -722,6 +722,8 @@ impl App {
         let x = mouse.column;
         let y = mouse.row;
 
+        let scroll_step = self.config().ui.mouse_scroll_lines.max(1);
+
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 // Route scroll to appropriate component based on mode
@@ -754,20 +756,20 @@ impl App {
                 } else if self.handle_tab_bar_wheel(x, y, true) {
                     return Ok(Vec::new());
                 } else if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
-                    file_session.scroll_up(1);
-                    self.record_scroll(1);
+                    file_session.scroll_up(scroll_step);
+                    self.record_scroll(scroll_step);
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     if let Some(session) = self.state.tab_manager.active_session_mut() {
                         if session.raw_events_view.is_detail_visible() {
-                            session.raw_events_view.event_detail.scroll_up(3);
+                            session.raw_events_view.event_detail.scroll_up(scroll_step);
                         } else {
-                            session.raw_events_view.scroll_up(3);
+                            session.raw_events_view.scroll_up(scroll_step);
                         }
                     }
-                    self.record_scroll(3);
+                    self.record_scroll(scroll_step);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.chat_view.scroll_up(1);
-                    self.record_scroll(1);
+                    session.chat_view.scroll_up(scroll_step);
+                    self.record_scroll(scroll_step);
                 }
                 Ok(Vec::new())
             }
@@ -802,8 +804,8 @@ impl App {
                 } else if self.handle_tab_bar_wheel(x, y, false) {
                     return Ok(Vec::new());
                 } else if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
-                    file_session.scroll_down(1);
-                    self.record_scroll(1);
+                    file_session.scroll_down(scroll_step);
+                    self.record_scroll(scroll_step);
                 } else if self.state.view_mode == ViewMode::RawEvents {
                     let list_height = self.raw_events_list_visible_height();
                     let detail_height = self.raw_events_detail_visible_height();
@@ -811,18 +813,18 @@ impl App {
                         if session.raw_events_view.is_detail_visible() {
                             let content_height = session.raw_events_view.detail_content_height();
                             session.raw_events_view.event_detail.scroll_down(
-                                3,
+                                scroll_step,
                                 content_height,
                                 detail_height,
                             );
                         } else {
-                            session.raw_events_view.scroll_down(3, list_height);
+                            session.raw_events_view.scroll_down(scroll_step, list_height);
                         }
                     }
-                    self.record_scroll(3);
+                    self.record_scroll(scroll_step);
                 } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-                    session.chat_view.scroll_down(1);
-                    self.record_scroll(1);
+                    session.chat_view.scroll_down(scroll_step);
+                    self.record_scroll(scroll_step);
                 }
                 Ok(Vec::new())
             }

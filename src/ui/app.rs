@@ -11433,6 +11433,8 @@ mod tests {
         app.state.tab_manager.open_file(path).expect("open file");
         app.sync_input_mode_for_active_tab();
 
+        // Each wheel tick scrolls `mouse_scroll_lines` lines in content views.
+        let step = app.config().ui.mouse_scroll_lines;
         let mut pending_up = 0usize;
         let mut pending_down = 4usize;
         app.flush_scroll_deltas(&mut pending_up, &mut pending_down);
@@ -11445,7 +11447,7 @@ mod tests {
                 .active_file_viewer()
                 .expect("file viewer missing")
                 .scroll_offset,
-            4
+            4 * step
         );
     }
 

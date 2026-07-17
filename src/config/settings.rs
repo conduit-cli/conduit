@@ -124,6 +124,8 @@ pub struct SelectionConfig {
 #[derive(Debug, Clone, Copy)]
 pub struct UiConfig {
     pub show_chat_scrollbar: bool,
+    /// Number of lines to scroll per mouse-wheel tick in content views
+    pub mouse_scroll_lines: usize,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -135,6 +137,7 @@ pub struct TomlSelectionConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TomlUiConfig {
     pub show_chat_scrollbar: Option<bool>,
+    pub mouse_scroll_lines: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -219,6 +222,7 @@ impl Default for Config {
             },
             ui: UiConfig {
                 show_chat_scrollbar: false,
+                mouse_scroll_lines: 3,
             },
             web_status: WebStatusConfig {
                 initial_scan: true,
@@ -715,6 +719,9 @@ impl Config {
                     if let Some(ui) = toml_config.ui {
                         if let Some(show_chat_scrollbar) = ui.show_chat_scrollbar {
                             config.ui.show_chat_scrollbar = show_chat_scrollbar;
+                        }
+                        if let Some(mouse_scroll_lines) = ui.mouse_scroll_lines {
+                            config.ui.mouse_scroll_lines = mouse_scroll_lines.max(1);
                         }
                     }
                     // Load web status configuration

@@ -61,13 +61,19 @@ impl App {
             return;
         }
 
+        // Content views scroll multiple lines per wheel tick; menu selectors move
+        // one entry per tick regardless of this factor.
+        let step = self.config().ui.mouse_scroll_lines.max(1);
+        let up_lines = pending_up.saturating_mul(step);
+        let down_lines = pending_down.saturating_mul(step);
+
         if self.state.input_mode == InputMode::ShowingHelp {
             // Route scroll to help dialog
-            if *pending_up > 0 {
-                self.state.help_dialog_state.scroll_up(*pending_up);
+            if up_lines > 0 {
+                self.state.help_dialog_state.scroll_up(up_lines);
             }
-            if *pending_down > 0 {
-                self.state.help_dialog_state.scroll_down(*pending_down);
+            if down_lines > 0 {
+                self.state.help_dialog_state.scroll_down(down_lines);
             }
         } else if self.state.input_mode == InputMode::PickingProject
             && self.state.project_picker_state.is_visible()
@@ -158,11 +164,11 @@ impl App {
                 .unwrap_or(20)
                 .max(1);
             if let Some(file_session) = self.state.tab_manager.active_file_viewer_mut() {
-                if *pending_up > 0 {
-                    file_session.scroll_up(*pending_up);
+                if up_lines > 0 {
+                    file_session.scroll_up(up_lines);
                 }
-                if *pending_down > 0 {
-                    file_session.scroll_down_clamped(*pending_down, visible_height);
+                if down_lines > 0 {
+                    file_session.scroll_down_clamped(down_lines, visible_height);
                 }
             }
         } else if self.state.view_mode == ViewMode::RawEvents {
@@ -172,33 +178,31 @@ impl App {
                 if session.raw_events_view.is_detail_visible() {
                     let content_height = session.raw_events_view.detail_content_height();
                     let visible_height = detail_height;
-                    if *pending_up > 0 {
-                        session.raw_events_view.event_detail.scroll_up(*pending_up);
+                    if up_lines > 0 {
+                        session.raw_events_view.event_detail.scroll_up(up_lines);
                     }
-                    if *pending_down > 0 {
+                    if down_lines > 0 {
                         session.raw_events_view.event_detail.scroll_down(
-                            *pending_down,
+                            down_lines,
                             content_height,
                             visible_height,
                         );
                     }
                 } else {
-                    if *pending_up > 0 {
-                        session.raw_events_view.scroll_up(*pending_up);
+                    if up_lines > 0 {
+                        session.raw_events_view.scroll_up(up_lines);
                     }
-                    if *pending_down > 0 {
-                        session
-                            .raw_events_view
-                            .scroll_down(*pending_down, list_height);
+                    if down_lines > 0 {
+                        session.raw_events_view.scroll_down(down_lines, list_height);
                     }
                 }
             }
         } else if let Some(session) = self.state.tab_manager.active_session_mut() {
-            if *pending_up > 0 {
-                session.chat_view.scroll_up(*pending_up);
+            if up_lines > 0 {
+                session.chat_view.scroll_up(up_lines);
             }
-            if *pending_down > 0 {
-                session.chat_view.scroll_down(*pending_down);
+            if down_lines > 0 {
+                session.chat_view.scroll_down(down_lines);
             }
         }
 

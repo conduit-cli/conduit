@@ -88,6 +88,8 @@
 # [ui]
 # # Show a minimal scrollbar in the chat view (default: false)
 # show_chat_scrollbar = false
+# # Lines scrolled per mouse-wheel tick in content views (default: 3)
+# mouse_scroll_lines = 3
 #
 # ============================================================================
 # Web Workspace Status
