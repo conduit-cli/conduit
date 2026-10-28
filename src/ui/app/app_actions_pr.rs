@@ -8,10 +8,7 @@ impl App {
         let tab_index = self.state.tab_manager.active_index();
         let session = self.state.tab_manager.active_session()?;
 
-        let working_dir = match &session.working_dir {
-            Some(d) => d.clone(),
-            None => return None, // No working dir
-        };
+        let working_dir = session.working_dir.as_ref()?.clone();
 
         // Show loading dialog immediately
         self.state.close_overlays();

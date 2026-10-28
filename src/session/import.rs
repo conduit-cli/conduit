@@ -131,7 +131,7 @@ pub fn discover_all_sessions() -> Vec<ExternalSession> {
     sessions.extend(discover_opencode_sessions());
 
     // Sort by timestamp descending (most recent first)
-    sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.timestamp));
     sessions
 }
 

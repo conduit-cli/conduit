@@ -289,7 +289,8 @@ impl SessionImportPickerState {
             self.sessions.push(session);
         }
         // Re-sort by timestamp (most recent first)
-        self.sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        self.sessions
+            .sort_by_key(|session| std::cmp::Reverse(session.timestamp));
         // Reapply filters
         self.filter();
     }

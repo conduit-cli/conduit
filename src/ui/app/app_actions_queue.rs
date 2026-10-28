@@ -42,21 +42,19 @@ impl App {
                     }
                 }
             }
-            Action::QueueDelete => {
-                if self.state.input_mode == InputMode::QueueEditing {
-                    let mut should_close = false;
-                    if let Some(session) = self.state.tab_manager.active_session_mut() {
-                        if let Some(idx) = session.queue_selection {
-                            session.remove_queue_at(idx);
-                        }
-                        crate::ui::app_queue::clamp_queue_selection(session);
-                        if session.queued_messages.is_empty() {
-                            should_close = true;
-                        }
+            Action::QueueDelete if self.state.input_mode == InputMode::QueueEditing => {
+                let mut should_close = false;
+                if let Some(session) = self.state.tab_manager.active_session_mut() {
+                    if let Some(idx) = session.queue_selection {
+                        session.remove_queue_at(idx);
                     }
-                    if should_close {
-                        self.close_queue_editor();
+                    crate::ui::app_queue::clamp_queue_selection(session);
+                    if session.queued_messages.is_empty() {
+                        should_close = true;
                     }
+                }
+                if should_close {
+                    self.close_queue_editor();
                 }
             }
             _ => {}

@@ -225,6 +225,10 @@ impl ModelRegistry {
 
     /// Get available models for Codex CLI
     pub fn codex_models() -> Vec<ModelInfo> {
+        super::codex_models::models().unwrap_or_else(Self::fallback_codex_models)
+    }
+
+    pub(crate) fn fallback_codex_models() -> Vec<ModelInfo> {
         vec![
             ModelInfo::new(
                 AgentType::Codex,
@@ -356,7 +360,11 @@ impl ModelRegistry {
     pub fn default_model(agent_type: AgentType) -> String {
         match agent_type {
             AgentType::Claude => "opus".to_string(),
-            AgentType::Codex => "gpt-5.4".to_string(),
+            AgentType::Codex => Self::codex_models()
+                .into_iter()
+                .find(|model| model.is_default)
+                .map(|model| model.id)
+                .unwrap_or_else(|| "gpt-5.4".to_string()),
             AgentType::Gemini => "gemini-2.5-pro".to_string(),
             AgentType::Opencode => Self::OPENCODE_DEFAULT_MODEL_ID.to_string(),
         }

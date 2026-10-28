@@ -142,20 +142,18 @@ impl App {
                     self.open_settings_menu();
                 }
             }
-            Action::ArchiveOrRemove => {
-                if self.state.input_mode == InputMode::SidebarNavigation {
-                    let selected = self.state.sidebar_state.tree_state.selected;
-                    if let Some(node) = self.state.sidebar_data.get_at(selected) {
-                        use crate::ui::components::NodeType;
-                        match node.node_type {
-                            NodeType::Workspace => {
-                                self.initiate_archive_workspace(node.id);
-                            }
-                            NodeType::Repository => {
-                                self.initiate_remove_project(node.id);
-                            }
-                            _ => {}
+            Action::ArchiveOrRemove if self.state.input_mode == InputMode::SidebarNavigation => {
+                let selected = self.state.sidebar_state.tree_state.selected;
+                if let Some(node) = self.state.sidebar_data.get_at(selected) {
+                    use crate::ui::components::NodeType;
+                    match node.node_type {
+                        NodeType::Workspace => {
+                            self.initiate_archive_workspace(node.id);
                         }
+                        NodeType::Repository => {
+                            self.initiate_remove_project(node.id);
+                        }
+                        _ => {}
                     }
                 }
             }

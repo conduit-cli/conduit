@@ -64,13 +64,11 @@ impl App {
                     }
                 }
             }
-            Action::Collapse => {
-                if self.state.input_mode == InputMode::SidebarNavigation {
-                    let selected = self.state.sidebar_state.tree_state.selected;
-                    if let Some(node) = self.state.sidebar_data.get_at(selected) {
-                        if !node.is_leaf() && node.expanded {
-                            self.state.sidebar_data.toggle_at(selected);
-                        }
+            Action::Collapse if self.state.input_mode == InputMode::SidebarNavigation => {
+                let selected = self.state.sidebar_state.tree_state.selected;
+                if let Some(node) = self.state.sidebar_data.get_at(selected) {
+                    if !node.is_leaf() && node.expanded {
+                        self.state.sidebar_data.toggle_at(selected);
                     }
                 }
             }

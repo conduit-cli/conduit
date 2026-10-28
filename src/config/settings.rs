@@ -639,7 +639,13 @@ impl Config {
                             (model_cfg.agent.as_deref(), model_cfg.model.as_deref())
                         {
                             let agent_type = AgentType::parse(agent);
-                            if let Some(model) = ModelRegistry::find_model(agent_type, model_id) {
+                            if agent_type == AgentType::Codex && !model_id.trim().is_empty() {
+                                // Discovery may still be in flight or temporarily unavailable.
+                                config.default_agent = agent_type;
+                                config.default_model = Some(model_id.to_string());
+                            } else if let Some(model) =
+                                ModelRegistry::find_model(agent_type, model_id)
+                            {
                                 config.default_agent = agent_type;
                                 config.default_model = Some(model.id);
                             }
@@ -829,6 +835,9 @@ impl Config {
     pub fn default_model_for(&self, agent_type: AgentType) -> String {
         if agent_type == self.default_agent {
             if let Some(id) = self.default_model.as_deref() {
+                if agent_type == AgentType::Codex && !id.trim().is_empty() {
+                    return id.to_string();
+                }
                 if let Some(model) = ModelRegistry::find_model(agent_type, id) {
                     return model.id;
                 }
@@ -1094,6 +1103,24 @@ mod tests {
         assert!(
             COMMAND_NAMES.contains(&"handoff_session"),
             "handoff_session should be present in COMMAND_NAMES"
+        );
+    }
+}
+
+#[cfg(test)]
+mod codex_model_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_codex_default_survives_missing_catalog_entry() {
+        let config = Config {
+            default_agent: AgentType::Codex,
+            default_model: Some("future-or-offline-model".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.default_model_for(AgentType::Codex),
+            "future-or-offline-model"
         );
     }
 }

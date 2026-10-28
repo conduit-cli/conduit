@@ -106,6 +106,15 @@ impl ContextWindowService {
             }
         }
 
+        if agent_type == AgentType::Codex {
+            // model/list has no context-window metadata. Do not label a generic
+            // estimate for a newly discovered model as authoritative catalog data.
+            return ModelRegistry::fallback_codex_models()
+                .into_iter()
+                .find(|model| model.id == model_id)
+                .map(|model| model.context_window);
+        }
+
         if let Some(model) = ModelRegistry::find_model(agent_type, model_id) {
             return Some(model.context_window);
         }
@@ -207,6 +216,19 @@ mod tests {
             ModelRegistry::CODEX_GPT53_SPARK_CONTEXT_WINDOW
         );
         assert_eq!(spark.source, ContextWindowSource::ModelCatalog);
+    }
+
+    #[test]
+    fn unknown_codex_window_is_an_estimate_until_observed() {
+        let core = build_core();
+        let model = "future-codex-context-test";
+        clear_observed(&core, AgentType::Codex, model);
+        let fallback = ContextWindowService::resolve(&core, AgentType::Codex, model);
+        assert_eq!(fallback.source, ContextWindowSource::FallbackDefault);
+        ContextWindowService::record_observed(&core, AgentType::Codex, model, 500_000);
+        let observed = ContextWindowService::resolve(&core, AgentType::Codex, model);
+        assert_eq!(observed.tokens, 500_000);
+        assert_eq!(observed.source, ContextWindowSource::ObservedRuntime);
     }
 
     #[test]

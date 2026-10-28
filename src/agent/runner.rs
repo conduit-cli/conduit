@@ -327,6 +327,8 @@ impl AgentHandle {
 }
 
 /// Trait for agent runners that can spawn and manage agent processes
+// async_trait adds must_use to futures that are already must_use.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait AgentRunner: Send + Sync {
     /// Agent type identifier (e.g., "claude", "codex")

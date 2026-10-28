@@ -188,7 +188,7 @@ impl ThemeRegistry {
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown"),
-                &label
+                label
             );
 
             self.vscode_themes.insert(
