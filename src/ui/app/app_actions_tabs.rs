@@ -111,13 +111,11 @@ impl App {
                     self.sync_footer_spinner();
                 }
             }
-            Action::SwitchToTab(n) => {
-                if n > 0 {
-                    self.state.tab_manager.switch_to((n - 1) as usize);
-                    self.sync_input_mode_for_active_tab();
-                    self.sync_sidebar_to_active_tab();
-                    self.sync_footer_spinner();
-                }
+            Action::SwitchToTab(n) if n > 0 => {
+                self.state.tab_manager.switch_to((n - 1) as usize);
+                self.sync_input_mode_for_active_tab();
+                self.sync_sidebar_to_active_tab();
+                self.sync_footer_spinner();
             }
             _ => {}
         }

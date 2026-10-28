@@ -69,7 +69,7 @@ impl SessionCache {
             .values()
             .map(|entry| entry.session.clone())
             .collect();
-        sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.timestamp));
         sessions
     }
 

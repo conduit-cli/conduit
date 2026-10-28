@@ -106,6 +106,15 @@ impl ConduitCore {
             None => Arc::new(OpencodeRunner::new()),
         };
 
+        if tools.is_available(Tool::Codex) {
+            crate::agent::codex_models::configure(
+                tools
+                    .get_path(Tool::Codex)
+                    .cloned()
+                    .unwrap_or_else(|| "codex".into()),
+            );
+        }
+
         if tools.is_available(Tool::Opencode) {
             let models = crate::agent::opencode::load_opencode_models(
                 tools.get_path(Tool::Opencode).cloned(),
@@ -253,6 +262,15 @@ impl ConduitCore {
             Some(path) => Arc::new(OpencodeRunner::with_path(path.clone())),
             None => Arc::new(OpencodeRunner::new()),
         };
+
+        if self.tools.is_available(Tool::Codex) {
+            crate::agent::codex_models::configure(
+                self.tools
+                    .get_path(Tool::Codex)
+                    .cloned()
+                    .unwrap_or_else(|| "codex".into()),
+            );
+        }
 
         if self.tools.is_available(Tool::Opencode) {
             let models = crate::agent::opencode::load_opencode_models(

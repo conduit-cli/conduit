@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+pub(crate) mod codex_models;
 pub mod display;
 pub mod error;
 pub mod events;

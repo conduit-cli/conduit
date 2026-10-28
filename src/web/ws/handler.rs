@@ -1657,7 +1657,7 @@ pub async fn handle_websocket(socket: WebSocket, session_manager: Arc<SessionMan
 
     // Clean up all subscriptions when connection closes
     let subs = subscriptions.read().await;
-    for (_, task) in subs.iter() {
+    for task in subs.values() {
         task.abort();
     }
 

@@ -149,13 +149,11 @@ impl App {
                     }
                 }
             }
-            Action::ConfirmToggle => {
-                if self.state.input_mode == InputMode::Confirming {
-                    if self.is_blocking_confirmation_loading_dialog() {
-                        return Ok(());
-                    }
-                    self.state.confirmation_dialog_state.toggle_selection();
+            Action::ConfirmToggle if self.state.input_mode == InputMode::Confirming => {
+                if self.is_blocking_confirmation_loading_dialog() {
+                    return Ok(());
                 }
+                self.state.confirmation_dialog_state.toggle_selection();
             }
             _ => {}
         }

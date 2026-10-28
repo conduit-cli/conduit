@@ -5,20 +5,24 @@
 ## Features
 
 - **Full Automation** — Executes code autonomously
-- **272K Context** — Extended context window
-- **GPT-5.4** — Latest frontier agentic coding model
+- **Dynamic models** — Discovers the catalog from your installed Codex CLI
+- **Shared model selection** — Uses the discovered models in the terminal and web interfaces
 
 ## Models
 
-| Model | Best For |
-|-------|----------|
-| GPT-5.4 | Latest frontier agentic coding model (default) |
-| GPT-5.3-Codex | Frontier Codex-optimized agentic coding model |
-| GPT-5.3-Codex-Spark | Ultra-fast coding model |
-| GPT-5.2-Codex | Frontier agentic coding model |
-| GPT-5.1-Codex-Max | Deep and fast reasoning |
-| GPT-5.2 | Frontier general model for knowledge, reasoning, and coding |
-| GPT-5.1-Codex-Mini | Cheaper/faster Codex option |
+Conduit queries Codex's `app-server` using `model/list` and uses the returned
+model names, descriptions, and default selection. An explicitly configured
+Conduit model takes precedence over the catalog default.
+
+Discovery runs in the background at startup and refreshes on catalog access
+after an hour. The last successful catalog is saved as `codex_models.json` in
+Conduit's data directory and remains available if discovery fails. Failed
+refreshes are retried on catalog access after a minute. Until the first successful
+discovery, Conduit uses its bundled fallback list.
+
+The catalog does not guarantee access to every listed model. Context limits use
+runtime observations when available, then known model limits or a fallback
+estimate, because `model/list` does not supply context-window sizes.
 
 ## Automation Mode
 

@@ -383,7 +383,7 @@ fn extract_palette(theme: &Theme) -> HashMap<String, String> {
 
     // Sort by count (descending) for consistent naming
     let mut sorted: Vec<_> = color_counts.into_iter().filter(|(_, c)| *c > 1).collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
     for (color_index, (hex, _)) in sorted.into_iter().enumerate() {
         let name = match color_index {
